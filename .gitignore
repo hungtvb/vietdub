@@ -1,0 +1,14 @@
+# VietDub .gitignore
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+hidden_files/
+wireframe/
+jobs/
+*.egg-info/
+dist/
+build/
+.DS_Store
+Thumbs.db
