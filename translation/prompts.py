@@ -18,18 +18,18 @@ Return ONLY a valid JSON object, no other text:
     { "id": 0,
       "role": "the person's role (e.g. young reporter)",
       "speaking_to": "who they are talking to (e.g. the audience)",
-      "pronoun_i": "first-person pronoun they use for themselves, in Vietnamese (e.g. toi)",
-      "pronoun_you": "pronoun they use to address the other party, in Vietnamese (e.g. quy vi)",
+      "pronoun_i": "first-person pronoun they use for themselves, in Vietnamese WITH diacritics (e.g. tôi)",
+      "pronoun_you": "pronoun they use to address the other party, in Vietnamese WITH diacritics (e.g. quý vị)",
       "tone": "formal | friendly | neutral" }
   ]
 }
 
 Rules for choosing Vietnamese pronouns:
 - Base it on role, estimated age, and relationship (senior/junior, strangers, family...).
-- Young reporter interviewing an older official -> reporter says "em", calls them "anh"/"chi".
-- Speaking to a crowd/audience -> "toi" / "quy vi".
-- Married couple -> "anh"/"em". Close friends -> "to"/"cau".
-- If information is insufficient -> safe default: "toi" / "ban"."""
+- Young reporter interviewing an older official -> reporter says "em", calls them "anh"/"chị".
+- Speaking to a crowd/audience -> "tôi" / "quý vị".
+- Married couple -> "anh"/"em". Close friends -> "tớ"/"cậu".
+- If information is insufficient -> safe default: "tôi" / "bạn"."""
 
 TRANSLATE_SYSTEM = """You are a professional dubbing translator translating video dialogue from
 Chinese to Vietnamese.

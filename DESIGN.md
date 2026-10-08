@@ -195,18 +195,18 @@ Return ONLY a valid JSON object, no other text:
     { "id": 0,
       "role": "the person's role (e.g. young reporter)",
       "speaking_to": "who they are talking to (e.g. the audience)",
-      "pronoun_i": "first-person pronoun they use for themselves, in Vietnamese (e.g. toi)",
-      "pronoun_you": "pronoun they use to address the other party, in Vietnamese (e.g. quy vi)",
+      "pronoun_i": "first-person pronoun they use for themselves, in Vietnamese WITH diacritics (e.g. tôi)",
+      "pronoun_you": "pronoun they use to address the other party, in Vietnamese WITH diacritics (e.g. quý vị)",
       "tone": "formal | friendly | neutral" }
   ]
 }
 
 Rules for choosing Vietnamese pronouns:
 - Base it on role, estimated age, and relationship (senior/junior, strangers, family...).
-- Young reporter interviewing an older official → reporter says "em", calls them "anh"/"chi".
-- Speaking to a crowd/audience → "toi" / "quy vi".
-- Married couple → "anh"/"em". Close friends → "to"/"cau".
-- If information is insufficient → safe default: "toi" / "ban".
+- Young reporter interviewing an older official → reporter says "em", calls them "anh"/"chị".
+- Speaking to a crowd/audience → "tôi" / "quý vị".
+- Married couple → "anh"/"em". Close friends → "tớ"/"cậu".
+- If information is insufficient → safe default: "tôi" / "bạn".
 ```
 
 User prompt kèm theo: danh sách câu (id, loa, giới tính, giờ, nội dung).
@@ -394,20 +394,30 @@ Mục tiêu: 1 nút bấm → xử lý 1 phim ~90 phút trong ~8 tiếng qua đ�
 1. **Chế độ "Qua đêm"**: 1 nút trên màn hình chính. Bật chế độ này → `review_stops` TỰ TẮT (cấm treo chờ người giữa đêm — nếu bật review stops mà chạy qua đêm thì máy treo chờ, không được phép). Chạy liền 9 bước không dừng.
 2. **Chạy không giám sát**: mọi lỗi tự retry + fallback theo chuỗi đã định (mục 2, 10.5); tuyệt đối KHÔNG hiện dialog chặn giữa chừng; log đầy đủ ra file theo từng job (`jobs/<job_id>/run.log`) để sáng ra đọc lại được chuyện gì đã xảy ra.
 3. **Crash/mất điện giữa đêm**: checkpoint từng bước + từng câu TTS (10.5 case 10, 16) → mở lại app tự đề xuất "chạy tiếp từ chỗ dở".
-4. **Đo và chứng minh vừa 1 đêm**: đo thời gian từng bước trên clip 55s, ngoại suy cho phim 90 phút. Nếu bước nào quá chậm → tối ưu (batch translation lớn hơn, TTS song song có giới hạn...). Bảng ước lượng — ĐIỀN SỐ THẬT sau khi đo ở Wave 3:
+4. **Đo và chứng minh vừa 1 đêm**: đo thời gian từng bước trên clip 55s, ngoại suy cho phim 90 phút. Nếu bước nào quá chậm → tối ưu (batch translation lớn hơn, TTS song song có giới hạn...). Bảng dưới ĐÃ ĐIỀN SỐ THẬT ở Wave 3 (2026-10-09) — cột "Nguồn số" ghi rõ số nào ĐO THẬT, số nào ƯỚC LƯỢNG:
 
-| Bước | Đo trên clip 55s | Ngoại suy phim 90 phút | Ghi chú |
-|------|------------------|------------------------|---------|
-| [0] Lấy video (link) | (đo Wave 1) | ~5–15 phút | tùy mạng; file local bỏ qua |
-| [1] Tách audio | (đo Wave 1) | ~1 phút | ffmpeg, nhanh |
-| [2] ASR + tách loa | 16.8s (RTF 0.305, đã đo trước) | ~28 phút | CPU |
-| [3] Pitch giới tính | (đo Wave 1) | ~vài phút | nhẹ |
-| [4] LLM phân tích | (đo Wave 1) | ~vài phút | 1 lần / phim |
-| [5] Dịch | (đo Wave 1) | ~10–20 phút | batch 20 câu/call |
-| [6] TTS | (đo Wave 1) | ~15–30 phút | concurrency 10, ~1000 câu |
-| [7] Trộn audio | (đo Wave 1) | ~vài phút | ffmpeg |
-| [8] Ghép video | (đo Wave 1) | ~5–10 phút | copy stream khi được |
-| **Tổng** | | **mục tiêu < 8 tiếng** | |
+| Bước | Đo trên clip 55s | Ngoại suy phim 90 phút (5400s, hệ số ×98.2) | Nguồn số | Ghi chú |
+|------|------------------|----------------------------------------------|----------|---------|
+| [0] Lấy video (link) | chưa đo | ~5–15 phút | ƯỚC LƯỢNG | tùy mạng; file local bỏ qua |
+| [1] Tách audio | 0.2s | ~0.5–1 phút | ĐO THẬT → ngoại suy tuyến tính | ffmpeg, nhanh |
+| [2] ASR + tách loa | 87.3s (RTF 1.59) | ~143 phút ≈ 2.4 tiếng | ĐO THẬT → ngoại suy tuyến tính | CPU; **nút thắt cổ chai** |
+| [3] Pitch giới tính | 4.5s | ~7–8 phút | ĐO THẬT → ngoại suy tuyến tính | nhẹ |
+| [4] LLM phân tích | gộp trong 42.9s của [4+5] | ~3–5 phút | ƯỚC LƯỢNG (1 batch/phim) | 1 lần / phim |
+| [5] Dịch | 42.9s / 17 câu ≈ 2.5s/câu | ~40–45 phút (giả định ~1000 câu) | ĐO THẬT (tốc độ/câu) → ngoại suy | batch 20 câu/call |
+| [6] TTS | chưa đo (sandbox chặn websocket) | ~3–4 phút | ƯỚC LƯỢNG: ~1000 câu × ~2s/câu ÷ concurrency 10 | chờ đo thật trên máy Tony |
+| [7] Trộn audio | chưa đo | ~2–3 phút | ƯỚC LƯỢNG | ffmpeg |
+| [8] Ghép video | chưa đo | ~5–10 phút | ƯỚC LƯỢNG | copy stream khi được |
+| **Tổng** | | **~3.5–4 tiếng < 8 tiếng** | | **vừa 1 đêm** |
+
+Số đo thật lấy từ `hidden_files/wave1_integration.log` (run 2026-10-08 16:58:15,
+clip 55s: [1]=0.2s, [2]=87.3s, [3]=4.5s, [4+5]=42.9s).
+
+LƯU Ý TRUNG THỰC về [2]: số đo trực tiếp pipeline FunASR thô trước đây là
+16.8s/55s (RTF 0.305 → ngoại suy ~28 phút), nhưng đo qua `FunASRAdapter`
+(modelscope pipeline: VAD + punc + cam++ trên CPU) là 87.3s (RTF 1.59 →
+~143 phút). Bảng trên dùng số đo qua adapter (đúng code app chạy thật).
+[2] chiếm ~2/3 tổng thời gian — nếu Tony muốn rút ngắn đêm chạy, hướng tối ưu:
+giảm chunk ASR, batch VAD lớn hơn, hoặc thử bản paraformer nhỏ hơn.
 
 5. **RAM cho audio 90 phút**: xử lý theo chunk (ASR theo đoạn 5–10 phút, TTS theo câu), không ôm hết vào RAM; báo RAM đỉnh ước lượng, cảnh báo trước nếu vượt RAM máy.
 6. **Kết hợp batch queue (future)**: qua đêm chạy được NHIỀU phim nối tiếp nhau — mỗi job checkpoint riêng, job này lỗi không chặn job sau (log lỗi, chạy tiếp job kế).

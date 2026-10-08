@@ -5,7 +5,7 @@
 machine may not have enough (overnight mode must never die silently).
 
 Components of the estimate (measured/profiled, conservative):
-- FunASR model combo resident in RAM (~1.3GB weights + runtime overhead).
+- FunASR model combo resident in RAM (ĐO THẬT, không ước lượng).
 - gender step loads the whole 16kHz mono wav as float32.
 - build_track works in 60s chunks, so only one chunk buffer is held.
 - headroom for the ffmpeg subprocesses.
@@ -18,7 +18,13 @@ import sys
 
 log = logging.getLogger("vietdub.resources")
 
-ASR_MODEL_MB = 1800.0    # SeacoParaformer + fsmn-vad + ct-punc 290M + cam++
+# HIỆU CHỈNH 2026-10-09 (Wave 3): số cũ 1800MB underestimate nặng.
+# Đo thật trong hidden_files/wave1_integration.log (run 2026-10-08 16:58:15):
+#   [2.asr] OK time=87.3s ram_start=15MB ram_peak=3433MB (clip 55s)
+# Trừ các thành phần đã tính riêng: ffmpeg headroom 300MB + track chunk
+# ~10MB + wav 55s ~3MB + process base ~15MB -> model combo resident ≈ 3105MB.
+# (combo: SeacoParaformer + fsmn-vad + ct-punc 290M + cam++, torch CPU)
+ASR_MODEL_MB = 3100.0
 FFMPEG_HEADROOM_MB = 300.0
 TRACK_CHUNK_SEC = 60.0   # build_track chunk size
 TRACK_CHUNK_MB = TRACK_CHUNK_SEC * 44100 * 4 / 1048576.0  # float32 buffer

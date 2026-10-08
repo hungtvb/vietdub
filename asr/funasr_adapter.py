@@ -40,6 +40,20 @@ _NON_WORD = re.compile(r"^[^\w\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+$", re.UN
 ASR_CHUNK_SEC = 10 * 60
 
 
+def _models_dir() -> Path:
+    """Thư mục tải model FunASR (lần đầu chạy, chỉ 1 lần, ~1.3GB).
+
+    Windows: %APPDATA%/VietDub/models ; Linux/macOS: ~/.config/VietDub/models.
+    Đặt qua biến môi trường MODELSCOPE_CACHE trước khi import modelscope —
+    nếu user đã tự đặt MODELSCOPE_CACHE thì tôn trọng lựa chọn của họ.
+    """
+    from core.settings import settings_path
+
+    d = settings_path().parent / "models"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 class ASRError(Exception):
     pass
 
@@ -64,6 +78,14 @@ class FunASRAdapter:
         """Load models once. Raises ASRError with a fix hint on failure."""
         if self._pipe is not None:
             return
+        # Model KHÔNG bundle trong exe: tải lần đầu về thư mục app data.
+        # Phải đặt env TRƯỚC khi import modelscope (nó đọc env lúc import).
+        import os
+
+        models_dir = _models_dir()
+        if not os.environ.get("MODELSCOPE_CACHE"):
+            os.environ["MODELSCOPE_CACHE"] = str(models_dir)
+            log.info("model FunASR sẽ tải về: %s", models_dir)
         try:
             from modelscope.pipelines import pipeline
             from modelscope.utils.constant import Tasks
