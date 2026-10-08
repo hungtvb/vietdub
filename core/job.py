@@ -19,6 +19,7 @@ PAUSED = "paused"
 REVIEW = "review"   # waiting at a review stop (only when not overnight)
 DONE = "done"
 FAILED = "failed"
+CANCELLED = "cancelled"  # user cancelled mid-run (Wave 2 UI)
 
 JOBS_ROOT = Path(__file__).resolve().parents[1] / "jobs"
 
@@ -39,6 +40,10 @@ class Job:
     # optional callbacks (UI wires these in Wave 2; core never blocks on them)
     progress_cb: Optional[Callable[[str, float, str], None]] = None
     log_cb: Optional[Callable[[str], None]] = None
+    # UI control flags (Wave 2): checked by the orchestrator between steps.
+    # Transient - never saved to disk (a restarted app resumes from checkpoint).
+    pause_requested: bool = False
+    cancel_requested: bool = False
 
     @property
     def job_dir(self) -> Path:

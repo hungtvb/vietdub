@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from core import checkpoint as cp
-from core.job import DONE, FAILED, REVIEW, RUNNING, Job
+from core.job import CANCELLED, DONE, FAILED, PAUSED, REVIEW, RUNNING, Job
 from core.logger import setup_job_logger
 from core.settings import Settings
 from project import io as pio
@@ -57,6 +57,8 @@ class Orchestrator:
         self.logger = setup_job_logger(job.job_id, job.job_dir,
                                        log_cb=job.emit_log)
         self.timings: Dict[str, float] = {}
+        # last failure message (Wave 2 UI shows this in the error dialog).
+        self.last_error: Optional[str] = None
 
     # -- main entry ---------------------------------------------------------
     def run(self, resume_from: Optional[str] = None) -> str:
@@ -77,6 +79,29 @@ class Orchestrator:
         step_idx = STEPS.index(start_from) if start_from in STEPS else 0
         try:
             for step in STEPS[step_idx:]:
+                # Wave 2 UI control: pause/cancel take effect BETWEEN steps
+                # (each step is atomic and checkpointed). The current step
+                # always finishes first; the UI shows "sẽ dừng sau bước
+                # hiện tại" so the user is not misled.
+                if job.cancel_requested:
+                    job.cancel_requested = False
+                    job.status = CANCELLED
+                    job.resume_from = step
+                    pio.save_project(job.job_dir, proj)
+                    self.logger.info("đã hủy theo yêu cầu, dừng trước %s "
+                                     "(checkpoint giữ nguyên, chạy tiếp được)",
+                                     STEP_LABEL[step])
+                    job.emit_progress("cancelled", 100.0, "Đã hủy")
+                    return CANCELLED
+                if job.pause_requested:
+                    job.pause_requested = False
+                    job.status = PAUSED
+                    job.resume_from = step
+                    pio.save_project(job.job_dir, proj)
+                    self.logger.info("tạm dừng theo yêu cầu, tiếp tục từ %s",
+                                     STEP_LABEL[step])
+                    job.emit_progress("paused", 100.0, "Đã tạm dừng")
+                    return PAUSED
                 if cp.has_step(job.job_dir, step) and step != start_from:
                     self.logger.info("%s: đã có checkpoint, bỏ qua",
                                      STEP_LABEL[step])
@@ -95,6 +120,7 @@ class Orchestrator:
             return DONE
         except Exception as e:  # noqa: BLE001 - logged with traceback, no crash
             job.status = FAILED
+            self.last_error = str(e)
             pio.save_project(job.job_dir, proj)
             self.logger.error("job %s THẤT BẠI ở bước '%s': %s\n%s",
                               job.job_id, step, e, traceback.format_exc())
@@ -190,6 +216,20 @@ class Orchestrator:
             data.get("wav_path"), segments,
             male_max_hz=float(self.settings.get("pitch_male_max_hz", 160.0)),
             female_min_hz=float(self.settings.get("pitch_female_min_hz", 165.0)))
+        # Tôn trọng sửa tay ở màn duyệt #1 (DESIGN): checkpoint "gender" do
+        # màn duyệt lưu đã chứa gender user đặt -> giữ lại, không để pitch
+        # ghi đè. Chỉ áp dụng khi user đã đặt rõ male/female.
+        manual = pio.load_speakers(job.job_dir, "gender") or {}
+        for spk_id, mspk in manual.items():
+            if mspk.gender in ("male", "female") and spk_id in speakers:
+                if speakers[spk_id].gender != mspk.gender:
+                    self.logger.info(
+                        "giữ giới tính do người dùng sửa tay cho loa %d: %s "
+                        "(pitch đoán %s)", spk_id, mspk.gender,
+                        speakers[spk_id].gender)
+                    speakers[spk_id].gender = mspk.gender
+                    speakers[spk_id].confidence = max(
+                        speakers[spk_id].confidence, mspk.confidence)
         for seg in segments:
             spk = speakers.get(seg.speaker)
             if spk:
@@ -390,8 +430,11 @@ class Orchestrator:
         out_mp4 = Path(proj.video_out or str(job.job_dir / out_name))
         mrender.render(fetch_data.get("video_path") or proj.video_in,
                        mix_data["mixed_wav"], srt_path, out_mp4,
-                       sub_mode=proj.sub_mode,
-                       crf=int(self.settings.get("crf", 20)))
+                       sub_mode=self.settings.get("sub_mode", proj.sub_mode) or "burn",
+                       crf=int(self.settings.get("crf", 20)),
+                       font=(self.settings.get("sub_font", "") or "").strip(),
+                       font_size=int(self.settings.get("sub_font_size", 0) or 0),
+                       font_color=(self.settings.get("sub_font_color", "") or "").strip())
         proj.video_out = str(out_mp4)
         cp.save_step(job.job_dir, "render",
                      {"video_out": str(out_mp4), "srt": str(srt_path)})

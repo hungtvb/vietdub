@@ -33,9 +33,22 @@ def _escape_sub_path(srt_path: Path) -> str:
     return p.replace(":", "\\:").replace("'", "\\'")
 
 
+def _ass_color(hex_rrggbb: str) -> str:
+    """Hex 'RRGGBB' (như user nhập) -> màu libass '&H00BBGGRR'."""
+    h = (hex_rrggbb or "").strip().lstrip("#")
+    if len(h) == 3:  # dạng rút gọn "FFF" -> "FFFFFF"
+        h = "".join(c * 2 for c in h)
+    if len(h) != 6 or any(c not in "0123456789abcdefABCDEF" for c in h):
+        raise RenderError(f"Màu phụ đề không hợp lệ: '{hex_rrggbb}' "
+                          "(nhập hex 6 ký tự, vd FFFF00 cho vàng).")
+    rr, gg, bb = h[0:2], h[2:4], h[4:6]
+    return f"&H00{bb}{gg}{rr}"
+
+
 def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
            out_mp4: str | Path, sub_mode: str = "burn",
-           crf: int = 20, font: str = "") -> Path:
+           crf: int = 20, font: str = "",
+           font_size: int = 0, font_color: str = "") -> Path:
     video_in, mixed_wav, out_mp4 = Path(video_in), Path(mixed_wav), Path(out_mp4)
     srt_path = Path(srt_path)
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
@@ -54,9 +67,16 @@ def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
         if not srt_path.exists():
             raise RenderError(f"Không tìm thấy file phụ đề: {srt_path}")
         sub_filter = f"subtitles={_escape_sub_path(srt_path)}"
+        force_parts = []
         if font:
             sub_filter += f":fontsdir='{Path(font).parent}'"
-            sub_filter += f":force_style='FontName={Path(font).stem}'"
+            force_parts.append(f"FontName={Path(font).stem}")
+        if font_size and int(font_size) > 0:
+            force_parts.append(f"FontSize={int(font_size)}")
+        if font_color and str(font_color).strip():
+            force_parts.append(f"PrimaryColour={_ass_color(font_color)}")
+        if force_parts:
+            sub_filter += f":force_style='{','.join(force_parts)}'"
         # edge 8-render fallback: burn needs re-encode; if font missing,
         # ffmpeg falls back to its default font - we only warn.
         cmd = [_bin.ffmpeg_cmd(), "-y", "-i", str(video_in), "-i", str(mixed_wav),

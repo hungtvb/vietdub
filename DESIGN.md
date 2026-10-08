@@ -253,6 +253,11 @@ Output: `text_vi` cho từng segment, giữ nguyên index/start/end.
 - Thư viện: `edge-tts` (Python). Giọng mặc định: nữ `vi-VN-HoaiMyNeural`, nam `vi-VN-NamMinhNeural` — cả 2 đều có sẵn, miễn phí, không cần key.
 - Config: `rate` (tốc độ, vd +0%/−10%), `pitch` (cao/thấp giọng).
 - Có nút "Nghe thử" trong settings: nhập câu mẫu → phát thử 2 giọng.
+  - GHI CHÚ (chốt 2026-10-09, giải quyết mâu thuẫn với mục 8): nút [Nghe thử]
+    giọng nam/nữ đặt ở **màn hình chính** (ngay cạnh dropdown chọn giọng,
+    đúng mục 8), KHÔNG lặp lại trong dialog Cài đặt. Màn chính là nơi user
+    chọn giọng nên nghe thử tại chỗ là hợp lý nhất; dialog Cài đặt chỉ giữ
+    các tham số giọng (rate/pitch/âm lượng).
 - Khớp thời lượng (`tts/duration_fit.py`):
   1. Sinh wav từng câu, đo độ dài thật.
   2. Tỉ lệ = dài_wav / (end − start). Dùng ffmpeg `atempo` co giãn, giới hạn 0.8–1.25 (ngoài ngưỡng nghe sẽ méo).

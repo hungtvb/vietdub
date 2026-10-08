@@ -23,5 +23,5 @@ numpy
 # dev / test
 pytest
 
-# Wave 2 (UI, not needed yet):
-# PySide6
+# Wave 2 (UI)
+PySide6                       # desktop UI (màn hình chính, duyệt, cài đặt)

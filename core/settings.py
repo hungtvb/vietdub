@@ -55,6 +55,9 @@ DEFAULTS = {
     "dub_volume": 1.0,
     "orig_volume": 0.15,
     "sub_mode": "burn",                  # "burn" | "srt"
+    "sub_font": "",                      # đường dẫn file font (.ttf/.otf), "" = mặc định ffmpeg
+    "sub_font_size": 0,                  # cỡ chữ phụ đề burn, 0 = tự động
+    "sub_font_color": "",                # màu chữ hex RRGGBB (vd "FFFF00"), "" = mặc định
     "crf": 20,
     "ffmpeg_path": "ffmpeg",
     # --- behaviour ---
