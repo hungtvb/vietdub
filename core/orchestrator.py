@@ -287,7 +287,20 @@ class Orchestrator:
         for prov in providers:
             try:
                 speakers = prov.analyze(segments, speakers)
+                # analyze() also filled per-line audiences + ran the video
+                # metadata pass (stored on the provider); persist both
+                pio.save_segments(job.job_dir, "asr", segments)
+                meta = getattr(prov, "last_video_metadata", None) or {}
+                if not meta:
+                    try:
+                        meta = prov.analyze_video_metadata(segments, speakers)
+                    except Exception as me:  # noqa: BLE001 - metadata là phụ,
+                        # không được làm hỏng bước analyze chính
+                        self.logger.warning("bỏ qua metadata video: %s", me)
+                        meta = {"genre": "other", "style": "other",
+                                "setting": "other", "tone_notes": ""}
                 pio.save_speakers(job.job_dir, "analyze", speakers)
+                pio.save_video_metadata(job.job_dir, meta)
                 self.logger.info("phân tích quan hệ xong bằng %s", prov.name)
                 return
             except Exception as e:  # noqa: BLE001
@@ -305,8 +318,10 @@ class Orchestrator:
         # step [4] already analyzed (checkpoint exists) -> do NOT analyze
         # a second time inside translate_with_fallback
         analyze_done = cp.has_step(job.job_dir, "analyze")
+        video_metadata = pio.load_video_metadata(job.job_dir) or {}
         segments, used = translate_with_fallback(
-            providers, segments, speakers, skip_analyze=analyze_done)
+            providers, segments, speakers, skip_analyze=analyze_done,
+            video_metadata=video_metadata)
         pio.save_segments(job.job_dir, "translate", segments)
         self.logger.info("dịch xong bằng %s: %d câu", used, len(segments))
 

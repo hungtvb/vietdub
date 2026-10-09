@@ -126,19 +126,39 @@ Segment (đơn vị nhỏ nhất, 1 câu nói):
   "end": 4.2,
   "speaker": 0,
   "gender": "female",
+  "audience": "audience",
   "text_src": "乌兰察布的风很大",
   "text_vi": "Gió ở Ô Lan Sát Bố lớn lắm",
   "audio_vi": "stages/tts/seg_000.wav"
 }
 ```
 
+`audience` (Tony 2026-10-09): id loa đang được nói tới (dạng chuỗi, vd `"1"`),
+hoặc `"audience"` (khán giả chung), hoặc `"all"` (mọi người trong cảnh), hoặc
+`""` (chưa xác định → dùng cặp default). Một người có thể nói với NHIỀU người
+khác nhau trong cùng video (vd phóng viên vừa hỏi khách mời vừa quay ra nói
+với khán giả) — vì vậy audience là thuộc tính của từng SEGMENT, không phải
+của loa. Màn duyệt sub gốc có cột "Nói với ai" sửa được.
+
 Speaker:
 
 ```json
 { "id": 0, "gender": "female", "confidence": 0.92,
-  "role": "phóng viên", "audience": "khán giả",
+  "role": "phóng viên", "tone": "formal",
+  "relations": [
+    { "audience": "audience", "pronoun_i": "tôi",
+      "pronoun_you": "quý vị", "is_default": true },
+    { "audience": "1", "pronoun_i": "tôi",
+      "pronoun_you": "anh", "is_default": false }
+  ],
   "pronoun_i": "tôi", "pronoun_you": "quý vị" }
 ```
+
+Mỗi loa có DANH SÁCH quan hệ (một phần tử cho mỗi đối tượng khác nhau), đúng
+1 cái đánh dấu `is_default` (dùng khi không xác định được audience của câu).
+`pronoun_i`/`pronoun_you` cấp loa luôn sync với relation default (tương thích
+ngược với checkpoint cũ). Bước [5] tra `(speaker, audience)` → cặp đại từ
+đúng cho từng câu.
 
 Project (`project.json`):
 
@@ -178,69 +198,145 @@ Interface chung (`translation/base.py`): 2 hàm `analyze(segments, speakers)` v�
 - Endpoint mặc định `http://localhost:11434`, model do Tony chọn (ô nhập trong settings).
 - Dùng chung prompt với 9Router. Chất lượng phụ thuộc model Tony kéo về — không cam kết bằng mimo.
 
-### 5.2. Bước [4] — Phân tích quan hệ
+### 5.2. Bước [4] — Phân tích quan hệ (3 tầng, Tony chốt 2026-10-09)
 
-Input: toàn bộ segments (text_src + speaker + gender). Gom thành batch ~20 câu/request để giữ context. Temperature 0.1–0.3.
+Không gửi toàn bộ subtitle 1 lần lên LLM (dễ lỗi với video dài) — chia 3 tầng:
 
-System prompt (tiếng Anh — Tony chốt 2026-10-08):
+**(a) Batch (~20 câu/batch):** mỗi batch LLM phân tích → bảng batch gồm:
+- `segments`/`lines`: mỗi câu `{id, audience}` — câu này đang nói với ai
+  (id loa | `"audience"` | `"all"`), dựa vào ngữ cảnh batch (câu trước của ai,
+  có từ "quý vị/khán giả" không, có gọi tên không...).
+- `speakers`: mỗi loa trong batch có `role`, `tone`, và `relations[]`
+  (danh sách `{audience, pronoun_i, pronoun_you}`, 1 cái `is_default`).
+
+**(b) Bảng tổng hợp:** gom tất cả bảng batch — mỗi loa 1 dòng: xuất hiện ở
+batch nào, mỗi batch gán vai trò/đại từ gì, số câu nói của loa đó, highlight
+rõ chỗ mâu thuẫn giữa các batch.
+
+**(d) Metadata tổng thể (1 pass LLM riêng, chạy trước trọng tài):** lấy mẫu
+DÀN ĐỀU 8–10 đoạn suốt video (mỗi đoạn ~10 câu; video ngắn <5 phút hoặc
+<100 câu thì gửi toàn bộ), kèm bảng quan hệ gộp sơ bộ (majority) + phân bố
+số câu theo loa → JSON `{genre, style, setting, tone_notes}` (vd
+tin tức/trang trọng/hiện đại). Lưu vào `stages/analyze.json`; màn duyệt hiển
+thị cho Tony xem/sửa, nút "Dịch lại với metadata này".
+
+**(c) Trọng tài (1 pass LLM cuối):** gửi bảng tổng hợp + metadata tổng thể +
+vài câu mẫu gây tranh cãi (câu gốc của loa mà các batch bất đồng) → chốt
+BẢNG CHUNG KHÓA duy nhất: mỗi loa 1 `relations[]` cuối cùng. Rớt → gộp đa số
+deterministic dự phòng (majority theo từng audience, default = audience được
+đánh dấu nhiều nhất).
+
+Bước [5] mọi batch dịch đều nhận bảng đã khóa này → đại từ nhất quán cả phim dài.
+
+**Fix đại từ 2026-10-09** (video 01/06 thiếu cặp kỳ vọng): nguyên nhân gốc là
+LLM lạm dụng fallback `tôi/bạn` cho người được phỏng vấn (3/3 runs) — lỗi ở
+bước phân tích, không phải bước dịch. Đã sửa:
+1. Prompt phân tích (tiếng Anh): rule phân tầng — tin tức/phỏng vấn:
+   người dẫn→khán giả `tôi/quý vị`; người được phỏng vấn/khách→phóng viên:
+   `tôi/anh` (quy ước lồng tiếng, sửa được ở màn duyệt); cấm dùng "bạn" làm
+   lối thoát lười trong ngữ cảnh trang trọng; `tôi/bạn` chỉ cho bạn bè thân
+   mật rõ ràng. Mỗi câu xác định audience riêng.
+2. `translation/base.py::_post_rule_interviewee`: quy tắc hậu kiểm
+   deterministic (có log) — chương trình tin tức (có người dẫn với relation
+   audience = `tôi/quý vị`) mà speaker nào rớt về đúng cặp fallback `tôi/bạn`
+   ở relation default và không phải người dẫn → sửa default
+   `pronoun_you="anh"`.
+3. Audience từng câu được persist vào checkpoint `asr` (analyze chỉ điền chỗ
+   còn trống — tôn trọng cột "Nói với ai" Tony sửa tay ở màn duyệt #1).
+
+System prompt phân tích (tiếng Anh — Tony chốt 2026-10-08, format relations
+từ 2026-10-09):
 
 ```
 You are a dialogue analyst for videos. Task: read a transcribed dialogue
 already split by speaker (SPEAKER_0, SPEAKER_1, ...) with each speaker's
-gender, and determine their roles and relationships.
+gender, and determine for each line WHO it is addressed to, plus each
+speaker's pronoun tables per audience.
+
+A speaker may address DIFFERENT audiences in different lines (e.g. a reporter
+may question a guest in one line and turn to the viewers in the next).
 
 Return ONLY a valid JSON object, no other text:
 {
   "speakers": [
     { "id": 0,
       "role": "the person's role (e.g. young reporter)",
-      "speaking_to": "who they are talking to (e.g. the audience)",
-      "pronoun_i": "first-person pronoun they use for themselves, in Vietnamese WITH diacritics (e.g. tôi)",
-      "pronoun_you": "pronoun they use to address the other party, in Vietnamese WITH diacritics (e.g. quý vị)",
-      "tone": "formal | friendly | neutral" }
-  ]
+      "tone": "formal | friendly | neutral",
+      "relations": [
+        { "audience": "audience | all | <speaker id as string>",
+          "pronoun_i": "first-person pronoun in Vietnamese WITH diacritics",
+          "pronoun_you": "address pronoun in Vietnamese WITH diacritics",
+          "is_default": true } ] }
+  ],
+  "lines": [
+    { "id": 0, "audience": "audience" },
+    { "id": 5, "audience": "1" } ]
 }
 
-Rules for choosing Vietnamese pronouns:
-- Base it on role, estimated age, and relationship (senior/junior, strangers, family...).
-- Young reporter interviewing an older official → reporter says "em", calls them "anh"/"chị".
-- Speaking to a crowd/audience → "tôi" / "quý vị".
-- Married couple → "anh"/"em". Close friends → "tớ"/"cậu".
-- If information is insufficient → safe default: "tôi" / "bạn".
+Rules for audience per line:
+- The line mentions "quý vị", "khán giả", "mọi người", or speaks to viewers -> "audience".
+- A question, answer, or reply continuing the previous speaker's line -> that previous speaker's id.
+- The line calls someone by name/title matching another speaker's role -> that speaker's id.
+- Plain narration / statement of facts with no addressee -> "audience".
+- When truly unclear -> "audience".
+
+Rules for relations (one entry per distinct audience of that speaker; mark the most frequent audience as is_default):
+- News anchor / reporter / narrator -> audience: "tôi" / "quý vị".
+- Interviewee / guest / attendee -> reporter: "tôi" / "anh". This is the conventional Vietnamese dubbing default for Chinese news programs; the user can correct it at review.
+- Young reporter interviewing an older official in a NON-news chat setting -> reporter says "em", calls them "anh"/"chị".
+- Married couple -> "anh"/"em". Close friends, classmates, peers chatting informally -> "tớ"/"cậu" or "tôi"/"bạn".
+- Do NOT use "tôi"/"bạn" as a lazy default in news, interview, or formal settings. Only use it when the speakers are clearly informal peers.
+- If truly nothing can be determined -> "tôi" / "bạn".
 ```
 
-User prompt kèm theo: danh sách câu (id, loa, giới tính, giờ, nội dung).
-
-Output JSON (LLM bắt buộc trả JSON hợp lệ, có validate + retry nếu sai format):
-
-```json
-{ "speakers": [
-  { "id": 0, "role": "phóng viên trẻ", "speaking_to": "khán giả",
-    "pronoun_i": "tôi", "pronoun_you": "quý vị", "tone": "trang trọng" },
-  { "id": 1, "role": "bí thư trung niên", "speaking_to": "phóng viên",
-    "pronoun_i": "tôi", "pronoun_you": "anh", "tone": "thân mật" }
-] }
-```
+Prompt trọng tài (tiếng Anh, JSON only): "bạn là trọng tài, dựa vào bảng tổng
+hợp + metadata + câu mẫu tranh cãi để chốt bảng quan hệ chung duy nhất, giải
+thích ngắn gọn (note) khi có mâu thuẫn". Chi tiết đầy đủ trong
+`translation/prompts.py::ARBITER_SYSTEM`.
 
 ### 5.3. Bước [5] — Dịch
 
-Prompt dịch bao gồm: bảng quan hệ từ bước [4] + giới tính từng loa + yêu cầu giữ timestamp (không gộp/tách câu). Dịch theo batch có context chồng lấp 2 câu để đại từ xuyên suốt. Temperature 0.1–0.3, validate JSON + retry nếu sai format.
+Mỗi batch ~20 câu. Mỗi batch kèm 2 câu trước đó làm overlap context NHƯNG đặt
+trong section riêng "CONTEXT ONLY — do NOT translate" (fix 2026-10-09: trước
+đây trộn chung khiến LLM dịch luôn cả câu context, trả thừa id → tốn retry).
+Prompt mỗi batch gồm:
+1. **VIDEO CONTEXT** (metadata từ bước [4]: thể loại/phong cách/bối cảnh/giọng
+   điệu) + chỉ dẫn chọn từ ngữ/đại từ phù hợp thể loại (vd cổ trang →
+   "tại hạ/các hạ", tin tức → trang trọng, hoạt hình → hồn nhiên).
+2. Bảng quan hệ ĐÃ KHÓA: mỗi loa liệt kê `to '<audience>': pronoun_i/pronoun_you`
+   (+ đánh dấu default).
+3. Danh sách câu: `[id] SPEAKER_x (to SPEAKER_y | to AUDIENCE | to ALL): text`.
 
-System prompt (tiếng Anh — Tony chốt 2026-10-08):
+Từng câu tra `(speaker, audience)` → cặp đại từ đúng cho câu đó; không có
+trong bảng → dùng cặp default của loa. Temperature 0.1–0.3, validate JSON +
+retry nếu sai format.
+
+**Validate sau dịch** (Tony): số câu ra phải == số câu vào (thiếu → dịch lẻ
+từng câu bù); câu nào rớt đại từ so với bảng khóa thì đánh dấu `needs_review`
+(kiểm tra theo nhóm `(speaker, audience)` ≥3 câu, hiện vàng ở màn duyệt #2
+cho Tony duyệt tay).
+
+System prompt (tiếng Anh — Tony chốt 2026-10-08, cập nhật relations 2026-10-09):
 
 ```
 You are a professional dubbing translator translating video dialogue from
 Chinese to Vietnamese.
 
-You receive: (1) a speaker-relationship table with locked pronouns — you MUST
-use exactly these pronouns, (2) a list of lines: id, speaker, start/end time,
-Chinese text.
+You receive: (1) VIDEO CONTEXT (genre/style, may be absent), (2) a speaker-
+relationship table with locked pronouns per (speaker, audience) pair - a
+speaker may have SEVERAL pairs, (3) a list of lines: id, speaker -> audience,
+start/end time, Chinese text.
 
 Requirements:
-- Translate naturally, as spoken Vietnamese — short, fluent lines that are easy
-  to read aloud for dubbing.
-- You MUST use the pronouns from the relationship table. Never change them.
-- Keep the exact number of lines and their ids — do NOT merge, split, or drop lines.
+- For EACH line, look up its (speaker, audience) pair in the relationship
+  table and use EXACTLY those pronouns for that line. Different lines of the
+  same speaker may need different pronouns.
+- If a line's (speaker, audience) pair is not in the table, use the pair
+  marked [default] for that speaker.
+- Translate naturally, as spoken Vietnamese - short, fluent lines easy to
+  read aloud.
+- Keep the exact number of lines and their ids - do NOT merge, split, or drop
+  lines.
 - No commentary, no explanations.
 
 Return ONLY valid JSON: { "translations": [ { "id": 0, "text_vi": "..." } ] }
@@ -282,9 +378,9 @@ Chạy pipeline trong `QThread`, UI nhận signal `progress(step, pct, msg)` và
 
 **Màn 2 — Đang xử lý:** thanh tiến trình 9 bước (tên bước hiện tại + %), log realtime cuộn được, nút [Tạm dừng] [Hủy]. Tới điểm dừng duyệt → tự mở Màn 3/4.
 
-**Màn 3 — Duyệt sub gốc:** bảng # | bắt đầu | kết thúc | loa | giới tính (dropdown sửa) | nội dung (sửa trực tiếp, Enter xuống dòng). Nút [Nghe lại câu] (phát đoạn audio gốc của câu đang chọn). [Quay lại] [Tiếp tục dịch →].
+**Màn 3 — Duyệt sub gốc:** bảng # | bắt đầu | kết thúc | loa | giới tính (dropdown sửa) | nói với ai (dropdown: chưa rõ/khán giả/tất cả/loa N — bước [4] chỉ điền chỗ còn trống, tôn trọng sửa tay) | nội dung (sửa trực tiếp, Enter xuống dòng). Nút [Nghe lại câu] (phát đoạn audio gốc của câu đang chọn). [Quay lại] [Tiếp tục dịch →].
 
-**Màn 4 — Duyệt bản dịch:** bảng # | thời gian | loa | bản dịch (sửa trực tiếp). [Quay lại] [Lồng tiếng →].
+**Màn 4 — Duyệt bản dịch:** bảng # | thời gian | loa | bản dịch (sửa trực tiếp). Form metadata video (thể loại/phong cách/bối cảnh/giọng điệu — LLM suy từ bước [4], sửa tay được) + nút [Dịch lại với metadata này]. Câu nào rớt đại từ so với bảng khóa (nguồn có đại từ nhân xưng mà bản dịch thiếu) được tô vàng.
 
 **Màn 5 — Hoàn thành:** player xem thử video đã lồng tiếng + sub, nút [Mở thư mục] [Làm video khác].
 

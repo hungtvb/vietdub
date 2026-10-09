@@ -114,8 +114,9 @@ class NineRouterTranslator(BaseTranslator):
                     if d.strip() == b"[DONE]":
                         break
                     try:
+                        # content có thể là null trong chunk SSE -> coi như ""
                         out.append(json.loads(d)["choices"][0]
-                                   .get("delta", {}).get("content", ""))
+                                   .get("delta", {}).get("content") or "")
                     except (json.JSONDecodeError, KeyError, IndexError,
                             TypeError):
                         continue

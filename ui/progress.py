@@ -254,8 +254,20 @@ class ProgressWindow(QWidget):
             self._review_win = ReviewViWindow(
                 self.job, self.settings,
                 on_continue=self._resume_after_review,
-                on_back=self._back_from_review)
+                on_back=self._back_from_review,
+                on_retranslate=self._retranslate_with_metadata)
         self._review_win.show()
+
+    def _retranslate_with_metadata(self, meta) -> None:
+        # Tony sửa metadata tay ở màn duyệt #2 -> dịch lại toàn bộ với
+        # metadata mới (chỉ chạy lại bước translate).
+        from project import io as pio
+        pio.save_video_metadata(self.job.job_dir, meta)
+        if self._review_win:
+            self._review_win.close()
+            self._review_win = None
+        self.show()
+        self.begin(resume_from="translate")
 
     def _resume_after_review(self) -> None:
         if self._review_win:

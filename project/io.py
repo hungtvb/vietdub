@@ -63,3 +63,17 @@ def load_speakers(job_dir: str | Path, step: str) -> dict[int, Speaker] | None:
     if data is None:
         return None
     return {s["id"]: Speaker.from_dict(s) for s in data.get("speakers", [])}
+
+
+def save_video_metadata(job_dir: str | Path, meta: dict) -> None:
+    """Lưu metadata tổng thể vào cùng checkpoint analyze (stages/analyze.json)."""
+    from core import checkpoint as cp
+    data = cp.load_step(job_dir, "analyze") or {}
+    data["video_metadata"] = meta
+    cp.save_step(job_dir, "analyze", data)
+
+
+def load_video_metadata(job_dir: str | Path) -> dict | None:
+    from core import checkpoint as cp
+    data = cp.load_step(job_dir, "analyze") or {}
+    return data.get("video_metadata")

@@ -24,6 +24,9 @@ class Segment:
     audio_vi: str = ""    # path to dubbed wav for this segment
     confidence: float = 1.0
     needs_review: bool = False
+    # who this line is addressed to: speaker id as str, "audience"
+    # (viewers in general), "all" (everyone present), or "" (unknown)
+    audience: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -34,6 +37,47 @@ class Segment:
         return cls(**{k: v for k, v in d.items() if k in known})
 
 
+def audience_label(aud: str) -> str:
+    """Human/prompt label for an audience value."""
+    a = (aud or "").strip()
+    if a == "audience":
+        return "the audience"
+    if a == "all":
+        return "everyone"
+    if a.isdigit():
+        return f"SPEAKER_{a}"
+    return a or "the audience"
+
+
+def audience_label_vi(aud: str) -> str:
+    """Nhãn tiếng Việt cho cột 'Nói với ai' ở màn duyệt."""
+    a = (aud or "").strip()
+    if a == "audience":
+        return "Khán giả"
+    if a == "all":
+        return "Tất cả"
+    if a.isdigit():
+        return f"Loa {a}"
+    return "Chưa rõ"
+
+
+def audience_value_vi(label: str) -> str | None:
+    """Nhãn tiếng Việt -> giá trị audience; None = nhãn không hợp lệ."""
+    t = (label or "").strip()
+    if t in ("", "Chưa rõ"):
+        return ""
+    if t == "Khán giả":
+        return "audience"
+    if t == "Tất cả":
+        return "all"
+    if t.startswith("Loa "):
+        try:
+            return str(int(t[4:].strip()))
+        except ValueError:
+            return None
+    return None
+
+
 @dataclass
 class Speaker:
     id: int
@@ -41,10 +85,40 @@ class Speaker:
     confidence: float = 0.0
     median_hz: float = 0.0
     role: str = ""
-    speaking_to: str = ""
-    pronoun_i: str = "tôi"    # default safe pronouns (edge case 7/8)
-    pronoun_you: str = "bạn"
+    speaking_to: str = ""     # legacy: default relation's audience
+    pronoun_i: str = "tôi"    # default pair (kept in sync with relations)
+    pronoun_you: str = "bạn"  # default pair (kept in sync with relations)
     tone: str = "neutral"
+    # per-audience pronoun tables: [{"audience": "audience"|"all"|"<sid>",
+    #   "pronoun_i": str, "pronoun_you": str, "is_default": bool}]
+    relations: List[dict] = field(default_factory=list)
+
+    def get_pronouns(self, audience: str = "") -> tuple:
+        """(pronoun_i, pronoun_you) for the given audience; default first."""
+        rels = self.relations or []
+        if audience:
+            for r in rels:
+                if r.get("audience") == audience:
+                    return (r.get("pronoun_i") or "tôi",
+                            r.get("pronoun_you") or "bạn")
+        for r in rels:
+            if r.get("is_default"):
+                return (r.get("pronoun_i") or "tôi",
+                        r.get("pronoun_you") or "bạn")
+        if rels:
+            r = rels[0]
+            return (r.get("pronoun_i") or "tôi",
+                    r.get("pronoun_you") or "bạn")
+        return (self.pronoun_i or "tôi", self.pronoun_you or "bạn")
+
+    def sync_default_pronouns(self) -> None:
+        """Keep pronoun_i/pronoun_you = the default relation (back-compat)."""
+        for r in self.relations or []:
+            if r.get("is_default"):
+                self.pronoun_i = r.get("pronoun_i") or "tôi"
+                self.pronoun_you = r.get("pronoun_you") or "bạn"
+                self.speaking_to = r.get("audience") or ""
+                return
 
     def to_dict(self) -> dict:
         return asdict(self)

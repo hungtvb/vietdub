@@ -3,8 +3,9 @@
 # License: GNU General Public License v3.0 (see LICENSE)
 """Màn 3 - Duyệt sub gốc (điểm dừng sau bước ASR).
 
-Bảng: # | bắt đầu | kết thúc | loa | giới tính (dropdown) | nội dung (sửa
-trực tiếp, Enter xuống dòng). Câu nào ASR confidence thấp được tô nổi bật.
+Bảng: # | bắt đầu | kết thúc | loa | giới tính (dropdown) | nói với ai
+(dropdown: chưa rõ/khán giả/tất cả/loa N) | nội dung (sửa trực tiếp, Enter
+xuống dòng). Câu nào ASR confidence thấp được tô nổi bật.
 [Nghe lại câu]: phát đoạn audio GỐC của câu đang chọn.
 [Tiếp tục dịch]: lưu mọi sửa đổi vào checkpoint rồi chạy tiếp.
 """
@@ -25,13 +26,19 @@ from core import checkpoint as cp
 from core.job import Job
 from core.settings import Settings
 from project import io as pio
-from project.schema import Segment, Speaker
+from project.schema import (Segment, Speaker, audience_label_vi,
+                            audience_value_vi)
 from ui.common import error_box, fmt_time, info_box
 
 GENDER_LABEL = {"female": "Nữ", "male": "Nam", "": "Không rõ"}
 GENDER_VALUE = {"Nữ": "female", "Nam": "male", "Không rõ": ""}
 
-COLS = ["#", "Bắt đầu", "Kết thúc", "Loa", "Giới tính", "Nội dung"]
+# re-export cho delegate/test (logic nằm ở project/schema.py, không cần Qt)
+audience_label = audience_label_vi
+audience_value = audience_value_vi
+
+COLS = ["#", "Bắt đầu", "Kết thúc", "Loa", "Giới tính", "Nói với ai",
+        "Nội dung"]
 
 
 class GenderDelegate(QStyledItemDelegate):
@@ -44,6 +51,37 @@ class GenderDelegate(QStyledItemDelegate):
 
     def setEditorData(self, editor, index):  # noqa: N802
         editor.setCurrentText(index.data(Qt.DisplayRole) or "Không rõ")
+
+    def setModelData(self, editor, model, index):  # noqa: N802
+        model.setData(index, editor.currentText(), Qt.EditRole)
+
+
+class AudienceDelegate(QStyledItemDelegate):
+    """Dropdown Chưa rõ/Khán giả/Tất cả/Loa N trong ô 'Nói với ai'.
+
+    Danh sách loa đọc động từ cột Loa hiện tại của bảng (người dùng có thể
+    vừa sửa số loa), nên delegate nhận table_fn thay vì list cố định.
+    """
+
+    def __init__(self, parent, table_fn):
+        super().__init__(parent)
+        self._table_fn = table_fn
+
+    def createEditor(self, parent, option, index):  # noqa: N802
+        cb = QComboBox(parent)
+        tbl = self._table_fn()
+        sids = set()
+        for r in range(tbl.rowCount()):
+            try:
+                sids.add(int(tbl.item(r, 3).text().strip()))
+            except (ValueError, AttributeError):
+                pass
+        cb.addItems(["Chưa rõ", "Khán giả", "Tất cả"]
+                    + [f"Loa {i}" for i in sorted(sids)])
+        return cb
+
+    def setEditorData(self, editor, index):  # noqa: N802
+        editor.setCurrentText(index.data(Qt.DisplayRole) or "Chưa rõ")
 
     def setModelData(self, editor, model, index):  # noqa: N802
         model.setData(index, editor.currentText(), Qt.EditRole)
@@ -96,6 +134,8 @@ class ReviewSourceWindow(QWidget):
         self.tbl.setHorizontalHeaderLabels(COLS)
         self.tbl.verticalHeader().setVisible(False)
         self.tbl.setItemDelegateForColumn(4, GenderDelegate(self))
+        self.tbl.setItemDelegateForColumn(5, AudienceDelegate(
+            self, lambda: self.tbl))
         for r, seg in enumerate(self.segments):
             self._fill_row(r, seg)
         self.tbl.setColumnWidth(0, 44)
@@ -165,7 +205,8 @@ class ReviewSourceWindow(QWidget):
         self.tbl.setItem(r, 3, QTableWidgetItem(str(seg.speaker)))
         self.tbl.setItem(r, 4, QTableWidgetItem(
             GENDER_LABEL.get(seg.gender, "Không rõ")))
-        self.tbl.setItem(r, 5, QTableWidgetItem(seg.text_src or ""))
+        self.tbl.setItem(r, 5, QTableWidgetItem(audience_label(seg.audience)))
+        self.tbl.setItem(r, 6, QTableWidgetItem(seg.text_src or ""))
         if seg.needs_review:
             for c in range(len(COLS)):
                 self.tbl.item(r, c).setBackground(QColor("#fff3b0"))
@@ -267,10 +308,12 @@ class ReviewSourceWindow(QWidget):
         mid_t = seg.start + dur * ratio
         seg1 = Segment(index=seg.index, start=seg.start, end=mid_t,
                        speaker=seg.speaker, gender=seg.gender, text_src=t1,
+                       audience=seg.audience,
                        confidence=seg.confidence,
                        needs_review=seg.needs_review)
         seg2 = Segment(index=seg.index + 1, start=mid_t, end=seg.end,
                        speaker=seg.speaker, gender=seg.gender, text_src=t2,
+                       audience=seg.audience,
                        confidence=seg.confidence,
                        needs_review=seg.needs_review)
         self.segments[r:r + 1] = [seg1, seg2]
@@ -320,9 +363,18 @@ class ReviewSourceWindow(QWidget):
                 return False
             gender = GENDER_VALUE.get(
                 self.tbl.item(r, 4).text().strip(), "")
+            aud = audience_value(self.tbl.item(r, 5).text())
+            if aud is None:
+                error_box(self, "Nói với ai không hợp lệ",
+                          f"Dòng {r + 1}: cột 'Nói với ai' phải chọn trong "
+                          f"dropdown (Chưa rõ/Khán giả/Tất cả/Loa N). "
+                          f"Bạn nhập: '{self.tbl.item(r, 5).text()}'.")
+                self.tbl.selectRow(r)
+                return False
             seg.speaker = spk
             seg.gender = gender
-            seg.text_src = self.tbl.item(r, 5).text()
+            seg.audience = aud
+            seg.text_src = self.tbl.item(r, 6).text()
         # đồng bộ giới tính vào speakers (bước dịch dùng speakers)
         for seg in self.segments:
             spk = self.speakers.get(seg.speaker)

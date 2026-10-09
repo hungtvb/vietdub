@@ -50,8 +50,9 @@ def test_build_track_single_chunk_still_works(tmp_path):
 
 def test_ram_estimate_90min():
     est = mres.estimate_peak_ram_mb(5400.0)
-    # ASR models 1800 + full 16k wav 329MB + chunk 10.6 + ffmpeg 300
-    assert 2400 < est < 2600
+    # ASR models 3100 (hiệu chỉnh theo peak đo thật 5.3GB với ct-punc-large)
+    # + full 16k wav 329MB + chunk 10.6 + ffmpeg 300
+    assert 3600 < est < 3900
     assert mres.estimate_peak_ram_mb(60.0) < est  # grows with duration
 
 

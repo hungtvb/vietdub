@@ -89,3 +89,34 @@ def test_empty_llm_output_retried():
          mock.patch("translation.nine_router.time.sleep"):
         assert tr._chat("sys", "user") == "ok"
     assert p.call_count == 2
+
+
+def _sse_multi_resp(*contents):
+    """Fake SSE response with several content chunks (None allowed)."""
+    lines = [b"data: " + json.dumps(
+        {"choices": [{"delta": {"content": c}}]}).encode()
+        for c in contents]
+    lines.append(b"data: [DONE]")
+    r = mock.Mock()
+    r.status_code = 200
+    r.iter_lines.return_value = iter(lines)
+    return r
+
+
+def test_null_content_chunk_does_not_crash_join():
+    # SSE thỉnh thoảng có chunk content=null -> trước đây "".join() văng
+    # TypeError (tốn 1 retry); giờ coi như "".
+    tr = NineRouterTranslator()
+    with mock.patch("requests.post",
+                    return_value=_sse_multi_resp(None, "xin ", None, "chào")):
+        assert tr._chat("sys", "user") == "xin chào"
+
+
+def test_all_null_content_counts_as_empty():
+    tr = NineRouterTranslator(max_retries=1)
+    with mock.patch("requests.post",
+                    return_value=_sse_multi_resp(None, None)), \
+         mock.patch("translation.nine_router.time.sleep"):
+        with pytest.raises(TranslateError) as e:
+            tr._chat("sys", "user")
+    assert "9Router không phản hồi" in str(e.value)
