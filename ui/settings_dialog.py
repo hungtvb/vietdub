@@ -130,6 +130,12 @@ class SettingsDialog(QDialog):
         self.whisper_align.setCurrentIndex(
             0 if self.settings.get("whisper_forced_alignment", True) else 1)
         f.addRow("WhisperX forced alignment:", self.whisper_align)
+        self.voice_anchor_review = QComboBox()
+        self.voice_anchor_review.addItem("Xuất mẫu giọng để duyệt", True)
+        self.voice_anchor_review.addItem("Không xuất mẫu giọng", False)
+        self.voice_anchor_review.setCurrentIndex(
+            0 if self.settings.get("voice_anchor_review", True) else 1)
+        f.addRow("Kiểm tra người nói:", self.voice_anchor_review)
         f.addRow(QLabel("Community-1 cần quyền truy cập model Hugging Face."))
         self.asr_model = QComboBox()
         self.asr_model.setEditable(True)
@@ -267,6 +273,8 @@ class SettingsDialog(QDialog):
         self.hf_token.setText(str(DEFAULTS["hf_token"]))
         self.whisper_align.setCurrentIndex(
             0 if DEFAULTS["whisper_forced_alignment"] else 1)
+        self.voice_anchor_review.setCurrentIndex(
+            0 if DEFAULTS["voice_anchor_review"] else 1)
         self.asr_model.setCurrentText(str(DEFAULTS["asr_model"]))
         self.vad_model.setText(str(DEFAULTS["vad_model"]))
         self.punc_model.setText(str(DEFAULTS["punc_model"]))
@@ -309,6 +317,7 @@ class SettingsDialog(QDialog):
             "whisper_model": self.whisper_model.text().strip() or "large-v3-turbo",
             "hf_token": self.hf_token.text().strip(),
             "whisper_forced_alignment": bool(self.whisper_align.currentData()),
+            "voice_anchor_review": bool(self.voice_anchor_review.currentData()),
             "asr_model": self.asr_model.currentText().strip(),
             "vad_model": self.vad_model.text().strip(),
             "punc_model": self.punc_model.text().strip(),
