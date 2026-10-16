@@ -325,6 +325,9 @@ class SpeakerVerificationDialog(QDialog):
         self.tabs.setEnabled(True)
 
     def verify_selected(self):
+        if self._match_thread is not None and self._match_thread.isRunning():
+            info_box(self, "Đang so giọng", "Chỉ xác minh sau khi so giọng hoàn tất.")
+            return
         kind, item = self._selected()
         if item is None:
             error_box(self, "Chưa chọn", "Hãy chọn một câu hoặc mẫu giọng.")
@@ -348,6 +351,8 @@ class SpeakerVerificationDialog(QDialog):
         self.watched.setChecked(False)
 
     def revoke_selected(self):
+        if self._match_thread is not None and self._match_thread.isRunning():
+            return
         kind, item = self._selected()
         if kind == "anchor":
             self.store.revoke_anchor(item["candidate_id"])
@@ -371,3 +376,11 @@ class SpeakerVerificationDialog(QDialog):
         for seg, before in zip(self.segments, self._initial_snapshot):
             seg.__dict__.update(before)
         super().reject()
+
+    def closeEvent(self, event):  # noqa: N802
+        # QThread owns the model-loading work; destroying the dialog during
+        # an inference would terminate the process on some Qt backends.
+        if self._match_thread is not None and self._match_thread.isRunning():
+            event.ignore()
+            return
+        super().closeEvent(event)
