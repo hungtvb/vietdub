@@ -48,6 +48,7 @@ DEFAULTS = {
     "funasr_keep_loaded": True,  # one reusable model in RAM; disable for low-memory computers
     "funasr_batch_size_s": 60,
     "funasr_max_vad_segment_ms": 15000,
+    "funasr_chunk_overlap_sec": 1.5,  # protects speech at 10-minute boundaries
     "asr_model": "damo/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
     "vad_model": "damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
     "punc_model": "damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",  # 290M, light
