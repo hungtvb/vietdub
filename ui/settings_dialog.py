@@ -113,11 +113,20 @@ class SettingsDialog(QDialog):
         tab = QWidget()
         f = QFormLayout(tab)
         self.asr_engine = QComboBox()
-        self.asr_engine.addItem("FunASR (mặc định / tương thích)", "funasr")
-        self.asr_engine.addItem("Whisper + pyannote + WhisperX (nâng cao)", "whisper_pyannote")
+        self.asr_engine.addItem(
+            "Tự động theo ngôn ngữ (Trung → FunASR; khác → Whisper)", "auto")
+        self.asr_engine.addItem("FunASR — chỉ dùng khi chọn tiếng Trung", "funasr")
+        self.asr_engine.addItem(
+            "Whisper + pyannote + WhisperX — đa ngôn ngữ", "whisper_pyannote")
         self.asr_engine.setCurrentIndex(max(0, self.asr_engine.findData(
-            self.settings.get("asr_engine", "funasr"))))
+            self.settings.get("asr_engine", "auto"))))
         f.addRow("Công nghệ nhận dạng:", self.asr_engine)
+        self.language_probe_model = QLineEdit(
+            self.settings.get("language_detection_model", "tiny"))
+        f.addRow("Whisper dò ngôn ngữ:", self.language_probe_model)
+        f.addRow(QLabel(
+            "Tự động nghe 3 vị trí video; tiếng Trung chắc chắn dùng FunASR, "
+            "các ngôn ngữ khác dùng Whisper."))
         self.whisper_model = QLineEdit(self.settings.get("whisper_model", "large-v3-turbo"))
         f.addRow("Whisper model:", self.whisper_model)
         self.hf_token = QLineEdit(self.settings.get("hf_token", ""))
@@ -268,7 +277,10 @@ class SettingsDialog(QDialog):
         self.ol_model.setText(str(DEFAULTS["ollama_model"]))
         self.llm_temp.setValue(float(DEFAULTS["llm_temperature"]))
         self.tr_batch.setValue(int(DEFAULTS["translate_batch"]))
-        self.asr_engine.setCurrentIndex(0 if DEFAULTS["asr_engine"] == "funasr" else 1)
+        self.asr_engine.setCurrentIndex(max(
+            0, self.asr_engine.findData(DEFAULTS["asr_engine"])))
+        self.language_probe_model.setText(
+            str(DEFAULTS["language_detection_model"]))
         self.whisper_model.setText(str(DEFAULTS["whisper_model"]))
         self.hf_token.setText(str(DEFAULTS["hf_token"]))
         self.whisper_align.setCurrentIndex(
@@ -314,6 +326,8 @@ class SettingsDialog(QDialog):
             "llm_temperature": self.llm_temp.value(),
             "translate_batch": self.tr_batch.value(),
             "asr_engine": self.asr_engine.currentData(),
+            "language_detection_model":
+                self.language_probe_model.text().strip() or "tiny",
             "whisper_model": self.whisper_model.text().strip() or "large-v3-turbo",
             "hf_token": self.hf_token.text().strip(),
             "whisper_forced_alignment": bool(self.whisper_align.currentData()),
