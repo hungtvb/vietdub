@@ -319,6 +319,8 @@ class SettingsDialog(QDialog):
         self.funasr_backend.setCurrentIndex(max(
             0, self.funasr_backend.findData(DEFAULTS["funasr_backend"])))
         self.funasr_threads.setValue(int(DEFAULTS["funasr_cpu_threads"]))
+        self.funasr_keep_loaded.setCurrentIndex(
+            0 if DEFAULTS["funasr_keep_loaded"] else 1)
         self.funasr_batch.setValue(int(DEFAULTS["funasr_batch_size_s"]))
         self.funasr_vad.setValue(int(DEFAULTS["funasr_max_vad_segment_ms"]))
         self.asr_model.setCurrentText(str(DEFAULTS["asr_model"]))
@@ -368,6 +370,7 @@ class SettingsDialog(QDialog):
             "voice_anchor_review": bool(self.voice_anchor_review.currentData()),
             "funasr_backend": self.funasr_backend.currentData(),
             "funasr_cpu_threads": self.funasr_threads.value(),
+            "funasr_keep_loaded": bool(self.funasr_keep_loaded.currentData()),
             "funasr_batch_size_s": self.funasr_batch.value(),
             "funasr_max_vad_segment_ms": self.funasr_vad.value(),
             "asr_model": self.asr_model.currentText().strip(),
