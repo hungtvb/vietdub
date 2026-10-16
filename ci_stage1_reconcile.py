@@ -59,74 +59,7 @@ def pyannote_diarize(video, out, token):
     return wav, exclusive, regular
 
 
-def associate_aligned_words(items, aligned_segments):
-    """Map aligner outputs back onto original timed utterances.
-
-    WhisperX can omit punctuation-only segments, so the number of aligned
-    segments is NOT guaranteed to equal the input number. Use word timestamps
-    to recover alignment without pairing segments by positional index.
-    """
-    words = []
-    for seg in aligned_segments:
-        for word in (seg.get("words") or []):
-            a, b = word.get("start"), word.get("end")
-            if a is None or b is None or float(b) <= float(a):
-                continue
-            words.append({"start": float(a), "end": float(b),
-                          "word": word.get("word", "")})
-    groups = [[] for _ in items]
-    for word in words:
-        # Assign each word to the single source utterance with most overlap.
-        scores = [overlap(float(item["start"]), float(item["end"]),
-                          word["start"], word["end"]) for item in items]
-        best = max(range(len(scores)), key=scores.__getitem__)
-        if scores[best] >= min(.03, (word["end"] - word["start"]) * .25):
-            groups[best].append(word)
-    return [sorted(group, key=lambda w: (w["start"], w["end"])) for group in groups]
-
-
-def forced_align(raw, wav):
-    """Real forced alignment with partial fallback, never fake successful alignment."""
-    import whisperx
-    audio = whisperx.load_audio(str(wav))
-    result = [dict(part, alignment_status="whisper_words_unaligned") for part in raw]
-    stats = {"method": "whisperx_forced_alignment", "aligned": 0,
-             "fallback_to_whisper_words": 0, "errors": {}}
-    groups = defaultdict(list)
-    for i, part in enumerate(raw):
-        lang = "zh" if re.search(r"[\u3400-\u9fff]", part["text"]) else "en"
-        groups[lang].append((i, part))
-    for language, parts in groups.items():
-        try:
-            model, metadata = whisperx.load_align_model(language_code=language, device="cpu")
-        except Exception as ex:
-            stats["errors"][language] = f"{type(ex).__name__}: {str(ex)[:280]}"
-            stats["fallback_to_whisper_words"] += len(parts)
-            continue
-        # Batches bound memory and allow partial progress if one batch fails.
-        for offset in range(0, len(parts), 20):
-            batch = parts[offset:offset + 20]
-            items = [{"start": float(p["start"]), "end": float(p["end"]),
-                      "text": p["text"]} for _, p in batch]
-            try:
-                aligned = whisperx.align(items, model, metadata, audio, "cpu",
-                                         return_char_alignments=False)["segments"]
-                mapped_words = associate_aligned_words(items, aligned)
-            except Exception as ex:
-                stats["errors"][f"{language}:{offset}"] = f"{type(ex).__name__}: {str(ex)[:280]}"
-                stats["fallback_to_whisper_words"] += len(batch)
-                continue
-            for (idx, _), words in zip(batch, mapped_words):
-                if words:
-                    result[idx]["words"] = words
-                    result[idx]["alignment_status"] = "whisperx_aligned"
-                    stats["aligned"] += 1
-                else:
-                    stats["fallback_to_whisper_words"] += 1
-        del model
-    if stats["aligned"] + stats["fallback_to_whisper_words"] != len(raw):
-        raise RuntimeError("Forced aligner accounting mismatch")
-    return result, stats
+from asr.whisper_align import forced_align
 
 
 def map_speakers(segments, turns):
