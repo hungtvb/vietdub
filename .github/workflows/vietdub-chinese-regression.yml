@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 120
     env:
       RUN_MODE: ${{ inputs.mode || 'benchmark' }}
-      ASR_BACKEND: ${{ inputs.backend || 'modelscope' }}
+      ASR_BACKEND: ${{ inputs.backend || 'automodel' }}
       MODELSCOPE_CACHE: ${{ github.workspace }}/.models
       OMP_NUM_THREADS: "4"
       PYTHONUNBUFFERED: "1"
