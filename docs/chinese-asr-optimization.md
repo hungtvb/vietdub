@@ -44,6 +44,29 @@ sequence agreement** with legacy FunASR on that excerpt; without
 normalization it has **63.86%**. Neither score identifies which text is
 correct. Each divergent window remains an editorial QA candidate.
 
+## Verified warm-cache rerun (same AutoModel and audio)
+
+GitHub Actions restored cache key `Linux-vietdub-modelscope-automodel-v2`
+successfully (about **1,913 MiB** uncompressed). A second independent CI
+runner processed the exact same 25-second speech sample.
+
+| Measured AutoModel metric | Initial run | Restored cache run |
+| --- | ---: | ---: |
+| Model load | 163.006 s | **45.256 s** |
+| Audio inference | 3.278 s | 4.121 s |
+| Total ASR operation | 166.285 s | **49.378 s** |
+| Segments / recognized Hanzi | 10 / 124 | 10 / 124 |
+
+The restored-cache model load time improved by **72.2%** and total ASR time by
+**70.3%**. These timings include CPU runner variance. **The cache avoids
+network download but does not eliminate deserialization**. The one-model
+in-memory pool inside the desktop process eliminates repeated deserialization
+for subsequent videos while the same model remains loaded and the process
+is alive. This behavior is validated with offline automated tests, not yet
+a multi-video GPU end-to-end benchmark.
+
+- [Warm-cache proof and run logs](https://github.com/hungtvb/vietdub/actions/runs/38918612292)
+
 ## Reusable local optimization
 
 VietDub keeps ModelScope weights on disk at
