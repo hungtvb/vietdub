@@ -183,81 +183,212 @@ class Orchestrator:
         cp.save_step(job.job_dir, "extract", {"wav_path": str(wav)})
 
     def _step_asr(self):
+        """Select ASR by spoken language, never by video filename or captions."""
+        import os
         from project import io as pio
-        job, s = self.job, self.settings
-        data = cp.load_step(job.job_dir, "extract") or {}
-        wav = data.get("wav_path")
-        engine = s.get("asr_engine", "funasr")
-        if engine == "whisper_pyannote":
+        from asr.source_language import (choose_language,
+                                         detect_source_language)
+        from asr.engine_router import select_asr_engine
+
+        job, settings = self.job, self.settings
+        source = cp.load_step(job.job_dir, "extract") or {}
+        wav = source.get("wav_path")
+        requested_lang = job.project.src_lang or "auto"
+        preferred_engine = settings.get("asr_engine", "auto") or "auto"
+
+        if preferred_engine == "auto" and requested_lang == "auto":
+            # Inexpensive multilingual language probe BEFORE the heavy ASR.
+            # Run at several times, avoiding assumptions from opening music.
+            try:
+                from faster_whisper import WhisperModel
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Thiếu faster-whisper để tự động nhận diện ngôn ngữ. "
+                    "Cài requirements-asr-hybrid.txt hoặc chọn ngôn ngữ "
+                    "nguồn và ASR thủ công.") from exc
+            probe = WhisperModel(
+                settings.get("language_detection_model", "tiny"),
+                device="cpu", compute_type="int8")
+            language = detect_source_language(wav, probe)
+            del probe
+        elif requested_lang != "auto":
+            language = choose_language([], requested=requested_lang)
+        elif preferred_engine == "funasr":
+            raise ValueError(
+                "Muốn ép FunASR phải chọn ngôn ngữ video = Tiếng Trung. "
+                "Để tự động chọn engine, đặt ASR = Tự động.")
+        else:
+            # Forced Whisper with auto-language lets its adapter probe the
+            # audio; no guess that a movie with Hanzi subtitles speaks zh.
+            language = choose_language([], requested="auto")
+
+        route = select_asr_engine(
+            language, preferred_engine,
+            chinese_min_confidence=float(
+                settings.get("chinese_asr_min_confidence", .70)))
+        cp.save_step(job.job_dir, "asr_route", route.to_dict())
+        self.logger.info(
+            "Định tuyến ASR: %s | ngôn ngữ=%s | lý do=%s",
+            route.engine, route.language, route.reason)
+
+        if route.engine == "whisper_pyannote":
             from asr.whisper_pyannote_adapter import WhisperPyannoteAdapter
             adapter = WhisperPyannoteAdapter(
-                model=s.get("whisper_model", "large-v3-turbo"),
-                token=s.get("hf_token", ""),
-                device=s.get("asr_device", "auto"),
-                forced_alignment=bool(s.get("whisper_forced_alignment", True)),
-                source_language=job.project.src_lang)
+                model=settings.get("whisper_model", "large-v3-turbo"),
+                token=settings.get("hf_token", ""),
+                device=settings.get("asr_device", "auto"),
+                forced_alignment=bool(
+                    settings.get("whisper_forced_alignment", True)),
+                source_language=requested_lang,
+                initial_decision=(language if language.mode != "unresolved"
+                                  else None))
             segments = adapter.transcribe(wav)
-            language_evidence = adapter.last_evidence.get("language_detection", {})
-            cp.save_step(job.job_dir, "source_language", language_evidence)
-            job.project.detected_src_lang = adapter.last_evidence.get(
-                "language_detected", "und")
+            quality = adapter.last_evidence
+            language_evidence = quality.get("language_detection",
+                                            language.to_dict())
+            job.project.detected_src_lang = quality.get(
+                "language_detected", language.primary)
+            job.project.language_review_required = (
+                route.language_review_required or
+                bool(quality.get("language_review_required")))
+        else:
+            from asr.funasr_adapter import FunASRAdapter
+            from asr.chinese_quality import (qa_chinese_segments,
+                                             reconcile_pyannote_speakers)
+            adapter = FunASRAdapter(
+                asr_model=settings.get("asr_model"),
+                vad_model=settings.get("vad_model"),
+                punc_model=settings.get("punc_model"),
+                spk_model=settings.get("spk_model"),
+                device=("cuda" if settings.get("asr_device") == "cuda"
+                        else "cpu"))
+            segments = adapter.transcribe(wav)
+            quality = {
+                "source": "chinese_funasr",
+                "qa_status": "UNAPPROVED",
+                "human_verified": False,
+                "speaker_diarization_executed": False,
+                "speaker_validation_warning": None,
+                "forced_alignment_executed": False,
+                "segments": [seg.to_dict() for seg in segments]}
+            quality["chinese_qa"] = qa_chinese_segments(segments)
+            job.project.detected_src_lang = "zh"
             job.project.language_review_required = bool(
-                adapter.last_evidence.get("language_review_required"))
-            pio.save_project(job.job_dir, job.project)
-            self.logger.info(
-                "Ngôn ngữ nguồn: %s (chọn: %s, confidence: %.2f, cần duyệt: %s)",
-                job.project.detected_src_lang, job.project.src_lang,
-                float(language_evidence.get("confidence", 0)),
-                job.project.language_review_required)
-            cp.save_step(job.job_dir, "asr_quality", adapter.last_evidence)
-            if s.get("voice_anchor_review", True):
-                # Independent acoustic references are candidates for listening,
-                # not verified film character identities. No auto-approval.
+                route.language_review_required)
+            language_evidence = language.to_dict()
+
+            # FunASR's CAM++ speaker labels are chunk-local. Use one
+            # independent pyannote pass over the entire audio to reconcile
+            # them if a valid token is available. No fake global matches.
+            token = os.getenv("HF_TOKEN") or settings.get("hf_token", "")
+            if token:
+                try:
+                    from pyannote.audio import Pipeline
+                    from asr.whisper_pyannote_adapter import annotation_windows
+                    import torch
+                    pipe = Pipeline.from_pretrained(
+                        "pyannote/speaker-diarization-community-1",
+                        token=token)
+                    if (settings.get("asr_device") == "cuda" and
+                            torch.cuda.is_available()):
+                        pipe.to(torch.device("cuda"))
+                    diarized = pipe(str(wav))
+                    exclusive = annotation_windows(
+                        diarized.exclusive_speaker_diarization)
+                    if not exclusive:
+                        raise RuntimeError("pyannote returned no speech turns")
+                    regular = annotation_windows(
+                        diarized.speaker_diarization)
+                    quality["speaker_qa"] = reconcile_pyannote_speakers(
+                        segments, exclusive)
+                    quality["diarization_exclusive"] = exclusive
+                    quality["diarization_regular"] = regular
+                    quality["speaker_diarization_executed"] = True
+                except Exception as exc:
+                    quality["speaker_validation_warning"] = (
+                        f"{type(exc).__name__}: {str(exc)[:260]}")
+                    self.logger.warning(
+                        "Không thể đối chiếu giọng FunASR trên toàn video: %s",
+                        exc)
+            else:
+                quality["speaker_validation_warning"] = (
+                    "No HF_TOKEN: speaker IDs after 10-minute chunks "
+                    "are not globally reconciled.")
+
+            if settings.get("whisper_forced_alignment", True):
+                try:
+                    from asr.whisper_align import forced_align
+                    raw = [{"id": seg.index, "start": seg.start,
+                            "end": seg.end, "text": seg.text_src,
+                            "language": "zh"} for seg in segments]
+                    aligned, statistics = forced_align(raw, wav)
+                    quality["alignment"] = statistics
+                    for seg, part in zip(segments, aligned):
+                        words = part.get("words") or []
+                        if part.get("alignment_status") == "whisperx_aligned" and words:
+                            start, end = float(words[0]["start"]), float(words[-1]["end"])
+                            if (end > start and abs(start - seg.start) < 2.0 and
+                                    abs(end - seg.end) < 2.0):
+                                seg.start, seg.end = start, end
+                            else:
+                                seg.needs_review = True
+                        else:
+                            seg.needs_review = True
+                    quality["forced_alignment_executed"] = bool(
+                        statistics.get("aligned", 0))
+                except Exception as exc:
+                    quality["forced_alignment_warning"] = (
+                        f"{type(exc).__name__}: {str(exc)[:260]}")
+                    self.logger.warning("Không thể forced-align tiếng Trung: %s", exc)
+                    for seg in segments:
+                        seg.needs_review = True
+
+            if (settings.get("voice_anchor_review", True) and
+                    quality.get("speaker_diarization_executed")):
                 try:
                     from speaker.voice_anchors import export_review
-                    anchor_dir = job.stages_dir / "voice_anchor_review"
-                    manifest = export_review(adapter.last_evidence, wav, anchor_dir)
-                    self.logger.info("Đã xuất mẫu giọng cần duyệt: %s", manifest)
-                except Exception as e:
-                    # Candidate export is optional; retain true ASR results and
-                    # clearly report why listening references were not written.
-                    self.logger.warning("Không thể xuất mẫu giọng để duyệt: %s", e)
-            self.logger.info(
-                "Whisper + pyannote: %d câu, %d lượt cần xác minh, "
-                "WhisperX aligned %d; QA chưa được người duyệt",
-                len(segments), sum(x.needs_review for x in segments),
-                adapter.last_evidence.get("alignment", {}).get("aligned", 0))
-        elif engine == "funasr":
-            from asr.source_language import normalize_language
-            # FunASR models here are explicitly zh-CN; never apply them to
-            # English/Japanese/etc, or quietly assume 'auto' means Chinese.
-            requested = normalize_language(job.project.src_lang)
-            if requested != "zh":
-                raise ValueError(
-                    "FunASR hiện tại chỉ hỗ trợ tiếng Trung. "
-                    "Hãy chọn tiếng Trung thủ công hoặc dùng "
-                    "Whisper + pyannote để tự nhận diện ngôn ngữ video.")
-            job.project.detected_src_lang = "zh"
-            job.project.language_review_required = False
-            pio.save_project(job.job_dir, job.project)
-            from asr.funasr_adapter import FunASRAdapter
-            adapter = FunASRAdapter(asr_model=s.get("asr_model"),
-                                    vad_model=s.get("vad_model"),
-                                    punc_model=s.get("punc_model"),
-                                    spk_model=s.get("spk_model"))
-            segments = adapter.transcribe(wav)
-        else:
-            raise ValueError(f"ASR engine không hỗ trợ: {engine}")
-        conf_thr = float(s.get("asr_confidence_low", .5))
+                    quality["word_evidence"] = [
+                        {"start": seg.start, "end": seg.end,
+                         "word": seg.text_src} for seg in segments]
+                    quality["segments"] = [seg.to_dict() for seg in segments]
+                    anchor_path = export_review(
+                        quality, wav, job.stages_dir / "voice_anchor_review")
+                    self.logger.info("Mẫu giọng tiếng Trung cần duyệt: %s",
+                                     anchor_path)
+                except Exception as exc:
+                    self.logger.warning("Không xuất được mẫu giọng: %s", exc)
+
+            quality["segments"] = [seg.to_dict() for seg in segments]
+            quality["qa_status"] = "UNAPPROVED"
+
+        # Persist evidence and project language independently of ASR backend.
+        if route.engine == "whisper_pyannote" and settings.get(
+                "voice_anchor_review", True):
+            try:
+                from speaker.voice_anchors import export_review
+                anchor_path = export_review(
+                    quality, wav, job.stages_dir / "voice_anchor_review")
+                self.logger.info("Mẫu giọng cần duyệt: %s", anchor_path)
+            except Exception as exc:
+                self.logger.warning("Không xuất được mẫu giọng: %s", exc)
+
+        cp.save_step(job.job_dir, "source_language", language_evidence)
+        cp.save_step(job.job_dir, "asr_quality", quality)
+        pio.save_project(job.job_dir, job.project)
         for seg in segments:
-            if seg.confidence < conf_thr:
+            if (seg.confidence <
+                    float(settings.get("asr_confidence_low", .5))):
                 seg.needs_review = True
-                self.logger.warning("ASR câu %d cần xác minh (QA/confidence %.2f)",
-                                    seg.index, seg.confidence)
+            if job.project.language_review_required:
+                seg.needs_review = True
         pio.save_segments(job.job_dir, "asr", segments)
-        self.logger.info("ASR: %d câu, %d speaker ID, %d cần duyệt",
-                         len(segments), len({x.speaker for x in segments}),
-                         sum(x.needs_review for x in segments))
+        self.logger.info(
+            "ASR hoàn tất: %s; %d câu; %d speaker cluster; %d cần QA; "
+            "language_review=%s",
+            route.engine, len(segments),
+            len({seg.speaker for seg in segments}),
+            sum(seg.needs_review for seg in segments),
+            job.project.language_review_required)
 
     def _step_gender(self):
         from speaker import gender as mgender
