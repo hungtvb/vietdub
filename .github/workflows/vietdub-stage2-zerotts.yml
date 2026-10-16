@@ -1,41 +1,87 @@
-name: VietDub 2 - ZeroTTS render
+name: VietDub 2 - Translation QA and ZeroTTS render
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "validate translation handoff, or render fully approved translation"
+        required: true
+        type: choice
+        options:
+          - validate
+          - render_approved
+        default: validate
+  push:
+    branches: [ci/run-vietdub-20261016]
+    paths:
+      - '.github/workflows/vietdub-stage2-zerotts.yml'
 permissions:
   contents: read
+  actions: read
 jobs:
   render:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      RUN_MODE: ${{ inputs.mode || 'validate' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Require reviewed translation
-        run: test -s translations/approved.json
-      - name: Install offline TTS runtime
+      - name: Fetch actual multilingual Whisper ASR from CI 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p prior_asr
+          gh run download 38856145757 -R "${{ github.repository }}" -n vietdub-whisper-asr-handoff -D prior_asr
+          test -s prior_asr/asr-handoff.json
+      - name: Reconstruct all real human-translated lines and check provenance
+        run: python translations/assemble_review.py
+      - name: Upload translation draft and QA for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: vietdub-human-translation-review
+          path: translations/review-draft.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Verify approved version is present (never dub incomplete draft)
+        if: env.RUN_MODE == 'render_approved'
+        run: |
+          test -s translations/approved.json
+          python - <<'PY'
+          import json
+          p=json.load(open('translations/approved.json',encoding='utf-8'))
+          assert p['schema_version']==1
+          assert p['segments'] and p['speakers']
+          assert all(not s.get('needs_review',False) for s in p['segments']), 'Unreviewed lines found'
+          assert p.get('video_metadata',{}).get('qa_status') == 'APPROVED'
+          print('Approved lines:',len(p['segments']))
+          PY
+      - name: Install offline ZeroTTS and FFmpeg
+        if: env.RUN_MODE == 'render_approved'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           pip install gdown zerotts numpy soundfile librosa
-      - name: Download ZeroTTS weights
+      - name: Download ZeroTTS ONNX model weights
+        if: env.RUN_MODE == 'render_approved'
         run: |
           python - <<'PY'
           from huggingface_hub import snapshot_download
           snapshot_download(repo_id='zeroweight-ai/ZeroTTS',local_dir='model/ZeroTTS')
           PY
       - name: Download original video
+        if: env.RUN_MODE == 'render_approved'
         run: |
           mkdir -p private_input output
           gdown '1hIdUbh_DAjlUdu1g39GTWJnfLOK-ZL7G' -O private_input/input.mp4
           test -s private_input/input.mp4
-      - name: Real Vietnamese TTS and MP4 render
+      - name: Real local Vietnamese TTS and MP4 render without subtitles
+        if: env.RUN_MODE == 'render_approved'
         run: python ci_stage2_render.py
       - uses: actions/upload-artifact@v4
-        if: success()
+        if: env.RUN_MODE == 'render_approved' && success()
         with:
           name: vietdub-zerotts-final-mp4
-          path: |
-            output/input_vidub.mp4
+          path: output/input_vidub.mp4
           if-no-files-found: error
           retention-days: 7
