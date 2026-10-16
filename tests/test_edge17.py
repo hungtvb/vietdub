@@ -97,8 +97,11 @@ def test_asr_long_wav_chunked_with_offset(tmp_path, monkeypatch):
 
     def fake_one(path):
         seen.append(path)
-        # each chunk pretends to hold one sentence at its own 0-1s
-        return [Segment(index=0, start=0.0, end=1.0, speaker=0,
+        # Each padded chunk has one sentence at the nominal start.
+        # Chunk 1/2 decode extra look-behind; local 1.25s => nominal + 0s.
+        num = int(Path(path).stem.split("_")[-1])
+        start = 0.0 if num == 0 else 1.25
+        return [Segment(index=0, start=start, end=start + 1.0, speaker=0,
                         text_src="你好", confidence=1.0)]
 
     monkeypatch.setattr(ad, "_transcribe_one", fake_one)
