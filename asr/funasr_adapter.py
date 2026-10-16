@@ -127,6 +127,9 @@ class FunASRAdapter:
         log.info("audio dài %.0fs, chia %d chunk ~%d phút để ASR (edge 17)",
                  dur, n, ASR_CHUNK_SEC // 60)
         tmpdir = Path(tempfile.mkdtemp(prefix="vd_asr_"))
+        # Chunk speaker IDs are local: never treat spk0 in chunk two as
+        # the same person as spk0 in chunk one without full-video evidence.
+        chunk_speaker_ids: dict[tuple[int, int], int] = {}
         try:
             segments: List[Segment] = []
             for ci in range(n):
@@ -144,6 +147,12 @@ class FunASRAdapter:
                 log.info("ASR chunk %d/%d (%.0fs-%.0fs)", ci + 1, n, off,
                          off + length)
                 for s in self._transcribe_one(str(chunk)):
+                    key = (ci, s.speaker)
+                    if key not in chunk_speaker_ids:
+                        chunk_speaker_ids[key] = len(chunk_speaker_ids)
+                    s.speaker = chunk_speaker_ids[key]
+                    if ci > 0:
+                        s.needs_review = True
                     s.start += off
                     s.end += off
                     segments.append(s)
@@ -173,13 +182,22 @@ class FunASRAdapter:
                 spk = int(str(spk_raw).replace("spk", ""))
             except ValueError:
                 spk = 0
+            raw_confidence = it.get("confidence")
+            # ModelScope often omits calibrated ASR confidence. Do not
+            # fabricate 1.0 for unknown speech quality.
+            try:
+                value = float(raw_confidence) if raw_confidence is not None else .5
+                if not math.isfinite(value) or not 0 <= value <= 1:
+                    raw_confidence, value = None, .5
+            except (TypeError, ValueError):
+                raw_confidence, value = None, .5
             segments.append(Segment(
                 index=i,
                 start=float(it.get("start", 0)) / 1000.0,
                 end=float(it.get("end", 0)) / 1000.0,
-                speaker=spk,
-                text_src=text,
-                confidence=float(it.get("confidence", 1.0) or 1.0),
+                speaker=spk, text_src=text, source_lang="zh",
+                confidence=value,
+                needs_review=raw_confidence is None,
             ))
         log.info("transcribed %d raw segments", len(segments))
         return segments
