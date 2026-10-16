@@ -40,7 +40,7 @@ jobs:
       - name: Install actual VietDub AI dependencies
         run: |
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install 'funasr==1.4.16' modelscope addict datasets pillow simplejson kaldi-native-fbank librosa soundfile edge-tts gtts openai requests yt-dlp numpy
+          python -m pip install 'funasr==1.4.16' modelscope addict datasets pillow simplejson sortedcontainers kaldi-native-fbank librosa soundfile edge-tts gtts openai requests yt-dlp numpy
       - name: Run nine actual pipeline steps headlessly (NO mocks)
         env:
           VIETDUB_9ROUTER_KEY: ${{ secrets.VIETDUB_9ROUTER_KEY }}
