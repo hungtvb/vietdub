@@ -261,9 +261,16 @@ class Orchestrator:
                 punc_model=settings.get("punc_model"),
                 spk_model=settings.get("spk_model"),
                 device=("cuda" if settings.get("asr_device") == "cuda"
-                        else "cpu"))
+                        else "cpu"),
+                backend=settings.get("funasr_backend", "modelscope"),
+                ncpu=int(settings.get("funasr_cpu_threads", 4)),
+                batch_size_s=int(settings.get("funasr_batch_size_s", 60)),
+                max_vad_segment_ms=int(
+                    settings.get("funasr_max_vad_segment_ms", 15000)))
             segments = adapter.transcribe(wav)
+            self.logger.info("FunASR profiling: %s", adapter.metrics)
             quality = {
+                "performance": dict(adapter.metrics),
                 "source": "chinese_funasr",
                 "qa_status": "UNAPPROVED",
                 "human_verified": False,
