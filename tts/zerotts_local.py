@@ -1,5 +1,6 @@
 """Offline ZeroTTS adapter for VietDub."""
 from pathlib import Path
+from hashlib import sha256
 from project.schema import Segment
 class ZeroTTSLocal:
     def __init__(self,model_dir="model/ZeroTTS",voices=None,local_only=True):
@@ -26,7 +27,10 @@ class ZeroTTSLocal:
             if not text: raise ValueError("Missing Vietnamese text: "+str(seg.index))
             voice=self.voices.get(str(seg.speaker)) or (female if seg.gender=="female" else male)[seg.speaker%4]
             if voice not in voices: raise RuntimeError("Unavailable ZeroTTS voice: "+voice)
-            path=out_dir/("seg_%04d.wav"%seg.index)
+            # A sentence can be split and reindexed during duration fitting;
+            # index-only caches would silently reuse the WRONG spoken text.
+            stamp=sha256((str(voice)+"\\0"+text).encode("utf-8")).hexdigest()[:12]
+            path=out_dir/("seg_%04d_%s.wav"%(seg.index,stamp))
             if not path.is_file() or path.stat().st_size<1024:
                 audio=engine.synthesize(text,voice=voice)
                 engine.save_audio(audio,str(path))
