@@ -29,15 +29,11 @@ def line_key(seg: Segment) -> str:
 
 
 def audio_fingerprint(path: str | Path) -> str:
-    """Job-local source guard: exact size plus first/last MiB of source WAV."""
-    p = Path(path)
-    size = p.stat().st_size
-    h = sha256(f"size={size}|".encode("ascii"))
-    with p.open("rb") as stream:
-        h.update(stream.read(1024 * 1024))
-        if size > 1024 * 1024:
-            stream.seek(max(0, size - 1024 * 1024))
-            h.update(stream.read(1024 * 1024))
+    """Stream the FULL original audio SHA256; never reuse decisions on a changed source."""
+    h = sha256()
+    with Path(path).open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            h.update(block)
     return h.hexdigest()
 
 
