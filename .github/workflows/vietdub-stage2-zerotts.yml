@@ -58,17 +58,24 @@ jobs:
           print('Approved lines:',len(p['segments']))
           PY
       - name: Install offline ZeroTTS and FFmpeg
-        if: env.RUN_MODE == 'render_approved'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           pip install gdown zerotts numpy soundfile librosa
       - name: Download ZeroTTS ONNX model weights
-        if: env.RUN_MODE == 'render_approved'
         run: |
           python - <<'PY'
           from huggingface_hub import snapshot_download
           snapshot_download(repo_id='zeroweight-ai/ZeroTTS',local_dir='model/ZeroTTS')
           PY
+      - name: Verify ZeroTTS speaks actual Vietnamese dialogue
+        run: python ci_zerotts_smoke.py
+      - name: Upload actual TTS sound check
+        uses: actions/upload-artifact@v4
+        with:
+          name: vietdub-zerotts-real-audio-check
+          path: output/tts-smoke/*.wav
+          if-no-files-found: error
+          retention-days: 7
       - name: Download original video
         if: env.RUN_MODE == 'render_approved'
         run: |
