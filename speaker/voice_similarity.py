@@ -65,9 +65,8 @@ def extract_embedding(wav, start=0., end=None):
     try:
         import numpy as np
         import soundfile as sf
-        import torch
     except ImportError as exc:
-        raise RuntimeError("Thiếu numpy/soundfile/torch cho speaker embedding") from exc
+        raise RuntimeError("Thiếu numpy/soundfile để đọc audio giọng") from exc
     with sf.SoundFile(str(wav)) as f:
         if f.samplerate != 16000:
             raise ValueError("Mẫu giọng phải là audio 16kHz")
@@ -83,6 +82,13 @@ def extract_embedding(wav, start=0., end=None):
     if (len(mono) < 16000 or not np.isfinite(mono).all()
             or np.max(np.abs(mono)) < 1e-4):
         raise ValueError("Audio mẫu giọng trống hoặc không hợp lệ")
+    # Validate source audio BEFORE importing heavyweight optional torch.
+    # A corrupt or too-short clip should fail with its real validation cause.
+    try:
+        import torch
+    except ImportError as exc:
+        raise RuntimeError(
+            "Thiếu PyTorch cho embedding. Cài requirements-speaker-v2.txt") from exc
     wave = torch.from_numpy(mono).unsqueeze(0)
     with torch.inference_mode():
         vector = _get_encoder().encode_batch(wave).squeeze().detach().cpu().numpy()
