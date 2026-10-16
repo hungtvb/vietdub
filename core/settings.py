@@ -37,6 +37,7 @@ DEFAULTS = {
     "whisper_model": "large-v3-turbo",
     "asr_device": "auto",
     "whisper_forced_alignment": True,
+    "voice_anchor_review": True,  # exports audition candidates; NEVER approves automatically
     "hf_token": "",  # optional; HF_TOKEN environment variable takes priority
 
     "asr_model": "damo/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
