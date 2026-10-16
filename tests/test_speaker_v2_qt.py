@@ -99,3 +99,29 @@ def test_asr_review_displays_character_column(app, sample):
     assert dlg.btn_anchor.text() == "Xác minh nhân vật V2"
     assert dlg.tbl.item(0, 7).text() in ("Chưa xác minh", "Maddie ✓")
     dlg.close()
+
+
+def test_optional_embedding_worker_never_alters_identity(app, sample, monkeypatch):
+    from ui.speaker_verification import VoiceMatchWorker
+    import speaker.voice_similarity as matcher
+    job, wav, lines = sample
+    dlg = SpeakerVerificationDialog(job, lines, wav)
+    assert dlg.btn_compare.text().startswith("So giọng AI")
+    store = dlg.store
+    monkeypatch.setattr(matcher, "compare_line_to_verified_anchors",
+                        lambda *args: {
+                            "status": "SUGGESTION_ONLY",
+                            "ranked": [{
+                                "character_name": "Maddie",
+                                "cosine_similarity": .89,
+                                "reference_samples": 2}],
+                            "requires_human_review": True,
+                            "line_verified_by_model": False})
+    seen = []
+    worker = VoiceMatchWorker(store, 1, wav, dlg.anchor_dir)
+    worker.finished.connect(lambda x: seen.append(x))
+    worker.run()
+    assert len(seen) == 1
+    assert seen[0]["line_verified_by_model"] is False
+    assert lines[1].identity_status == "UNVERIFIED"
+    dlg.reject()
