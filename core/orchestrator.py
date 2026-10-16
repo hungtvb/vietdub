@@ -413,6 +413,9 @@ class Orchestrator:
         # ghi đè. Chỉ áp dụng khi user đã đặt rõ male/female.
         manual = pio.load_speakers(job.job_dir, "gender") or {}
         for spk_id, mspk in manual.items():
+            if mspk.identity_verified and mspk.character_name and spk_id in speakers:
+                speakers[spk_id].character_name = mspk.character_name
+                speakers[spk_id].identity_verified = True
             if mspk.gender in ("male", "female") and spk_id in speakers:
                 if speakers[spk_id].gender != mspk.gender:
                     self.logger.info(
@@ -495,6 +498,12 @@ class Orchestrator:
                         self.logger.warning("bỏ qua metadata video: %s", me)
                         meta = {"genre": "other", "style": "other",
                                 "setting": "other", "tone_notes": ""}
+                manual = pio.load_speakers(job.job_dir, "gender") or {}
+                for speaker_id, confirmed in manual.items():
+                    if (confirmed.identity_verified and confirmed.character_name
+                            and speaker_id in speakers):
+                        speakers[speaker_id].character_name = confirmed.character_name
+                        speakers[speaker_id].identity_verified = True
                 pio.save_speakers(job.job_dir, "analyze", speakers)
                 meta = {**meta,
                         "source_language": job.project.detected_src_lang,
