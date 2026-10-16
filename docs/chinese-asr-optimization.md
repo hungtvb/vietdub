@@ -94,6 +94,36 @@ automatically identify film characters. Chinese lines still require
 translation/editorial review; neither CI nor model agreement writes
 `translations/approved.json`.
 
+## Long-video dialogue preservation (all source files)
+
+Earlier FunASR post-processing truncated `previous.end` to `next.start`
+whenever two utterances overlapped. This silently deleted legitimate dialogue
+in scenes with simultaneous speakers. **New rule:** retain the full original
+timestamp span and text for both utterances and flag both for manual review.
+It also detects nested multi-speaker interjections, not only adjacent overlaps.
+
+For an audio recording longer than the configured nominal chunk size
+(default ten minutes), FunASR decodes a configurable **1.5-second
+look-behind and look-ahead** per chunk. Each ASR hypothesis belongs to the
+nominal chunk containing its midpoint. This avoids double-counting words in
+the duplicated border audio and reduces broken speech at the split.
+Segments near boundaries remain flagged for editorial QA; a heuristic
+midpoint is **not proof** that a sentence has been perfectly reconstructed.
+
+The generic settings are:
+`funasr_chunk_overlap_sec` (0..15), `funasr_keep_loaded` (on/off),
+`funasr_backend`, `funasr_batch_size_s` and
+`funasr_max_vad_segment_ms`. None of the logic depends on the source
+file name, scene contents or the Mandarin regression dialogue.
+
+Automated tests include `tests/test_funasr_long_video_boundaries.py`:
+nested simultaneous dialogue, nominal chunk ownership, deduplication and
+speaker-ID isolation across chunks. A separate CI job
+`.github/workflows/vietdub-chinese-boundary.yml` checks the **same real
+Mandarin audio** in a single ASR pass versus artificially shortened chunks
+(8-second nominal chunks) and records sequence disagreement for QA, not
+a fabricated CER/WER metric.
+
 ## Where to run future tests
 
 - Real Chinese audio smoke: `.github/workflows/vietdub-chinese-routing-smoke.yml`
