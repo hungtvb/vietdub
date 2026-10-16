@@ -71,11 +71,14 @@ class FunASRAdapter:
                  spk_model: str, device: str = "cpu",
                  backend: str = "modelscope", ncpu: int = 4,
                  batch_size_s: int = 60, max_vad_segment_ms: int = 15000,
-                 keep_loaded: bool = False):
+                 keep_loaded: bool = False, chunk_overlap_sec: float = 1.5):
         if backend not in ("modelscope", "automodel"):
             raise ValueError("Unsupported Chinese ASR backend: " + backend)
         if ncpu < 1 or batch_size_s < 1 or max_vad_segment_ms < 1000:
             raise ValueError("Invalid Chinese ASR tuning configuration")
+        if not 0. <= float(chunk_overlap_sec) <= 15.:
+            raise ValueError("chunk_overlap_sec must be between 0 and 15")
+        self.chunk_overlap_sec = float(chunk_overlap_sec)
         self.keep_loaded = bool(keep_loaded)
         self._inference_lock = RLock()
         self.backend = backend
@@ -97,6 +100,9 @@ class FunASRAdapter:
             "real_time_factor": None,
             "reused_loaded_model": False,
             "cache_dir": "",
+            "chunk_count": 0,
+            "chunk_overlap_seconds": self.chunk_overlap_sec,
+            "boundary_review_count": 0,
         }
         self._started_at = None
 
@@ -170,6 +176,8 @@ class FunASRAdapter:
         """
         self._started_at = time.perf_counter()
         self.metrics["inference_seconds"] = 0.
+        self.metrics["boundary_review_count"] = 0
+        self.metrics["chunk_count"] = 0
         self.metrics["reused_loaded_model"] = self._pipe is not None
         self.load()
         wav_path = Path(wav_path)
@@ -178,6 +186,9 @@ class FunASRAdapter:
         if dur <= ASR_CHUNK_SEC:
             return self._finalize(self.post_fix(self._transcribe_one(str(wav_path))))
         n = int(math.ceil(dur / ASR_CHUNK_SEC))
+        self.metrics["chunk_count"] = n
+        # Limit the look-behind/look-ahead on tiny synthetic test chunks.
+        extra = min(self.chunk_overlap_sec, ASR_CHUNK_SEC / 4.0)
         log.info("audio dài %.0fs, chia %d chunk ~%d phút để ASR (edge 17)",
                  dur, n, ASR_CHUNK_SEC // 60)
         tmpdir = Path(tempfile.mkdtemp(prefix="vd_asr_"))
@@ -188,27 +199,42 @@ class FunASRAdapter:
             segments: List[Segment] = []
             for ci in range(n):
                 off = ci * ASR_CHUNK_SEC
-                length = min(ASR_CHUNK_SEC, dur - off)
+                nominal_end = min(dur, off + ASR_CHUNK_SEC)
+                # Decode overlapping audio around 10-min boundaries to
+                # avoid chopping Chinese syllables and adjacent characters.
+                actual_start = max(0., off - extra)
+                actual_end = min(dur, nominal_end + extra)
+                length = actual_end - actual_start
                 chunk = tmpdir / f"chunk_{ci:03d}.wav"
                 p = subprocess.run(
                     [_bin.ffmpeg_cmd(), "-y", "-v", "error",
-                     "-ss", f"{off:.3f}", "-t", f"{length:.3f}",
+                     "-ss", f"{actual_start:.3f}", "-t", f"{length:.3f}",
                      "-i", str(wav_path), "-c:a", "pcm_s16le", str(chunk)],
                     capture_output=True, text=True)
                 if p.returncode != 0 or not chunk.exists():
                     raise ASRError(
                         f"Cắt audio chunk {ci + 1}/{n} thất bại: {p.stderr[:200]}")
-                log.info("ASR chunk %d/%d (%.0fs-%.0fs)", ci + 1, n, off,
-                         off + length)
+                log.info(
+                    "ASR chunk %d/%d nominal %.3f-%.3f, decoded %.3f-%.3f",
+                    ci + 1, n, off, nominal_end, actual_start, actual_end)
                 for s in self._transcribe_one(str(chunk)):
+                    s.start += actual_start
+                    s.end += actual_start
+                    midpoint = (s.start + s.end) / 2.
+                    if midpoint < off or midpoint >= nominal_end:
+                        # Adjacent chunk owns this utterance's midpoint.
+                        # Do not append duplicate overlap material.
+                        continue
+                    if extra and (ci > 0 and s.start < off + extra or
+                                  ci < n - 1 and s.end > nominal_end - extra):
+                        s.needs_review = True
+                        self.metrics["boundary_review_count"] += 1
                     key = (ci, s.speaker)
                     if key not in chunk_speaker_ids:
                         chunk_speaker_ids[key] = len(chunk_speaker_ids)
                     s.speaker = chunk_speaker_ids[key]
                     if ci > 0:
                         s.needs_review = True
-                    s.start += off
-                    s.end += off
                     segments.append(s)
             return self._finalize(self.post_fix(segments))
         finally:
