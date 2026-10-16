@@ -13,6 +13,8 @@ import os
 
 from project.schema import Segment
 from asr.whisper_align import forced_align
+from asr.source_language import (alignment_language, detect_source_language,
+                                 normalize_language)
 
 log = logging.getLogger("vietdub.asr.hybrid")
 
@@ -82,7 +84,8 @@ def construct_segments(raw, exclusive, *, min_coverage=.55):
         idx = len(segments)
         segments.append(Segment(index=idx, start=round(start, 3),
                                 end=round(end, 3), speaker=sid,
-                                text_src=text, confidence=qa_score,
+                                text_src=text, source_lang=source.get("language", ""),
+                                confidence=qa_score,
                                 needs_review=uncertain))
         qa.append({"index": idx, "speaker_label": next(
             (label for label, assigned in mapping.items() if assigned == sid), "UNKNOWN"),
@@ -120,12 +123,14 @@ def construct_segments(raw, exclusive, *, min_coverage=.55):
 
 class WhisperPyannoteAdapter:
     def __init__(self, model="large-v3-turbo", token="", device="auto",
-                 compute_type="auto", forced_alignment=True):
+                 compute_type="auto", forced_alignment=True,
+                 source_language="auto"):
         self.model = model
         self.token = os.getenv("HF_TOKEN") or token
         self.device = device
         self.compute_type = compute_type
         self.forced_alignment = forced_alignment
+        self.source_language = normalize_language(source_language)
         self.last_evidence = {}
 
     def transcribe(self, wav_path):
@@ -145,9 +150,17 @@ class WhisperPyannoteAdapter:
         dev = ("cuda" if torch.cuda.is_available() else "cpu") if self.device == "auto" else self.device
         compute = ("float16" if dev == "cuda" else "int8") if self.compute_type == "auto" else self.compute_type
         model = WhisperModel(self.model, device=dev, compute_type=compute)
-        stream, info = model.transcribe(str(wav_path), beam_size=5, multilingual=True,
-                                        word_timestamps=True, vad_filter=True,
-                                        condition_on_previous_text=False)
+        # Audio-first language routing happens BEFORE the full ASR pass. Manual
+        # language selection skips acoustic probing but is recorded in evidence.
+        language = detect_source_language(
+            wav_path, model, requested=self.source_language)
+        manual_language = (language.primary if language.mode == "manual" else None)
+        stream, info = model.transcribe(
+            str(wav_path), beam_size=5,
+            language=manual_language,
+            multilingual=manual_language is None,
+            word_timestamps=True, vad_filter=True,
+            condition_on_previous_text=False)
         raw = [
             {"id": i, "start": float(p.start), "end": float(p.end), "text": p.text,
              "avg_logprob": float(p.avg_logprob), "no_speech_prob": float(p.no_speech_prob),
@@ -156,6 +169,11 @@ class WhisperPyannoteAdapter:
             for i, p in enumerate(stream)]
         if not raw:
             raise RuntimeError("Whisper chưa nhận diện được lời thoại nào")
+        primary = (language.primary if language.primary != "und"
+                   else normalize_language(getattr(info, "language", "und")))
+        for part in raw:
+            part["language"] = alignment_language(
+                {"language": primary, "text": part["text"]}, default=primary)
         del model
         pipe = Pipeline.from_pretrained("pyannote/speaker-diarization-community-1",
                                         token=self.token)
@@ -188,7 +206,10 @@ class WhisperPyannoteAdapter:
                 })
         self.last_evidence = {
             "source": "whisper_pyannote_community_1",
-            "language_detected": getattr(info, "language", ""),
+            "language_detected": primary,
+            "language_detection": language.to_dict(),
+            "language_review_required": language.review_required,
+            "segment_languages": sorted({p["language"] for p in raw}),
             "speaker_mapping": mapping,
             "diarized_turns": exclusive,
             "diarization_exclusive": exclusive,
