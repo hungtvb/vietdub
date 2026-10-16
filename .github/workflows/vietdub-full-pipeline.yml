@@ -34,7 +34,7 @@ jobs:
       - name: Fetch user-supplied video (runner only, never committed)
         run: |
           mkdir -p private_input output
-          gdown --fuzzy 'https://drive.google.com/file/d/1hIdUbh_DAjlUdu1g39GTWJnfLOK-ZL7G/view' -O private_input/input.mp4
+          gdown '1hIdUbh_DAjlUdu1g39GTWJnfLOK-ZL7G' -O private_input/input.mp4
           test -s private_input/input.mp4
           ffprobe -v error -show_entries format=duration,size -of json private_input/input.mp4
       - name: Install actual VietDub AI dependencies
