@@ -22,7 +22,10 @@ def main():
     cli = argparse.ArgumentParser()
     cli.add_argument("--video", required=True)
     cli.add_argument("--out", default="chinese_regression")
-    cli.add_argument("--mode", choices=("smoke", "full"), default="full")
+    cli.add_argument("--mode", choices=("smoke", "full", "benchmark"), default="full")
+    cli.add_argument("--backend", choices=("modelscope", "automodel"),
+                     default="modelscope")
+    cli.add_argument("--benchmark-seconds", type=float, default=25.)
     opts = cli.parse_args()
     root = Path(opts.out)
     root.mkdir(parents=True, exist_ok=True)
@@ -33,6 +36,14 @@ def main():
     subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error",
                     "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
                     str(wav)], check=True)
+    if opts.mode == "benchmark":
+        if opts.benchmark_seconds < 5 or opts.benchmark_seconds > 180:
+            raise ValueError("Benchmark duration must be between 5 and 180 seconds")
+        short_wav = root / "benchmark_16k.wav"
+        subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error",
+                        "-i", str(wav), "-t", str(opts.benchmark_seconds),
+                        "-ac", "1", "-ar", "16000", str(short_wav)], check=True)
+        wav = short_wav
     from faster_whisper import WhisperModel
     detector = WhisperModel("tiny", device="cpu", compute_type="int8")
     language = detect_source_language(wav, detector)
@@ -47,19 +58,25 @@ def main():
         "language_detection": language.to_dict(),
         "automatic_route": route.to_dict(),
         "status": "LANGUAGE_PROBED" if opts.mode == "smoke" else "ASR_RUNNING",
+        "model_backend": opts.backend,
+        "model_timing_profiling_available": False,
         "human_transcript_verified": False,
         "model_quality_wer_measured": False,
     }
-    if opts.mode == "full":
+    if opts.mode in ("full", "benchmark"):
         from core.settings import DEFAULTS
         model = FunASRAdapter(
             asr_model=DEFAULTS["asr_model"],
             vad_model=DEFAULTS["vad_model"],
             punc_model=DEFAULTS["punc_model"],
-            spk_model=DEFAULTS["spk_model"])
+            spk_model=DEFAULTS["spk_model"],
+            backend=opts.backend, ncpu=4, batch_size_s=60,
+            max_vad_segment_ms=15000)
         started = time.monotonic()
         segments = model.transcribe(wav)
         report["asr_elapsed_seconds"] = round(time.monotonic() - started, 2)
+        report["asr_profile"] = dict(model.metrics)
+        report["model_timing_profiling_available"] = True
         if not segments:
             raise AssertionError("FunASR produced no real transcript")
         qa = qa_chinese_segments(segments)
@@ -74,7 +91,9 @@ def main():
             if seg.start < 0 or seg.end <= seg.start:
                 raise AssertionError("Bad timestamp range")
         report.update({
-            "status": "CHINESE_FUNASR_REAL_ASR_COMPLETE",
+            "status": ("CHINESE_FUNASR_BENCHMARK_COMPLETE"
+                       if opts.mode == "benchmark"
+                       else "CHINESE_FUNASR_REAL_ASR_COMPLETE"),
             "actual_hanzi_count": han_count,
             "segment_count": len(segments),
             "review_required_count": qa["review_required"],
