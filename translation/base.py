@@ -522,7 +522,9 @@ class BaseTranslator:
             ctx_lines = [f"[{s.index}] {self._line_header(s)}: {s.text_src}"
                          for s in segments[ctx0:b0]]
             lines = [f"[{s.index}] {self._line_header(s)} "
-                     f"{s.start:.1f}-{s.end:.1f}s: {s.text_src}" for s in chunk]
+                     f"{s.start:.1f}-{s.end:.1f}s"
+                     + (f" [lang={s.source_lang}]" if s.source_lang else "")
+                     + f": {s.text_src}" for s in chunk]
             user = prompts.build_translate_user(rel_table, lines,
                                                 self.proper_nouns,
                                                 ctx_lines or None)
@@ -634,7 +636,9 @@ class BaseTranslator:
                           seg: Segment) -> str:
         user = prompts.build_translate_user(
             rel_table,
-            [f"[{seg.index}] {self._line_header(seg)}: {seg.text_src}"],
+            [f"[{seg.index}] {self._line_header(seg)}"
+             + (f" [lang={seg.source_lang}]" if seg.source_lang else "")
+             + f": {seg.text_src}"],
             self.proper_nouns)
         for _ in range(2):
             try:
@@ -668,7 +672,7 @@ def _parse_json(raw: str) -> dict:
     return data
 
 
-def google_translate_free(texts: List[str], src: str = "zh-CN",
+def google_translate_free(texts: List[str], src: str = "auto",
                           dst: str = "vi") -> List[str]:
     """Last-resort fallback (edge case 15): free Google endpoint, no key.
 
@@ -731,7 +735,9 @@ def translate_with_fallback(providers: List[BaseTranslator],
         log.warning("tất cả nguồn LLM đều lỗi, dùng Google Translate free "
                     "(dự phòng cuối): chất lượng đại từ có thể kém, nên "
                     "duyệt lại bản dịch ở bước [5]")
-        vi = google_translate_free([s.text_src for s in segments])
+        language = (video_metadata or {}).get("source_language", "auto")
+        language = language if language not in ("und", "mixed", "") else "auto"
+        vi = google_translate_free([s.text_src for s in segments], src=language)
         for s, t in zip(segments, vi):
             s.text_vi = (t or "").strip() or s.text_src
         return segments, "google_free"
