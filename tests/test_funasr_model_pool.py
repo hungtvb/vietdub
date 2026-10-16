@@ -52,3 +52,30 @@ def test_funasr_adapter_reuses_loaded_model_between_video_jobs(monkeypatch, tmp_
     assert second.metrics["reused_loaded_model"] is True
     assert second.metrics["model_load_seconds"] < .1
     model_pool.clear_model()
+
+
+def test_disabling_ram_cache_actually_evicts_prior_resident_model(monkeypatch, tmp_path):
+    # Switching the UI toggle off must remove the previous model, not just
+    # construct an uncached second instance while the first remains in RAM.
+    from asr import model_pool
+    model_pool.clear_model()
+    calls = []
+    class LightweightModel:
+        def __init__(self, **kw):
+            calls.append(kw)
+        def generate(self, **kw):
+            return [{"sentence_info": [{"start": 0, "end": 1200,
+                                         "text": "你好", "spk": "spk0"}]}]
+    monkeypatch.setitem(sys.modules, "funasr",
+                        SimpleNamespace(AutoModel=LightweightModel))
+    monkeypatch.setenv("MODELSCOPE_CACHE", str(tmp_path))
+    monkeypatch.setattr(fa, "_wav_duration_sec", lambda _: 2.)
+    with_cache = fa.FunASRAdapter("a", "v", "p", "s", backend="automodel",
+                                  keep_loaded=True)
+    assert with_cache.transcribe(tmp_path / "first.wav")
+    assert model_pool.cache_info()["occupied"]
+    without_cache = fa.FunASRAdapter("a", "v", "p", "s", backend="automodel",
+                                     keep_loaded=False)
+    assert without_cache.transcribe(tmp_path / "second.wav")
+    assert not model_pool.cache_info()["occupied"]
+    assert len(calls) == 2
