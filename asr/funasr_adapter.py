@@ -284,9 +284,8 @@ class FunASRAdapter:
     @staticmethod
     def post_fix(segments: List[Segment],
                  del_end_punc: bool = False) -> List[Segment]:
-        """Port of recognition/_base.py::_post_fix:
-        drop garbage-only lines, fix overlaps (prev.end = next.start),
-        drop end<=start."""
+        """Conservative cleanup: remove garbage and invalid times;
+        preserve overlapping speech and flag it instead of deleting words."""
         kept: List[Segment] = []
         for seg in segments:
             text = (seg.text_src or "").strip()
@@ -294,13 +293,19 @@ class FunASRAdapter:
                 log.warning("bỏ câu toàn ký tự rác: %r", text[:60])
                 continue
             kept.append(seg)
+        # Spoken overlap is valid (two people talking at the same time).
+        # Truncating prev.end destroys acoustic evidence and can silently
+        # delete real dialogue, especially in dramas and interviews. Retain
+        # both word spans and require an explicit editorial decision.
         for i in range(1, len(kept)):
             prev, cur = kept[i - 1], kept[i]
             if prev.end > cur.start:
-                log.warning("câu %d chồng lên câu %d, cắt end=%s",
-                            prev.index, cur.index, cur.start)
-                prev.end = cur.start
-                prev.needs_review = True  # edge case 4: overlap -> review flag
+                log.warning(
+                    "ASR overlapping utterances %d / %d (%.3fs); "
+                    "preserve timestamps and flag BOTH for human review",
+                    prev.index, cur.index, prev.end - cur.start)
+                prev.needs_review = True
+                cur.needs_review = True
         out: List[Segment] = []
         for seg in kept:
             if seg.end <= seg.start:
