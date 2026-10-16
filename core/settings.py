@@ -33,7 +33,9 @@ DEFAULTS = {
     "llm_temperature": 0.2,
     "translate_batch": 20,
     # --- ASR ---
-    "asr_engine": "whisper_pyannote",  # multilingual default; FunASR = legacy Chinese-only
+    "asr_engine": "auto",  # auto: zh -> FunASR, others -> Whisper
+    "language_detection_model": "tiny",  # light acoustic language probe
+    "chinese_asr_min_confidence": 0.70,  # below threshold use multilingual Whisper + QA
     "whisper_model": "large-v3-turbo",
     "source_language": "auto",  # new video source detection: auto | en | zh | ...
     "asr_device": "auto",
