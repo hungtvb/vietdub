@@ -15,6 +15,8 @@ on:
     branches: [ci/run-vietdub-20261016]
     paths:
       - '.github/workflows/vietdub-stage1-reconcile.yml'
+      - 'ci_stage1_reconcile.py'
+      - 'tests/test_stage1_reconcile.py'
 
 permissions:
   contents: read
