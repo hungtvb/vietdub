@@ -89,7 +89,9 @@ def main():
         "whisper_segments": len(whisper),
         "whisper_model_load_seconds": report["whisper_model_load_seconds"],
         "whisper_inference_seconds": report["whisper_inference_seconds"],
-        "cross_model_agreement": compare["cross_model_agreement"],
+        "raw_character_agreement": compare["raw_character_sequence_agreement"],
+        "script_normalized_agreement": compare["normalized_character_sequence_agreement"],
+        "script_normalization": compare["script_normalization"],
         "disagreement_windows": compare["disagreement_windows"],
     }, ensure_ascii=False))
 
