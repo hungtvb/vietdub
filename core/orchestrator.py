@@ -197,6 +197,18 @@ class Orchestrator:
                 forced_alignment=bool(s.get("whisper_forced_alignment", True)))
             segments = adapter.transcribe(wav)
             cp.save_step(job.job_dir, "asr_quality", adapter.last_evidence)
+            if s.get("voice_anchor_review", True):
+                # Independent acoustic references are candidates for listening,
+                # not verified film character identities. No auto-approval.
+                try:
+                    from speaker.voice_anchors import export_review
+                    anchor_dir = job.stages_dir / "voice_anchor_review"
+                    manifest = export_review(adapter.last_evidence, wav, anchor_dir)
+                    self.logger.info("Đã xuất mẫu giọng cần duyệt: %s", manifest)
+                except Exception as e:
+                    # Candidate export is optional; retain true ASR results and
+                    # clearly report why listening references were not written.
+                    self.logger.warning("Không thể xuất mẫu giọng để duyệt: %s", e)
             self.logger.info(
                 "Whisper + pyannote: %d câu, %d lượt cần xác minh, "
                 "WhisperX aligned %d; QA chưa được người duyệt",
