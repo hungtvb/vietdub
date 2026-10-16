@@ -250,6 +250,9 @@ class Orchestrator:
             seen.add(name)
             try:
                 if name == "9router":
+                    if s.get("require_nine_router_key", False) and not s.get("nine_router_key"):
+                        self.logger.warning("9Router key missing; skip unstable unauthenticated endpoint")
+                        continue
                     providers.append(NineRouterTranslator(
                         api_key=s.get("nine_router_key", ""),
                         base_url=s.get("nine_router_url",
