@@ -112,6 +112,25 @@ class SettingsDialog(QDialog):
     def _build_asr_tab(self) -> None:
         tab = QWidget()
         f = QFormLayout(tab)
+        self.asr_engine = QComboBox()
+        self.asr_engine.addItem("FunASR (mặc định / tương thích)", "funasr")
+        self.asr_engine.addItem("Whisper + pyannote + WhisperX (nâng cao)", "whisper_pyannote")
+        self.asr_engine.setCurrentIndex(max(0, self.asr_engine.findData(
+            self.settings.get("asr_engine", "funasr"))))
+        f.addRow("Công nghệ nhận dạng:", self.asr_engine)
+        self.whisper_model = QLineEdit(self.settings.get("whisper_model", "large-v3-turbo"))
+        f.addRow("Whisper model:", self.whisper_model)
+        self.hf_token = QLineEdit(self.settings.get("hf_token", ""))
+        self.hf_token.setEchoMode(QLineEdit.Password)
+        self.hf_token.setPlaceholderText("Ưu tiên đặt biến môi trường HF_TOKEN")
+        f.addRow("Hugging Face token:", self.hf_token)
+        self.whisper_align = QComboBox()
+        self.whisper_align.addItem("Bật (khuyến nghị)", True)
+        self.whisper_align.addItem("Tắt", False)
+        self.whisper_align.setCurrentIndex(
+            0 if self.settings.get("whisper_forced_alignment", True) else 1)
+        f.addRow("WhisperX forced alignment:", self.whisper_align)
+        f.addRow(QLabel("Community-1 cần quyền truy cập model Hugging Face."))
         self.asr_model = QComboBox()
         self.asr_model.setEditable(True)
         self.asr_model.addItem(str(self.settings.get("asr_model")))
@@ -242,6 +261,11 @@ class SettingsDialog(QDialog):
         self.ol_model.setText(str(DEFAULTS["ollama_model"]))
         self.llm_temp.setValue(float(DEFAULTS["llm_temperature"]))
         self.tr_batch.setValue(int(DEFAULTS["translate_batch"]))
+        self.asr_engine.setCurrentIndex(0 if DEFAULTS["asr_engine"] == "funasr" else 1)
+        self.whisper_model.setText(str(DEFAULTS["whisper_model"]))
+        self.hf_token.setText(str(DEFAULTS["hf_token"]))
+        self.whisper_align.setCurrentIndex(
+            0 if DEFAULTS["whisper_forced_alignment"] else 1)
         self.asr_model.setCurrentText(str(DEFAULTS["asr_model"]))
         self.vad_model.setText(str(DEFAULTS["vad_model"]))
         self.punc_model.setText(str(DEFAULTS["punc_model"]))
@@ -280,6 +304,10 @@ class SettingsDialog(QDialog):
             "ollama_model": self.ol_model.text().strip(),
             "llm_temperature": self.llm_temp.value(),
             "translate_batch": self.tr_batch.value(),
+            "asr_engine": self.asr_engine.currentData(),
+            "whisper_model": self.whisper_model.text().strip() or "large-v3-turbo",
+            "hf_token": self.hf_token.text().strip(),
+            "whisper_forced_alignment": bool(self.whisper_align.currentData()),
             "asr_model": self.asr_model.currentText().strip(),
             "vad_model": self.vad_model.text().strip(),
             "punc_model": self.punc_model.text().strip(),
