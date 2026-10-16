@@ -33,6 +33,12 @@ DEFAULTS = {
     "llm_temperature": 0.2,
     "translate_batch": 20,
     # --- ASR ---
+    "asr_engine": "funasr",  # legacy default; optionally whisper_pyannote
+    "whisper_model": "large-v3-turbo",
+    "asr_device": "auto",
+    "whisper_forced_alignment": True,
+    "hf_token": "",  # optional; HF_TOKEN environment variable takes priority
+
     "asr_model": "damo/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
     "vad_model": "damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
     "punc_model": "damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",  # 290M, light
