@@ -194,8 +194,21 @@ class Orchestrator:
                 model=s.get("whisper_model", "large-v3-turbo"),
                 token=s.get("hf_token", ""),
                 device=s.get("asr_device", "auto"),
-                forced_alignment=bool(s.get("whisper_forced_alignment", True)))
+                forced_alignment=bool(s.get("whisper_forced_alignment", True)),
+                source_language=job.project.src_lang)
             segments = adapter.transcribe(wav)
+            language_evidence = adapter.last_evidence.get("language_detection", {})
+            cp.save_step(job.job_dir, "source_language", language_evidence)
+            job.project.detected_src_lang = adapter.last_evidence.get(
+                "language_detected", "und")
+            job.project.language_review_required = bool(
+                adapter.last_evidence.get("language_review_required"))
+            pio.save_project(job.job_dir, job.project)
+            self.logger.info(
+                "Ngôn ngữ nguồn: %s (chọn: %s, confidence: %.2f, cần duyệt: %s)",
+                job.project.detected_src_lang, job.project.src_lang,
+                float(language_evidence.get("confidence", 0)),
+                job.project.language_review_required)
             cp.save_step(job.job_dir, "asr_quality", adapter.last_evidence)
             if s.get("voice_anchor_review", True):
                 # Independent acoustic references are candidates for listening,
@@ -215,6 +228,18 @@ class Orchestrator:
                 len(segments), sum(x.needs_review for x in segments),
                 adapter.last_evidence.get("alignment", {}).get("aligned", 0))
         elif engine == "funasr":
+            from asr.source_language import normalize_language
+            # FunASR models here are explicitly zh-CN; never apply them to
+            # English/Japanese/etc, or quietly assume 'auto' means Chinese.
+            requested = normalize_language(job.project.src_lang)
+            if requested != "zh":
+                raise ValueError(
+                    "FunASR hiện tại chỉ hỗ trợ tiếng Trung. "
+                    "Hãy chọn tiếng Trung thủ công hoặc dùng "
+                    "Whisper + pyannote để tự nhận diện ngôn ngữ video.")
+            job.project.detected_src_lang = "zh"
+            job.project.language_review_required = False
+            pio.save_project(job.job_dir, job.project)
             from asr.funasr_adapter import FunASRAdapter
             adapter = FunASRAdapter(asr_model=s.get("asr_model"),
                                     vad_model=s.get("vad_model"),
@@ -331,6 +356,10 @@ class Orchestrator:
                         meta = {"genre": "other", "style": "other",
                                 "setting": "other", "tone_notes": ""}
                 pio.save_speakers(job.job_dir, "analyze", speakers)
+                meta = {**meta,
+                        "source_language": job.project.detected_src_lang,
+                        "source_language_requested": job.project.src_lang,
+                        "language_review_required": job.project.language_review_required}
                 pio.save_video_metadata(job.job_dir, meta)
                 self.logger.info("phân tích quan hệ xong bằng %s", prov.name)
                 return
@@ -345,7 +374,9 @@ class Orchestrator:
                 speaker.sync_default_pronouns()
         pio.save_speakers(job.job_dir, "analyze", speakers)
         pio.save_video_metadata(job.job_dir, {"genre": "other", "style": "other",
-            "setting": "other", "tone_notes": "Fallback: neutral pronouns; review required"})
+            "setting": "other", "tone_notes": "Fallback: neutral pronouns; review required",
+            "source_language": job.project.detected_src_lang,
+            "language_review_required": job.project.language_review_required})
 
     def _step_translate(self):
         from translation.base import translate_with_fallback
@@ -358,6 +389,8 @@ class Orchestrator:
         # a second time inside translate_with_fallback
         analyze_done = cp.has_step(job.job_dir, "analyze")
         video_metadata = pio.load_video_metadata(job.job_dir) or {}
+        video_metadata["source_language"] = job.project.detected_src_lang
+        video_metadata["language_review_required"] = job.project.language_review_required
         segments, used = translate_with_fallback(
             providers, segments, speakers, skip_analyze=analyze_done,
             video_metadata=video_metadata)
