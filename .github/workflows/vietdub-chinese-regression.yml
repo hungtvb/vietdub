@@ -46,7 +46,7 @@ jobs:
         if: env.RUN_MODE == 'full'
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install "funasr==1.4.16" modelscope addict datasets pillow simplejson kaldi-native-fbank librosa
+          pip install "funasr==1.4.16" modelscope addict datasets pillow simplejson kaldi-native-fbank librosa sortedcontainers
       - name: Download real Mandarin speech video from Wikimedia Commons
         run: |
           mkdir -p chinese_regression
