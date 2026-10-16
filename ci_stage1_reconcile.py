@@ -200,7 +200,13 @@ def main():
         save(Path(args.out) / "diarization-evidence.json",
              {"source": "pyannote_community_1_real", "exclusive": turns, "regular": regular})
         if args.forced_align:
-            aligned, stats = forced_align(raw["raw"], wav)
+            # Legacy CI-1 ASR stores the audio language in transcript metadata
+            # rather than on individual raw segments. Preserve it explicitly;
+            # unknown source languages must NOT default to English.
+            language = data.get("metadata", {}).get("initial_detected_language", "")
+            parts = [{**p, "language": p.get("language") or language}
+                     for p in raw["raw"]]
+            aligned, stats = forced_align(parts, wav)
     elif args.forced_align:
         raise ValueError("Forced alignment cannot run in QA-only mode")
     result = reconcile(data, raw, turns, regular, aligned, stats)
