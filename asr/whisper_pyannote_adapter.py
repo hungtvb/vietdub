@@ -173,8 +173,20 @@ class WhisperPyannoteAdapter:
         primary = (language.primary if language.primary != "und"
                    else normalize_language(getattr(info, "language", "und")))
         for part in raw:
-            part["language"] = alignment_language(
-                {"language": primary, "text": part["text"]}, default=primary)
+            # Per-utterance acoustic language, when provided by ASR, wins.
+            # In mixed Mandarin/English dialogue Latin-only lines must NOT
+            # be force-aligned by the Chinese aligner without evidence.
+            acoustically_detected = normalize_language(part.get("language"))
+            if acoustically_detected not in ("auto", "und", "mixed"):
+                part["language"] = acoustically_detected
+            elif (language.mode == "mixed" and primary == "zh"
+                    and not any("\u3400" <= ch <= "\u9fff"
+                                for ch in part["text"])):
+                part["language"] = "und"
+            else:
+                part["language"] = alignment_language(
+                    {"language": primary, "text": part["text"]},
+                    default=primary)
         del model
         pipe = Pipeline.from_pretrained("pyannote/speaker-diarization-community-1",
                                         token=self.token)
