@@ -75,6 +75,6 @@ def test_inference_time_excludes_model_initialization(monkeypatch, tmp_path):
     adapter._pipe = model
     segments = adapter.transcribe(tmp_path / "sample.wav")
     assert len(segments) == 1
-    assert adapter.metrics["model_load_seconds"] is None
+    assert adapter.metrics["model_load_seconds"] == 0.0  # preloaded instance; no new load
     assert adapter.metrics["inference_seconds"] <= adapter.metrics["total_seconds"]
     assert adapter.metrics["real_time_factor"] >= 0
