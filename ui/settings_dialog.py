@@ -175,6 +175,13 @@ class SettingsDialog(QDialog):
         self.funasr_vad.setValue(int(
             self.settings.get("funasr_max_vad_segment_ms", 15000)))
         f.addRow("FunASR max VAD (ms):", self.funasr_vad)
+        self.funasr_overlap = QDoubleSpinBox()
+        self.funasr_overlap.setRange(0.0, 15.0)
+        self.funasr_overlap.setDecimals(1)
+        self.funasr_overlap.setSingleStep(0.5)
+        self.funasr_overlap.setValue(float(
+            self.settings.get("funasr_chunk_overlap_sec", 1.5)))
+        f.addRow("Gối tiếng tại ranh giới chunk (giây):", self.funasr_overlap)
         self.asr_model = QComboBox()
         self.asr_model.setEditable(True)
         self.asr_model.addItem(str(self.settings.get("asr_model")))
