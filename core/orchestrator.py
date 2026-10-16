@@ -258,7 +258,8 @@ class Orchestrator:
                                     "mimo-v2.6-flash-free"),
                         temperature=float(s.get("llm_temperature", 0.2)),
                         batch_size=int(s.get("translate_batch", 20)),
-                        proper_nouns=list(s.get("proper_nouns", []))))
+                        proper_nouns=list(s.get("proper_nouns", [])),
+                        timeout=45, max_retries=1))
                 elif name == "ollama":
                     if s.get("ollama_model"):
                         providers.append(OllamaTranslator(
@@ -306,7 +307,15 @@ class Orchestrator:
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 self.logger.warning("analyze bằng %s lỗi: %s", prov.name, e)
-        raise RuntimeError(f"Phân tích quan hệ thất bại: {last_err}")
+        self.logger.warning("LLM analyze unavailable (%s); using neutral pronouns", last_err)
+        for speaker in speakers.values():
+            if not speaker.relations:
+                speaker.relations = [{"audience": "audience", "pronoun_i": "tôi",
+                                      "pronoun_you": "bạn", "is_default": True}]
+                speaker.sync_default_pronouns()
+        pio.save_speakers(job.job_dir, "analyze", speakers)
+        pio.save_video_metadata(job.job_dir, {"genre": "other", "style": "other",
+            "setting": "other", "tone_notes": "Fallback: neutral pronouns; review required"})
 
     def _step_translate(self):
         from translation.base import translate_with_fallback
