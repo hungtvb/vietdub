@@ -39,6 +39,7 @@ def main() -> int:
     key = os.environ.get("VIETDUB_9ROUTER_KEY", "").strip()
     if key:
         settings.set("nine_router_key", key)
+    settings.set("require_nine_router_key", True)
     if args.ollama_model:
         settings.set("ollama_model", args.ollama_model)
     project = Project(name=inp.stem, video_source="file", video_in=str(inp),
