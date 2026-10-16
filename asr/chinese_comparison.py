@@ -1,30 +1,58 @@
-"""Compare two *real* Mandarin ASR transcripts without pretending either is truth.
+"""Compare independent Chinese ASR hypotheses without claiming either is truth.
 
-No reference WER/CER is reported until a human-reviewed transcript exists.
-Suitable for any Chinese recording, not coupled to the regression interview.
+Normalize Simplified/Traditional script when OpenCC is available, because a
+transcript in Traditional must not be marked wrong solely for its characters.
+Timestamped windows are triage aids, NOT official CER/WER measurements.
 """
 from __future__ import annotations
 
 from difflib import SequenceMatcher
+from functools import lru_cache
 from pathlib import Path
 import json
-import re
 from typing import Iterable
+
+
+@lru_cache(maxsize=1)
+def _t2s_converter():
+    try:
+        from opencc import OpenCC
+        return OpenCC("t2s")
+    except ImportError:
+        return None
 
 
 def hanzi_only(value: str) -> str:
     return "".join(ch for ch in value if "\u3400" <= ch <= "\u9fff")
 
 
+def normalize_hanzi(value: str) -> str | None:
+    converter = _t2s_converter()
+    if converter is None:
+        return None
+    return hanzi_only(converter.convert(hanzi_only(value)))
+
+
 def extract_window(segments: Iterable[dict], start: float, end: float) -> str:
+    """Assign an utterance to only one window by midpoint.
+
+    This prevents the same original utterance being counted in multiple
+    adjacent windows. Utterances crossing a window edge remain approximate.
+    """
     if end <= start:
         raise ValueError("Invalid time window")
     ordered = sorted(segments, key=lambda s: float(s["start"]))
     return "".join(
         s.get("text_src") or s.get("text") or ""
-        for s in ordered if float(s["start"]) < end and
-        float(s["end"]) > start
+        for s in ordered
+        if start <= (float(s["start"]) + float(s["end"])) / 2 < end
     )
+
+
+def _agreement(a: str, b: str) -> float | None:
+    if not (a or b):
+        return None
+    return round(SequenceMatcher(None, a, b, autojunk=False).ratio(), 4)
 
 
 def compare_transcripts(first: list[dict], second: list[dict],
@@ -33,32 +61,48 @@ def compare_transcripts(first: list[dict], second: list[dict],
         raise ValueError("Invalid comparison window")
     windows = []
     start = 0.
+    script_normalized = _t2s_converter() is not None
     while start < duration:
         end = min(start + window_seconds, duration)
-        a = hanzi_only(extract_window(first, start, end))
-        b = hanzi_only(extract_window(second, start, end))
-        ratio = (SequenceMatcher(None, a, b, autojunk=False).ratio()
-                 if a or b else None)
+        raw_a = hanzi_only(extract_window(first, start, end))
+        raw_b = hanzi_only(extract_window(second, start, end))
+        norm_a = normalize_hanzi(raw_a) if script_normalized else None
+        norm_b = normalize_hanzi(raw_b) if script_normalized else None
         windows.append({
             "start": round(start, 2), "end": round(end, 2),
-            "funasr_hanzi": a, "whisper_hanzi": b,
-            "same_text": a == b,
-            "sequence_agreement": round(ratio, 4) if ratio is not None else None,
-            "requires_editorial_review": bool(a != b),
+            "funasr_hanzi": raw_a, "whisper_hanzi": raw_b,
+            "funasr_simplified": norm_a, "whisper_simplified": norm_b,
+            "raw_sequence_agreement": _agreement(raw_a, raw_b),
+            "normalized_sequence_agreement": (
+                _agreement(norm_a, norm_b) if script_normalized else None),
+            "requires_editorial_review": (
+                norm_a != norm_b if script_normalized else raw_a != raw_b),
+            "window_is_approximate": True,
         })
         start = end
+
     all_a = "".join(item["funasr_hanzi"] for item in windows)
     all_b = "".join(item["whisper_hanzi"] for item in windows)
-    aggregate = (SequenceMatcher(None, all_a, all_b, autojunk=False).ratio()
-                 if all_a or all_b else None)
+    normalized_a = normalize_hanzi(all_a) if script_normalized else None
+    normalized_b = normalize_hanzi(all_b) if script_normalized else None
+    normalized_agreement = (
+        _agreement(normalized_a, normalized_b) if script_normalized else None)
     return {
         "metric": "cross_model_character_sequence_agreement_NOT_CER_OR_WER",
         "human_reference_verified": False,
+        "script_normalization": (
+            "opencc_t2s" if script_normalized else "unavailable_not_normalized"),
+        "raw_character_sequence_agreement": _agreement(all_a, all_b),
+        "normalized_character_sequence_agreement": normalized_agreement,
         "funasr_hanzi_count": len(all_a),
         "whisper_hanzi_count": len(all_b),
-        "cross_model_agreement": round(aggregate, 4) if aggregate is not None else None,
         "disagreement_windows": sum(x["requires_editorial_review"] for x in windows),
         "windows": windows,
+        "limitations": [
+            "Time windows use segment midpoints, not acoustically matched words.",
+            "Neither hypothesis has been verified against a human reference.",
+            "Chinese written variants are normalized only if OpenCC is installed.",
+        ],
     }
 
 
