@@ -63,6 +63,15 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
+          name: vietdub-asr-checkpoints
+          path: |
+            jobs/*/stages/*.json
+            jobs/*/checkpoints/*.json
+          if-no-files-found: warn
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
           name: vietdub-real-run-status
           path: output/vietdub-result.json
           if-no-files-found: ignore
