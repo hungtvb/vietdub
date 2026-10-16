@@ -141,7 +141,7 @@ def _probe_duration(wav_path, ffprobe="ffprobe"):
 
 
 def detect_source_language(wav_path, whisper_model, requested: str = "auto",
-                           *, ffmpeg="ffmpeg", ffprobe="ffprobe",
+                           *, ffmpeg=None, ffprobe=None,
                            sample_seconds=16.) -> LanguageDecision:
     """Probe source speech at 3 distant times before doing the full transcription.
 
@@ -154,6 +154,9 @@ def detect_source_language(wav_path, whisper_model, requested: str = "auto",
     source = Path(wav_path)
     if not source.is_file():
         raise FileNotFoundError(source)
+    from media import _bin
+    ffmpeg = ffmpeg or _bin.ffmpeg_cmd()
+    ffprobe = ffprobe or _bin.ffprobe_cmd()
     duration = _probe_duration(source, ffprobe=ffprobe)
     observations = []
     with tempfile.TemporaryDirectory(prefix="vietdub_lang_probe_") as temp:
