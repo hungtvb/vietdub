@@ -124,13 +124,14 @@ def construct_segments(raw, exclusive, *, min_coverage=.55):
 class WhisperPyannoteAdapter:
     def __init__(self, model="large-v3-turbo", token="", device="auto",
                  compute_type="auto", forced_alignment=True,
-                 source_language="auto"):
+                 source_language="auto", initial_decision=None):
         self.model = model
         self.token = os.getenv("HF_TOKEN") or token
         self.device = device
         self.compute_type = compute_type
         self.forced_alignment = forced_alignment
         self.source_language = normalize_language(source_language)
+        self.initial_decision = initial_decision
         self.last_evidence = {}
 
     def transcribe(self, wav_path):
@@ -152,7 +153,7 @@ class WhisperPyannoteAdapter:
         model = WhisperModel(self.model, device=dev, compute_type=compute)
         # Audio-first language routing happens BEFORE the full ASR pass. Manual
         # language selection skips acoustic probing but is recorded in evidence.
-        language = detect_source_language(
+        language = self.initial_decision or detect_source_language(
             wav_path, model, requested=self.source_language)
         manual_language = (language.primary if language.mode == "manual" else None)
         stream, info = model.transcribe(
