@@ -44,16 +44,16 @@ Rules for audience per line:
 
 Rules for relations (one entry per distinct audience of that speaker; mark the most frequent audience as is_default):
 - News anchor / reporter / narrator -> audience: "tôi" / "quý vị".
-- Interviewee / guest / attendee -> reporter: "tôi" / "anh". This is the conventional Vietnamese dubbing default for Chinese news programs; the user can correct it at review.
+- Interviewee / guest / attendee -> reporter: "tôi" / "anh". This is a conventional Vietnamese dubbing default for news programs; the user can correct it at review.
 - Young reporter interviewing an older official in a NON-news chat setting -> reporter says "em", calls them "anh"/"chị".
 - Married couple -> "anh"/"em". Close friends, classmates, peers chatting informally -> "tớ"/"cậu" or "tôi"/"bạn".
 - Do NOT use "tôi"/"bạn" as a lazy default in news, interview, or formal settings. Only use it when the speakers are clearly informal peers.
 - If truly nothing can be determined -> "tôi" / "bạn"."""
 
 TRANSLATE_SYSTEM = """You are a professional dubbing translator translating video dialogue from
-Chinese to Vietnamese.
+any source language into Vietnamese.
 
-You receive: (1) VIDEO CONTEXT (genre/style, may be absent), (2) a speaker-relationship table with locked pronouns per (speaker, audience) pair - a speaker may have SEVERAL pairs, (3) previous lines for CONTEXT ONLY, (4) a list of lines to translate: id, speaker -> audience, start/end time, Chinese text.
+You receive: (1) VIDEO CONTEXT (genre/style, may be absent), (2) a speaker-relationship table with locked pronouns per (speaker, audience) pair - a speaker may have SEVERAL pairs, (3) previous lines for CONTEXT ONLY, (4) a list of lines to translate: id, speaker -> audience, start/end time and source dialogue with an optional language tag. Videos may contain multiple languages.
 
 Requirements:
 - For EACH line, look up its (speaker, audience) pair in the relationship table and use EXACTLY those pronouns for that line. Different lines of the same speaker may need different pronouns.
@@ -68,10 +68,14 @@ Return ONLY valid JSON: { "translations": [ { "id": 0, "text_vi": "..." } ] }"""
 # Edge case 9: proper names must be kept / transliterated, never translated
 # by meaning. Appended to the translate system prompt.
 PROPER_NOUN_RULE = """
-Proper-name rule: keep Chinese proper names of people and places as-is or
-transliterate them into Han-Viet reading (e.g. 乌兰察布 -> O Lan Sat Bo /
-Ô Lan Sát Bố). NEVER translate a proper name by its literal meaning.
+Proper-name rule: NEVER translate a proper name by its literal meaning.
+Keep consistent character and location name spellings across scenes.
+For Chinese source: interpret Simplified and Traditional Chinese, keep a
+consistent Han-Viet or customary Vietnamese rendering when appropriate.
+For English/other sources: preserve established names and avoid invented
+translations of names or cultural references.
 {custom_names}"""
+
 
 CUSTOM_NAMES_TMPL = ("Additionally, the user provided these known names - always "
                      "render them exactly like this: {names}.")
@@ -106,7 +110,24 @@ def translate_system_with_names(proper_nouns: list[str] | None = None,
     custom = ""
     if proper_nouns:
         custom = CUSTOM_NAMES_TMPL.format(names=", ".join(proper_nouns))
-    return (TRANSLATE_SYSTEM + video_context_block(video_metadata)
+    from asr.source_language import LANGUAGE_NAMES, normalize_language
+    source = normalize_language((video_metadata or {}).get("source_language", "und"))
+    label = LANGUAGE_NAMES.get(source, source)
+    mixed = bool((video_metadata or {}).get("language_review_required", False))
+    language_guide = (
+        "\nSOURCE LANGUAGE: " + label + " (" + source + "). "
+        "Use the [lang=...] marker on each dialogue line when present. "
+        "Never assume the source language is Chinese or English. "
+        "Translate idioms, titles, kinship terms and local context accurately. "
+        "If code-switching or names are ambiguous, preserve evidence for review.\n"
+    )
+    chinese_guide = (
+        "\nCHINESE-SPECIFIC: handle both Simplified and Traditional forms, "
+        "Chinese kinship terms, idioms, honorifics, particles, and consistent "
+        "Han-Viet/culturally established character names.\n"
+    ) if source == "zh" or mixed else ""
+    return (TRANSLATE_SYSTEM + language_guide + chinese_guide
+            + video_context_block(video_metadata)
             + PROPER_NOUN_RULE.format(custom_names=custom))
 
 
@@ -155,7 +176,7 @@ ARBITER_SYSTEM = """You are an arbiter deciding the final speaker relationship t
 
 You receive a SUMMARY table: each speaker was analyzed independently in several batches (different parts of the video). For each speaker you see per batch: their relations list (audience -> pronouns), line counts, and role. A speaker may address different audiences; conflicts between batches are highlighted.
 
-You also receive the video's overall metadata (genre/style/setting/tone) and a few controversial sample lines (original Chinese text) from speakers whose batches disagreed. Use them as evidence to resolve conflicts; mention in "note" which evidence tipped your choice.
+You also receive the video's overall metadata (genre/style/setting/tone) and a few controversial sample lines (original-language text) from speakers whose batches disagreed. Use them as evidence to resolve conflicts; mention in "note" which evidence tipped your choice.
 
 Task: produce ONE locked relationship table for the whole video. Each speaker gets ONE relations list = the union of audiences seen across batches.
 
@@ -200,7 +221,7 @@ def build_arbiter_user(summary_lines: list[str],
                 parts.append(f"- {k}: {v}")
     if controversial_lines:
         parts.append("")
-        parts.append("CONTROVERSIAL SAMPLE LINES (original Chinese text, "
+        parts.append("CONTROVERSIAL SAMPLE LINES (original-language text, "
                      "from speakers whose batches disagreed):")
         parts.extend(controversial_lines)
     return "\n".join(parts)
