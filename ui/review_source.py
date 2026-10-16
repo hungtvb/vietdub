@@ -38,7 +38,7 @@ audience_label = audience_label_vi
 audience_value = audience_value_vi
 
 COLS = ["#", "Bắt đầu", "Kết thúc", "Loa", "Giới tính", "Nói với ai",
-        "Nội dung"]
+        "Nội dung", "Nhân vật xác minh"]
 
 
 class GenderDelegate(QStyledItemDelegate):
@@ -118,7 +118,7 @@ class ReviewSourceWindow(QWidget):
 
         root = QVBoxLayout(self)
         root.addWidget(QLabel(
-            "Duyệt phụ đề gốc (tiếng Trung) — sửa trực tiếp trong bảng, "
+            "Duyệt lời thoại gốc — sửa trực tiếp trong bảng, "
             "Enter để xuống dòng tiếp theo."))
         n_review = sum(1 for s in self.segments if s.needs_review)
         # Điểm dừng #1 chạy TRƯỚC bước gender -> checkpoint "gender" chưa có;
@@ -143,6 +143,7 @@ class ReviewSourceWindow(QWidget):
         self.tbl.setColumnWidth(2, 80)
         self.tbl.setColumnWidth(3, 52)
         self.tbl.setColumnWidth(4, 92)
+        self.tbl.setColumnWidth(7, 150)
         self.tbl.horizontalHeader().setStretchLastSection(True)
         self.tbl.setSelectionBehavior(QTableWidget.SelectRows)
         self.tbl.setSelectionMode(QTableWidget.SingleSelection)
@@ -151,7 +152,7 @@ class ReviewSourceWindow(QWidget):
         row = QHBoxLayout()
         self.btn_play = QPushButton("Nghe lại câu")
         self.btn_play.clicked.connect(self.play_selected)
-        self.btn_anchor = QPushButton("Kiểm tra mẫu giọng")
+        self.btn_anchor = QPushButton("Xác minh nhân vật V2")
         self.btn_anchor.clicked.connect(self.open_voice_anchor_review)
         self.btn_split = QPushButton("Tách câu")
         self.btn_split.setToolTip(
@@ -177,13 +178,35 @@ class ReviewSourceWindow(QWidget):
         root.addLayout(row)
 
     def open_voice_anchor_review(self) -> None:
-        path = self.job.stages_dir / "voice_anchor_review" / "index.html"
-        if not path.is_file():
-            info_box(self, "Chưa có mẫu giọng",
-                     "Chỉ chế độ Whisper + pyannote mới tạo mẫu giọng. "
-                     "Mở Cài đặt để bật tính năng này rồi chạy lại ASR.")
+        """Original-video per-line identity review, never entire-cluster auto-approval."""
+        if not self._read_table():
             return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
+        wav = self._wav_path()
+        if not wav or not Path(wav).is_file():
+            error_box(self, "Thiếu audio gốc",
+                      "Hãy tách audio từ video rồi mở lại xác minh.")
+            return
+        from ui.speaker_verification import SpeakerVerificationDialog
+        try:
+            dlg = SpeakerVerificationDialog(self.job, self.segments, wav, self)
+        except (ValueError, OSError) as exc:
+            error_box(self, "Không thể mở xác minh giọng", str(exc))
+            return
+        if dlg.exec():
+            dlg.store.apply_verified_lines()
+            for seg in self.segments:
+                if seg.identity_status == "VERIFIED":
+                    speaker = self.speakers.setdefault(
+                        seg.speaker, Speaker(id=seg.speaker))
+                    speaker.character_name = seg.character_name
+                    speaker.identity_verified = True
+                    speaker.role = seg.character_name
+            pio.save_segments(self.job.job_dir, "asr", self.segments)
+            pio.save_speakers(self.job.job_dir, "gender", self.speakers)
+            self._rebuild_table()
+            info_box(self, "Đã lưu xác minh",
+                     f"Đã xác minh {sum(s.identity_status == 'VERIFIED' for s in self.segments)} "
+                     "câu. Chưa phê duyệt dịch hoặc cả cụm giọng.")
 
     def open_settings(self) -> None:
         from ui.common import open_settings_dialog
@@ -219,6 +242,9 @@ class ReviewSourceWindow(QWidget):
             GENDER_LABEL.get(seg.gender, "Không rõ")))
         self.tbl.setItem(r, 5, QTableWidgetItem(audience_label(seg.audience)))
         self.tbl.setItem(r, 6, QTableWidgetItem(seg.text_src or ""))
+        state = (seg.character_name + " ✓" if seg.identity_status == "VERIFIED"
+                 else "Chưa xác minh")
+        self.tbl.setItem(r, 7, ro(state))
         if seg.needs_review:
             for c in range(len(COLS)):
                 self.tbl.item(r, c).setBackground(QColor("#fff3b0"))
@@ -318,13 +344,18 @@ class ReviewSourceWindow(QWidget):
         dur = max(0.1, seg.end - seg.start)
         ratio = len(t1) / max(1, len(t1) + len(t2))
         mid_t = seg.start + dur * ratio
+        # Splitting changes spoken evidence; neither child inherits approval.
+        from speaker.verification import clear_identity
+        clear_identity(seg)
         seg1 = Segment(index=seg.index, start=seg.start, end=mid_t,
                        speaker=seg.speaker, gender=seg.gender, text_src=t1,
+                       source_lang=seg.source_lang,
                        audience=seg.audience,
                        confidence=seg.confidence,
                        needs_review=seg.needs_review)
         seg2 = Segment(index=seg.index + 1, start=mid_t, end=seg.end,
                        speaker=seg.speaker, gender=seg.gender, text_src=t2,
+                       source_lang=seg.source_lang,
                        audience=seg.audience,
                        confidence=seg.confidence,
                        needs_review=seg.needs_review)
@@ -348,6 +379,8 @@ class ReviewSourceWindow(QWidget):
         if not self._read_table():  # đọc sửa tại chỗ trước khi gộp
             return
         a, b = self.segments[r], self.segments[r + 1]
+        from speaker.verification import clear_identity
+        clear_identity(a)
         a.text_src = ((a.text_src or "").rstrip() + " " +
                       (b.text_src or "").lstrip()).strip()
         a.end = max(a.end, b.end)
@@ -383,10 +416,15 @@ class ReviewSourceWindow(QWidget):
                           f"Bạn nhập: '{self.tbl.item(r, 5).text()}'.")
                 self.tbl.selectRow(r)
                 return False
+            from speaker.verification import clear_identity
+            edited_text = self.tbl.item(r, 6).text()
+            if (seg.identity_status == "VERIFIED" and
+                    (edited_text != seg.text_src or spk != seg.speaker)):
+                clear_identity(seg)
             seg.speaker = spk
             seg.gender = gender
             seg.audience = aud
-            seg.text_src = self.tbl.item(r, 6).text()
+            seg.text_src = edited_text
         # đồng bộ giới tính vào speakers (bước dịch dùng speakers)
         for seg in self.segments:
             spk = self.speakers.get(seg.speaker)
@@ -395,6 +433,10 @@ class ReviewSourceWindow(QWidget):
                 self.speakers[seg.speaker] = spk
             if seg.gender:
                 spk.gender = seg.gender
+            if seg.identity_status == "VERIFIED" and seg.character_name:
+                spk.character_name = seg.character_name
+                spk.identity_verified = True
+                spk.role = seg.character_name
         return True
 
     def save_and_continue(self) -> None:
