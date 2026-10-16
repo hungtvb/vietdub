@@ -21,6 +21,12 @@ job=Job(project=Project(name="stage2",video_source="file",video_in=str(video),vi
 settings=Settings(path=Path("output/stage2-settings.json"))
 settings.set("tts_provider","zerotts")
 settings.set("zerotts_model_dir","model/ZeroTTS")
+settings.set("zerotts_voices", {
+    "0":"maichi", "1":"giahuy", "2":"tiendat",
+    "3":"hamy", "4":"huuduc", "5":"quangminh",
+    "6":"quangminh", "7":"quangminh",
+    "8":"kimoanh", "9":"huuduc"
+})
 runner=Orchestrator(job,settings)
 for step in ("fetch","extract"): runner._run_step(step)
 io.save_segments(job.job_dir,"translate",segments)
