@@ -43,6 +43,10 @@ DEFAULTS = {
     "voice_anchor_review": True,  # exports audition candidates; NEVER approves automatically
     "hf_token": "",  # optional; HF_TOKEN environment variable takes priority
 
+    "funasr_backend": "modelscope",  # automodel is opt-in pending real benchmarking
+    "funasr_cpu_threads": 4,
+    "funasr_batch_size_s": 60,
+    "funasr_max_vad_segment_ms": 15000,
     "asr_model": "damo/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
     "vad_model": "damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
     "punc_model": "damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",  # 290M, light
