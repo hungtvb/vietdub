@@ -1,0 +1,42 @@
+name: VietDub 2 - ZeroTTS render
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Require reviewed translation
+        run: test -s translations/approved.json
+      - name: Install offline TTS runtime
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install gdown zerotts numpy soundfile librosa
+      - name: Download ZeroTTS weights
+        run: |
+          python - <<'PY'
+          from huggingface_hub import snapshot_download
+          snapshot_download(repo_id='zeroweight-ai/ZeroTTS',local_dir='model/ZeroTTS')
+          PY
+      - name: Download original video
+        run: |
+          mkdir -p private_input output
+          gdown '1hIdUbh_DAjlUdu1g39GTWJnfLOK-ZL7G' -O private_input/input.mp4
+          test -s private_input/input.mp4
+      - name: Real Vietnamese TTS and MP4 render
+        run: python ci_stage2_render.py
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: vietdub-zerotts-final-mp4
+          path: |
+            output/input_vidub.mp4
+            output/subs.vi.srt
+          if-no-files-found: error
+          retention-days: 7
