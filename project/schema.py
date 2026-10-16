@@ -28,6 +28,10 @@ class Segment:
     # (viewers in general), "all" (everyone present), or "" (unknown)
     audience: str = ""
     source_lang: str = ""   # ISO 639-1 code for this utterance, if known
+    detected_speaker: Optional[int] = None  # source cluster before manual identity remap
+    character_id: str = ""
+    character_name: str = ""
+    identity_status: str = "UNVERIFIED"  # human-verified identity != ASR QA
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -86,6 +90,8 @@ class Speaker:
     confidence: float = 0.0
     median_hz: float = 0.0
     role: str = ""
+    character_name: str = ""
+    identity_verified: bool = False
     speaking_to: str = ""     # legacy: default relation's audience
     pronoun_i: str = "tôi"    # default pair (kept in sync with relations)
     pronoun_you: str = "bạn"  # default pair (kept in sync with relations)
