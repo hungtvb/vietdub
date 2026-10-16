@@ -10,7 +10,7 @@ on:
         options:
           - qa_only
           - diarize
-        default: qa_only
+        default: diarize
   push:
     branches: [ci/run-vietdub-20261016]
     paths:
@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      RUN_MODE: ${{ inputs.mode || 'qa_only' }}
+      RUN_MODE: ${{ inputs.mode || 'diarize' }}
       OMP_NUM_THREADS: "4"
     steps:
       - uses: actions/checkout@v4
