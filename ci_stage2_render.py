@@ -27,4 +27,10 @@ io.save_segments(job.job_dir,"translate",segments)
 io.save_speakers(job.job_dir,"analyze",speakers)
 for step in ("tts","mix","render"): runner._run_step(step)
 assert output.is_file() and output.stat().st_size>100000
+# Validate that the delivered MP4 has NO subtitle stream.
+import subprocess
+probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", str(output)], capture_output=True, text=True, check=True)
+streams = [s["codec_type"] for s in json.loads(probe.stdout)["streams"]]
+assert "video" in streams and "audio" in streams and "subtitle" not in streams
+assert not output.with_suffix(".srt").exists()
 print("Final dubbed MP4:",output,"lines:",len(segments))
