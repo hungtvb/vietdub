@@ -410,14 +410,20 @@ class Orchestrator:
         s = self.settings
         segments = pio.load_segments(job.job_dir, "translate") or []
         tts_dir = job.stages_dir / "tts"
-        tts = metts.EdgeTTS(
-            voice_male=s.get("voice_male"), voice_female=s.get("voice_female"),
-            rate=s.get("tts_rate", "+0%"), pitch=s.get("tts_pitch", "+0Hz"),
-            concurrency=int(s.get("tts_concurrency", 10)))
-        segments = self._synthesize_tts(tts, segments, tts_dir)
-        segments, decisions = self._fit_and_track(
-            segments, tts_dir,
-            lambda segs: self._synthesize_tts(tts, segs, tts_dir))
+        if s.get("tts_provider") == "zerotts":
+            from tts.zerotts_local import ZeroTTSLocal
+            tts = ZeroTTSLocal(
+                model_dir=s.get("zerotts_model_dir", "model/ZeroTTS"),
+                voices=s.get("zerotts_voices", {}), local_only=True)
+            synth = lambda segs: tts.synthesize(segs, tts_dir)
+        else:
+            tts = metts.EdgeTTS(
+                voice_male=s.get("voice_male"), voice_female=s.get("voice_female"),
+                rate=s.get("tts_rate", "+0%"), pitch=s.get("tts_pitch", "+0Hz"),
+                concurrency=int(s.get("tts_concurrency", 10)))
+            synth = lambda segs: self._synthesize_tts(tts, segs, tts_dir)
+        segments = synth(segments)
+        segments, decisions = self._fit_and_track(segments, tts_dir, synth)
         mfit.apply_plan(decisions)
         extract_data = cp.load_step(job.job_dir, "extract") or {}
         wav_path = extract_data.get("wav_path", "")
