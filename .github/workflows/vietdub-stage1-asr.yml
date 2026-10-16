@@ -1,0 +1,37 @@
+name: VietDub 1 - ASR handoff
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/run-vietdub-20261016]
+    paths: ['.github/workflows/vietdub-stage1-asr.yml']
+permissions:
+  contents: read
+jobs:
+  asr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install real ASR dependencies
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install gdown
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install 'funasr==1.4.16' modelscope addict datasets pillow simplejson sortedcontainers kaldi-native-fbank librosa soundfile numpy requests
+      - name: Download original video
+        run: |
+          mkdir -p private_input output
+          gdown '1hIdUbh_DAjlUdu1g39GTWJnfLOK-ZL7G' -O private_input/input.mp4
+          test -s private_input/input.mp4
+      - name: Run actual ASR
+        run: python ci_stage1_asr.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vietdub-asr-handoff
+          path: output/asr-handoff.json
+          if-no-files-found: warn
+          retention-days: 7
