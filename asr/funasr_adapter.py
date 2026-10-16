@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from threading import RLock
 from pathlib import Path
 from typing import List, Optional
 
@@ -69,11 +70,14 @@ class FunASRAdapter:
     def __init__(self, asr_model: str, vad_model: str, punc_model: str,
                  spk_model: str, device: str = "cpu",
                  backend: str = "modelscope", ncpu: int = 4,
-                 batch_size_s: int = 60, max_vad_segment_ms: int = 15000):
+                 batch_size_s: int = 60, max_vad_segment_ms: int = 15000,
+                 keep_loaded: bool = False):
         if backend not in ("modelscope", "automodel"):
             raise ValueError("Unsupported Chinese ASR backend: " + backend)
         if ncpu < 1 or batch_size_s < 1 or max_vad_segment_ms < 1000:
             raise ValueError("Invalid Chinese ASR tuning configuration")
+        self.keep_loaded = bool(keep_loaded)
+        self._inference_lock = RLock()
         self.backend = backend
         self.ncpu = ncpu
         self.batch_size_s = batch_size_s
@@ -100,6 +104,7 @@ class FunASRAdapter:
         """Load models once. Raises ASRError with a fix hint on failure."""
         if self._pipe is not None:
             self.metrics["reused_loaded_model"] = True
+            self.metrics["model_load_seconds"] = 0.
             return
         load_started = time.perf_counter()
         # Model KHÔNG bundle trong exe: tải lần đầu về thư mục app data.
@@ -111,38 +116,42 @@ class FunASRAdapter:
             os.environ["MODELSCOPE_CACHE"] = str(models_dir)
             log.info("model FunASR sẽ tải về: %s", models_dir)
         self.metrics["cache_dir"] = os.environ.get("MODELSCOPE_CACHE", str(models_dir))
-        try:
-            log.info("loading FunASR backend=%s on %s ...", self.backend, self.device)
+        def build_model():
             if self.backend == "automodel":
                 from funasr import AutoModel
-                # Official FunASR AutoModel path: VAD cuts long utterances
-                # before batching. Run against the same Chinese audio in CI
-                # before claiming any speed or accuracy advantage.
-                self._pipe = AutoModel(
+                return AutoModel(
                     model="paraformer-zh",
                     vad_model="fsmn-vad",
                     vad_kwargs={"max_single_segment_time": self.max_vad_segment_ms},
                     punc_model="ct-punc",
                     spk_model="cam++",
-                    device=self.device,
-                    ncpu=self.ncpu,
-                    hub="ms",
+                    device=self.device, ncpu=self.ncpu, hub="ms",
                     disable_update=True,
                 )
+            from modelscope.pipelines import pipeline
+            from modelscope.utils.constant import Tasks
+            return pipeline(
+                task=Tasks.auto_speech_recognition,
+                model=self.asr_model, vad_model=self.vad_model,
+                punc_model=self.punc_model, spk_model=self.spk_model,
+                disable_update=True, disable_progress_bar=True,
+                disable_log=True, device=self.device,
+            )
+
+        try:
+            log.info("loading FunASR backend=%s on %s (keep_loaded=%s)",
+                     self.backend, self.device, self.keep_loaded)
+            if self.keep_loaded:
+                from asr.model_pool import acquire_model
+                key = (self.backend, self.asr_model, self.vad_model,
+                       self.punc_model, self.spk_model, self.device,
+                       self.ncpu, self.max_vad_segment_ms,
+                       self.metrics["cache_dir"])
+                self._pipe, self._inference_lock, reused = acquire_model(
+                    key, build_model)
+                self.metrics["reused_loaded_model"] = reused
             else:
-                from modelscope.pipelines import pipeline
-                from modelscope.utils.constant import Tasks
-                self._pipe = pipeline(
-                    task=Tasks.auto_speech_recognition,
-                    model=self.asr_model,
-                    vad_model=self.vad_model,
-                    punc_model=self.punc_model,
-                    spk_model=self.spk_model,
-                    disable_update=True,
-                    disable_progress_bar=True,
-                    disable_log=True,
-                    device=self.device,
-                )
+                self._pipe = build_model()
             self.metrics["model_load_seconds"] = round(
                 time.perf_counter() - load_started, 3)
             log.info("FunASR model load %.2fs (cache: %s)",
@@ -216,20 +225,23 @@ class FunASRAdapter:
 
     def _transcribe_one(self, wav_path: str) -> List[Segment]:
         """Transcribe a single (short) wav -> raw segments, no chunking."""
-        started = time.perf_counter()
-        try:
-            if self.backend == "automodel":
-                res = self._pipe.generate(
-                    input=wav_path, batch_size_s=self.batch_size_s,
-                    batch_size_threshold_s=max(5, self.batch_size_s // 2))
-            else:
-                res = self._pipe(wav_path)
-        except Exception as e:  # noqa: BLE001
-            raise ASRError(
-                "ASR bị lỗi khi nghe (có thể hết RAM).\n"
-                f"Cách khắc phục: đóng bớt app khác rồi chạy lại. Chi tiết: {e}") from e
-        finally:
-            self.metrics["inference_seconds"] += time.perf_counter() - started
+        # Shared AutoModel has mutable internal buffers. Serialize inference
+        # across jobs using the same in-memory model instance.
+        with self._inference_lock:
+            started = time.perf_counter()
+            try:
+                if self.backend == "automodel":
+                    res = self._pipe.generate(
+                        input=wav_path, batch_size_s=self.batch_size_s,
+                        batch_size_threshold_s=max(5, self.batch_size_s // 2))
+                else:
+                    res = self._pipe(wav_path)
+            except Exception as e:  # noqa: BLE001
+                raise ASRError(
+                    "ASR bị lỗi khi nghe (có thể hết RAM).\n"
+                    f"Cách khắc phục: đóng bớt app khác rồi chạy lại. Chi tiết: {e}") from e
+            finally:
+                self.metrics["inference_seconds"] += time.perf_counter() - started
         if not res or "sentence_info" not in res[0]:
             keys = sorted(res[0].keys()) if res and isinstance(res[0], dict) else []
             raise ASRError(
