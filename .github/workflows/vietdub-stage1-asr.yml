@@ -10,7 +10,7 @@ permissions:
 jobs:
   asr:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,6 +22,13 @@ jobs:
           pip install gdown
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install 'faster-whisper>=1.1,<2'
+      - name: Restore speaker diarization from real prior run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p prior_asr
+          gh run download 38853004135 -R "${{ github.repository }}" -n vietdub-asr-handoff -D prior_asr
+          test -s prior_asr/asr-handoff.json
       - name: Download original video
         run: |
           mkdir -p private_input output
