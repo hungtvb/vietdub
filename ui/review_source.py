@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable, Dict, List
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QPushButton,
                                QStyledItemDelegate, QTableWidget,
@@ -151,6 +151,8 @@ class ReviewSourceWindow(QWidget):
         row = QHBoxLayout()
         self.btn_play = QPushButton("Nghe lại câu")
         self.btn_play.clicked.connect(self.play_selected)
+        self.btn_anchor = QPushButton("Kiểm tra mẫu giọng")
+        self.btn_anchor.clicked.connect(self.open_voice_anchor_review)
         self.btn_split = QPushButton("Tách câu")
         self.btn_split.setToolTip(
             "Tách câu đang chọn thành 2 câu tại dấu câu gần giữa nhất")
@@ -165,6 +167,7 @@ class ReviewSourceWindow(QWidget):
         btn_next.setStyleSheet("font-weight: bold;")
         btn_next.clicked.connect(self.save_and_continue)
         row.addWidget(self.btn_play)
+        row.addWidget(self.btn_anchor)
         row.addWidget(self.btn_split)
         row.addWidget(self.btn_merge)
         row.addStretch(1)
@@ -172,6 +175,15 @@ class ReviewSourceWindow(QWidget):
         row.addWidget(btn_back)
         row.addWidget(btn_next)
         root.addLayout(row)
+
+    def open_voice_anchor_review(self) -> None:
+        path = self.job.stages_dir / "voice_anchor_review" / "index.html"
+        if not path.is_file():
+            info_box(self, "Chưa có mẫu giọng",
+                     "Chỉ chế độ Whisper + pyannote mới tạo mẫu giọng. "
+                     "Mở Cài đặt để bật tính năng này rồi chạy lại ASR.")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
 
     def open_settings(self) -> None:
         from ui.common import open_settings_dialog
