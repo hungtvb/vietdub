@@ -17,6 +17,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
       - name: Install headless pipeline test dependencies
         run: |
           python -m pip install --upgrade pip
@@ -29,6 +33,7 @@ jobs:
       - name: Run unit tests (CLI)
         run: python -m pytest tests/ -q
       - name: Run command-line media pipeline on synthetic video
+        if: always()
         run: |
           mkdir -p cli-smoke
           ffmpeg -y -v error -f lavfi -i 'color=c=navy:s=320x180:r=10:d=4' -f lavfi -i 'sine=frequency=220:duration=4' -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest cli-smoke/input.mp4
