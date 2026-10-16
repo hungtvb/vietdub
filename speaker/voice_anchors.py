@@ -6,6 +6,8 @@ stays PENDING until a reviewer confirms it using source audio and video.
 from __future__ import annotations
 
 import argparse
+import csv
+from html import escape
 from collections import defaultdict
 import json
 from pathlib import Path
@@ -109,6 +111,36 @@ def export_review(evidence, media, out_dir, *, per_cluster=3):
     extract_candidates(manifest, media, out_dir)
     path = out_dir / "voice_anchor_candidates.json"
     path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    # A review page and editable CSV are local-only; they NEVER modify the
+    # approval state of the project or automatically label an actor.
+    with (out_dir / "review_sheet.csv").open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["candidate_id", "cluster", "start_sec", "end_sec",
+                         "transcript_context_unverified", "character_to_verify",
+                         "review_status", "audio_file"])
+        for item in manifest["candidates"]:
+            writer.writerow([item["candidate_id"], item["cluster"], item["start"],
+                             item["end"], item["transcript_context_unverified"],
+                             "", "PENDING", item["file"]])
+    html = ["""<!doctype html><html lang="vi"><meta charset="utf-8">
+    <title>VietDub — kiểm tra giọng nhân vật</title>
+    <style>body{font-family:system-ui;background:#15181f;color:white;margin:30px auto;
+    max-width:1000px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+    gap:15px}.card{background:#252b38;padding:15px;border-radius:10px}
+    audio{width:100%;margin:12px 0}small{color:#e5bc80}</style>
+    <h2>VietDub — mẫu giọng cần xác minh</h2>
+    <p>Mỗi cụm pyannote có thể chứa nhiều nhân vật. Nghe các đoạn và xác minh
+    bằng video gốc; không có mẫu nào được tự động duyệt.</p><div class="grid">"""]
+    for item in manifest["candidates"]:
+        html.append('<div class="card"><b>' + escape(item["candidate_id"]) +
+                    '</b><p><small>PENDING · ' + str(item["start"]) + '–' +
+                    str(item["end"]) + ' giây</small></p><audio controls preload="none" src="' +
+                    escape(item["file"], quote=True) + '"></audio><p>' +
+                    escape(item["transcript_context_unverified"] or
+                           "(Không có lời ASR khớp đoạn này)") + '</p></div>')
+    html.append('</div><p>Điền tên nhân vật và trạng thái sau khi kiểm tra vào '
+                '<code>review_sheet.csv</code>.</p></html>')
+    (out_dir / "index.html").write_text("".join(html), encoding="utf-8")
     return path
 
 
