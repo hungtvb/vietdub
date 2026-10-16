@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from difflib import SequenceMatcher
 import subprocess
 import time
 from pathlib import Path
@@ -22,7 +23,7 @@ def main():
     cli = argparse.ArgumentParser()
     cli.add_argument("--video", required=True)
     cli.add_argument("--out", default="chinese_regression")
-    cli.add_argument("--mode", choices=("smoke", "full", "benchmark"), default="full")
+    cli.add_argument("--mode", choices=("smoke", "full", "benchmark", "boundary"), default="full")
     cli.add_argument("--backend", choices=("modelscope", "automodel"),
                      default="modelscope")
     cli.add_argument("--benchmark-seconds", type=float, default=25.)
@@ -36,7 +37,7 @@ def main():
     subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error",
                     "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
                     str(wav)], check=True)
-    if opts.mode == "benchmark":
+    if opts.mode in ("benchmark", "boundary"):
         if opts.benchmark_seconds < 5 or opts.benchmark_seconds > 180:
             raise ValueError("Benchmark duration must be between 5 and 180 seconds")
         short_wav = root / "benchmark_16k.wav"
@@ -63,7 +64,7 @@ def main():
         "human_transcript_verified": False,
         "model_quality_wer_measured": False,
     }
-    if opts.mode in ("full", "benchmark"):
+    if opts.mode in ("full", "benchmark", "boundary"):
         from core.settings import DEFAULTS
         model = FunASRAdapter(
             asr_model=DEFAULTS["asr_model"],
@@ -71,7 +72,9 @@ def main():
             punc_model=DEFAULTS["punc_model"],
             spk_model=DEFAULTS["spk_model"],
             backend=opts.backend, ncpu=4, batch_size_s=60,
-            max_vad_segment_ms=15000)
+            max_vad_segment_ms=15000,
+            keep_loaded=opts.mode == "boundary",
+            chunk_overlap_sec=1.5)
         started = time.monotonic()
         segments = model.transcribe(wav)
         report["asr_elapsed_seconds"] = round(time.monotonic() - started, 2)
@@ -79,6 +82,49 @@ def main():
         report["model_timing_profiling_available"] = True
         if not segments:
             raise AssertionError("FunASR produced no real transcript")
+        if opts.mode == "boundary":
+            from asr import funasr_adapter
+            # Deliberately shrink the nominal ten-minute chunks on real
+            # Chinese audio. Same pretrained model, same recording.
+            # This specifically tests boundary-ownership in production code.
+            full_hanzi = "".join(
+                ch for seg in segments for ch in seg.text_src
+                if "\u3400" <= ch <= "\u9fff")
+            no_chunks_profile = dict(model.metrics)
+            original_chunk_sec = funasr_adapter.ASR_CHUNK_SEC
+            try:
+                funasr_adapter.ASR_CHUNK_SEC = 8.
+                chunked = model.transcribe(wav)
+            finally:
+                funasr_adapter.ASR_CHUNK_SEC = original_chunk_sec
+            if not chunked or model.metrics["chunk_count"] < 2:
+                raise AssertionError("Chunked ASR produced no actual chunks")
+            chunk_hanzi = "".join(
+                ch for seg in chunked for ch in seg.text_src
+                if "\u3400" <= ch <= "\u9fff")
+            char_agreement = SequenceMatcher(
+                None, full_hanzi, chunk_hanzi, autojunk=False).ratio()
+            report["long_video_boundary_test"] = {
+                "method": "forced_8s_chunks_of_same_real_25s_audio",
+                "original_segment_count": len(segments),
+                "chunked_segment_count": len(chunked),
+                "original_characters": len(full_hanzi),
+                "chunked_characters": len(chunk_hanzi),
+                "sequence_agreement_not_CER": round(char_agreement, 4),
+                "baseline_performance": no_chunks_profile,
+                "chunked_performance": dict(model.metrics),
+                "chunked_transcript": [s.to_dict() for s in chunked],
+                "human_reference_verified": False,
+            }
+            if (not all(-.01 <= s.start < s.end <= opts.benchmark_seconds + .25
+                        for s in chunked)):
+                raise AssertionError("Chunked timestamps escaped source duration")
+            if char_agreement < .55:
+                raise AssertionError(
+                    f"Severe chunk boundary disagreement on Chinese video: {char_agreement:.3f}")
+            report["status"] = "CHINESE_FUNASR_REAL_BOUNDARY_TEST_PASSED"
+            report["original_asr_profile"] = no_chunks_profile
+            segments = chunked
         qa = qa_chinese_segments(segments)
         han_count = sum(sum("\u3400" <= ch <= "\u9fff"
                             for ch in s.text_src) for s in segments)
@@ -91,7 +137,9 @@ def main():
             if seg.start < 0 or seg.end <= seg.start:
                 raise AssertionError("Bad timestamp range")
         report.update({
-            "status": ("CHINESE_FUNASR_BENCHMARK_COMPLETE"
+            "status": ("CHINESE_FUNASR_REAL_BOUNDARY_TEST_PASSED"
+                       if opts.mode == "boundary" else
+                       "CHINESE_FUNASR_BENCHMARK_COMPLETE"
                        if opts.mode == "benchmark"
                        else "CHINESE_FUNASR_REAL_ASR_COMPLETE"),
             "actual_hanzi_count": han_count,
