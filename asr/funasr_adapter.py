@@ -284,14 +284,46 @@ class FunASRAdapter:
                 + ". Chọn lại backend modelscope hoặc kiểm tra model FunASR.")
         segments: List[Segment] = []
         for i, it in enumerate(res[0]["sentence_info"]):
+            if not isinstance(it, dict):
+                raise ASRError(
+                    f"FunASR câu {i} không phải object có timestamp.")
             text = (it.get("text") or "").strip()
             if not text:
                 continue
-            spk_raw = it.get("spk", 0)
+            # Never discard recognized dialogue because an unverified/empty
+            # model timestamp defaults to 0. Invalid times must be fixed
+            # upstream or reviewed with source audio, not made up here.
+            if it.get("start") is None or it.get("end") is None:
+                raise ASRError(
+                    f"FunASR câu {i} thiếu timestamp, không thể dựng giọng: "
+                    f"{text[:70]!r}")
             try:
-                spk = int(str(spk_raw).replace("spk", ""))
-            except ValueError:
-                spk = 0
+                start_ms = float(it["start"])
+                end_ms = float(it["end"])
+            except (TypeError, ValueError) as ex:
+                raise ASRError(
+                    f"FunASR câu {i} timestamp không phải số: "
+                    f"{text[:70]!r}") from ex
+            if (not math.isfinite(start_ms) or
+                    not math.isfinite(end_ms) or
+                    start_ms < 0 or end_ms <= start_ms):
+                raise ASRError(
+                    f"FunASR câu {i} timestamp không hợp lệ "
+                    f"({start_ms}, {end_ms}): {text[:70]!r}")
+
+            # CAM++ labels may be absent or malformed. Keep an integer
+            # placeholder for backward compatibility, but mark it UNKNOWN
+            # via needs_review; never silently certify speaker 0.
+            raw_speaker = it.get("spk")
+            speaker_verified = raw_speaker is not None
+            try:
+                speaker = int(str(raw_speaker).replace("spk", ""))
+                if speaker < 0:
+                    speaker_verified = False
+                    speaker = 0
+            except (TypeError, ValueError):
+                speaker_verified = False
+                speaker = 0
             raw_confidence = it.get("confidence")
             # ModelScope often omits calibrated ASR confidence. Do not
             # fabricate 1.0 for unknown speech quality.
@@ -303,11 +335,12 @@ class FunASRAdapter:
                 raw_confidence, value = None, .5
             segments.append(Segment(
                 index=i,
-                start=float(it.get("start", 0)) / 1000.0,
-                end=float(it.get("end", 0)) / 1000.0,
-                speaker=spk, text_src=text, source_lang="zh",
+                start=start_ms / 1000.0,
+                end=end_ms / 1000.0,
+                speaker=speaker, text_src=text, source_lang="zh",
                 confidence=value,
-                needs_review=raw_confidence is None,
+                needs_review=(raw_confidence is None or
+                              not speaker_verified),
             ))
         log.info("transcribed %d raw segments", len(segments))
         return segments
