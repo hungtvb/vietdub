@@ -1,10 +1,48 @@
 # VietDub
 
-Desktop app lồng tiếng video tiếng Trung sang tiếng Việt (PySide6).
-Pipeline 9 bước: lấy video (file/link) → tách audio → nghe + tách loa
-(FunASR) → đoán giới tính bằng pitch → LLM phân tích quan hệ → dịch
-(9Router/mimo-v2.6-flash-free hoặc Ollama) → lồng tiếng Edge-TTS
-→ trộn audio → ghép video + phụ đề.
+Desktop app lồng tiếng **video đa ngôn ngữ sang tiếng Việt** (PySide6).
+Pipeline 9 bước: video → tách audio → nhận diện ngôn ngữ nguồn và chọn ASR
+→ phân biệt người nói → phân tích nhân vật → dịch có ngữ cảnh → tổng hợp giọng
+→ trộn audio → ghép MP4. Tính năng có kiểm tra thủ công và checkpoint.
+
+### ASR thông minh, dùng chung cho nhiều video
+
+Bắt đầu một video mới → chọn **Ngôn ngữ video = Tự động nhận diện**.
+VietDub nghe tối đa 3 đoạn âm thanh phân bố từ đầu đến cuối video
+(tránh nhận nhầm theo chữ trên màn hình hoặc nhạc mở đầu):
+
+| Ngôn ngữ | ASR mặc định | Xử lý người nói |
+|---|---|---|
+| Quan thoại Trung Quốc (zh, đủ chắc chắn) | FunASR / Paraformer | CAM++ + pyannote toàn video khi có token |
+| Anh, Nhật, Hàn, Pháp, Tây Ban Nha... | Whisper multilingual | pyannote Community-1 |
+| Xen ngôn ngữ, không đủ chắc chắn | Whisper multilingual + cảnh báo QA | pyannote + duyệt thủ công |
+
+Đây là quy tắc chọn *mô hình khởi đầu*, không đảm bảo FunASR thắng Whisper
+trên tất cả nguồn tiếng Trung (tiếng địa phương, lồng nhạc, tiếng ồn).
+Có thể **chọn tiếng Trung và ép Whisper** trong Cài đặt để so sánh.
+
+Thành phần nâng cao yêu cầu `pip install -r requirements-asr-hybrid.txt`.
+Hugging Face Community-1 cần đồng ý điều khoản model trước, sau đó đặt
+`HF_TOKEN` trong biến môi trường (khuyên dùng) hoặc phần Cài đặt.
+FunASR vẫn có thể nhận dạng lời tiếng Trung khi không có token, nhưng khi đó
+việc nối ID speaker qua các chunk dài sẽ cần kiểm tra bổ sung.
+
+**Không tự phê duyệt:** ASR chỉ sinh transcript và bằng chứng. Những dòng
+thiếu confidence, chưa rõ speaker hoặc thiếu forced alignment luôn có cờ QA;
+việc truy cập model thành công không tương đương nhân vật đã được xác minh.
+
+### Video tiếng Trung dùng để kiểm thử
+
+Workflow `.github/workflows/vietdub-chinese-regression.yml` tải clip
+phỏng vấn bóng đá Quan thoại trên Wikimedia Commons (1 phút 32 giây),
+do **中国新闻社** thực hiện, mô tả giấy phép **CC BY 3.0**
+(trang nguồn còn ghi chú cần license review):
+
+https://commons.wikimedia.org/wiki/File:〖两会30秒〗水庆霞：中国女足非世界顶级，但会不断追赶.webm
+
+Lần chạy kiểm tra từ **audio thật**: ngôn ngữ, engine được chọn, timestamp,
+phân đoạn FunASR và cờ QA. Chưa có transcript người nghe xác minh nên
+**không công bố CER/WER giả**. Video nguồn không commit vào GitHub.
 
 License: GPL-3.0 (xem `LICENSE`). Một số module adapt từ
 [pyVideoTrans](https://github.com/jianchang512/pyvideotrans) (jianchang512,
