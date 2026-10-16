@@ -264,6 +264,7 @@ class Orchestrator:
                         else "cpu"),
                 backend=settings.get("funasr_backend", "modelscope"),
                 ncpu=int(settings.get("funasr_cpu_threads", 4)),
+                keep_loaded=bool(settings.get("funasr_keep_loaded", True)),
                 batch_size_s=int(settings.get("funasr_batch_size_s", 60)),
                 max_vad_segment_ms=int(
                     settings.get("funasr_max_vad_segment_ms", 15000)))
