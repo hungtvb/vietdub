@@ -37,6 +37,5 @@ jobs:
           name: vietdub-zerotts-final-mp4
           path: |
             output/input_vidub.mp4
-            output/subs.vi.srt
           if-no-files-found: error
           retention-days: 7
