@@ -24,6 +24,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -73,11 +74,24 @@ class FunASRAdapter:
         self.spk_model = spk_model
         self.device = device
         self._pipe = None
+        self.metrics = {
+            "backend": "modelscope",
+            "model_load_seconds": None,
+            "inference_seconds": 0.0,
+            "audio_seconds": 0.0,
+            "total_seconds": None,
+            "real_time_factor": None,
+            "reused_loaded_model": False,
+            "cache_dir": "",
+        }
+        self._started_at = None
 
     def load(self) -> None:
         """Load models once. Raises ASRError with a fix hint on failure."""
         if self._pipe is not None:
+            self.metrics["reused_loaded_model"] = True
             return
+        load_started = time.perf_counter()
         # Model KHÔNG bundle trong exe: tải lần đầu về thư mục app data.
         # Phải đặt env TRƯỚC khi import modelscope (nó đọc env lúc import).
         import os
@@ -86,6 +100,7 @@ class FunASRAdapter:
         if not os.environ.get("MODELSCOPE_CACHE"):
             os.environ["MODELSCOPE_CACHE"] = str(models_dir)
             log.info("model FunASR sẽ tải về: %s", models_dir)
+        self.metrics["cache_dir"] = os.environ.get("MODELSCOPE_CACHE", str(models_dir))
         try:
             from modelscope.pipelines import pipeline
             from modelscope.utils.constant import Tasks
@@ -106,6 +121,10 @@ class FunASRAdapter:
                 disable_log=True,
                 device=self.device,
             )
+            self.metrics["model_load_seconds"] = round(
+                time.perf_counter() - load_started, 3)
+            log.info("FunASR model load %.2fs (cache: %s)",
+                     self.metrics["model_load_seconds"], self.metrics["cache_dir"])
         except Exception as e:  # noqa: BLE001
             raise ASRError(
                 "Không tải được model ASR (lần đầu cần mạng để tải ~1.3GB model).\n"
@@ -118,11 +137,15 @@ class FunASRAdapter:
         chunks, transcribed one by one, and the segments are re-joined with
         the chunk offset added back.
         """
+        self._started_at = time.perf_counter()
+        self.metrics["inference_seconds"] = 0.
+        self.metrics["reused_loaded_model"] = self._pipe is not None
         self.load()
         wav_path = Path(wav_path)
         dur = _wav_duration_sec(wav_path)
+        self.metrics["audio_seconds"] = round(dur, 3)
         if dur <= ASR_CHUNK_SEC:
-            return self.post_fix(self._transcribe_one(str(wav_path)))
+            return self._finalize(self.post_fix(self._transcribe_one(str(wav_path))))
         n = int(math.ceil(dur / ASR_CHUNK_SEC))
         log.info("audio dài %.0fs, chia %d chunk ~%d phút để ASR (edge 17)",
                  dur, n, ASR_CHUNK_SEC // 60)
@@ -156,18 +179,30 @@ class FunASRAdapter:
                     s.start += off
                     s.end += off
                     segments.append(s)
-            return self.post_fix(segments)
+            return self._finalize(self.post_fix(segments))
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
+    def _finalize(self, segments: List[Segment]) -> List[Segment]:
+        self.metrics["total_seconds"] = round(
+            time.perf_counter() - self._started_at, 3)
+        self.metrics["real_time_factor"] = round(
+            self.metrics["inference_seconds"] / max(self.metrics["audio_seconds"], .001), 4)
+        self.metrics["segment_count"] = len(segments)
+        log.info("FunASR profile: %s", self.metrics)
+        return segments
+
     def _transcribe_one(self, wav_path: str) -> List[Segment]:
         """Transcribe a single (short) wav -> raw segments, no chunking."""
+        started = time.perf_counter()
         try:
             res = self._pipe(wav_path)
         except Exception as e:  # noqa: BLE001
             raise ASRError(
                 "ASR bị lỗi khi nghe (có thể hết RAM).\n"
                 f"Cách khắc phục: đóng bớt app khác rồi chạy lại. Chi tiết: {e}") from e
+        finally:
+            self.metrics["inference_seconds"] += time.perf_counter() - started
         if not res or "sentence_info" not in res[0]:
             raise ASRError(
                 "ASR không trả về câu nào (video có thể không có tiếng nói).\n"
