@@ -1,4 +1,4 @@
-name: VietDub runtime checks
+name: VietDub CLI checks
 
 on:
   push:
@@ -7,38 +7,79 @@ on:
   workflow_dispatch:
 
 jobs:
-  test-and-ui-smoke:
+  cli-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     env:
-      QT_QPA_PLATFORM: offscreen
       PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install lightweight test and UI dependencies
+      - name: Install headless pipeline test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest numpy soundfile librosa edge-tts gtts openai requests yt-dlp PySide6
-      - name: Static compile
-        run: python -m compileall -q .
-      - name: Unit tests
+          python -m pip install pytest numpy soundfile librosa edge-tts gtts openai requests yt-dlp
+          ffmpeg -version | head -n 1
+      - name: Compile CLI and core (no UI)
+        run: python -m compileall -q core asr speaker translation tts media project tests
+      - name: Check batch CLI
+        run: python tests/batch_20.py --help
+      - name: Run unit tests (CLI)
         run: python -m pytest tests/ -q
-      - name: GUI startup smoke
+      - name: Run command-line media pipeline on synthetic video
         run: |
+          mkdir -p cli-smoke
+          ffmpeg -y -v error -f lavfi -i 'color=c=navy:s=320x180:r=10:d=4' -f lavfi -i 'sine=frequency=220:duration=4' -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest cli-smoke/input.mp4
           python - <<'PY'
-          from PySide6.QtCore import QTimer
-          from PySide6.QtWidgets import QApplication
-          from core.settings import Settings
-          from ui.main_window import MainWindow
-          app = QApplication([])
-          app.setApplicationName("VietDub")
-          app.setOrganizationName("VietDub")
-          win = MainWindow(Settings())
-          win.show()
-          QTimer.singleShot(1500, app.quit)
-          assert app.exec() == 0
-          print("VIETDUB_UI_SMOKE_OK")
+          import json
+          import subprocess
+          from pathlib import Path
+          import numpy as np
+          import soundfile as sf
+          from media.extract import extract_audio, duration_sec
+          from media.mix import mix
+          from media.render import render
+          from media.subs import write_srt
+          from project.schema import Segment
+          from tts.duration_fit import build_track
+
+          d = Path("cli-smoke")
+          video = d / "input.mp4"
+          assert 3.8 <= duration_sec(video) <= 4.2
+          asr_wav = extract_audio(video, d / "extracted_16k.wav")
+          assert sf.info(asr_wav).samplerate == 16000
+
+          sr = 44100
+          t = np.arange(int(1.8 * sr)) / sr
+          wave = (0.25 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+          voice = d / "simulated_voice.wav"
+          sf.write(voice, wave, sr)
+          segment = Segment(index=0, start=0.6, end=2.4, speaker=0,
+                            text_src="测试", text_vi="Xin chào Việt Nam",
+                            audio_vi=str(voice))
+          dub = build_track([segment], d / "dub.wav", 4.0)
+          orig = d / "original.wav"
+          subprocess.run(["ffmpeg","-y","-v","error","-i",str(video),"-vn",
+                          "-ar","44100","-ac","2",str(orig)], check=True)
+          mixed = mix(dub, orig, d / "mixed.wav")
+          subtitles = write_srt([segment], d / "subtitles.srt")
+          final = render(video, mixed, subtitles, d / "clip_vidub.mp4", sub_mode="srt")
+          info = json.loads(subprocess.check_output([
+            "ffprobe", "-v", "error", "-show_entries",
+            "stream=codec_type:format=duration", "-of", "json", str(final)
+          ]))
+          kinds = {s["codec_type"] for s in info.get("streams", [])}
+          assert "video" in kinds and "audio" in kinds, kinds
+          assert final.exists() and final.stat().st_size > 1000
+          print("VIETDUB_CLI_MEDIA_SMOKE_OK", final, kinds)
           PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vietdub-cli-smoke
+          path: |
+            cli-smoke/clip_vidub.mp4
+            cli-smoke/clip_vidub.srt
+          if-no-files-found: ignore
