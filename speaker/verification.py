@@ -20,8 +20,10 @@ SCHEMA_VERSION = 2
 
 def line_key(seg: Segment) -> str:
     """Fingerprint reviewed content/times; changed/split text invalidates it."""
+    base_speaker = (seg.detected_speaker if seg.detected_speaker is not None
+                    else seg.speaker)
     payload = [int(seg.index), round(float(seg.start), 3),
-               round(float(seg.end), 3), seg.text_src or ""]
+               round(float(seg.end), 3), seg.text_src or "", int(base_speaker)]
     return sha256(json.dumps(payload, ensure_ascii=False,
                              separators=(",", ":")).encode("utf-8")).hexdigest()
 
