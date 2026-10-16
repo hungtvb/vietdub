@@ -319,19 +319,20 @@ class FunASRAdapter:
                 log.warning("bỏ câu toàn ký tự rác: %r", text[:60])
                 continue
             kept.append(seg)
-        # Spoken overlap is valid (two people talking at the same time).
-        # Truncating prev.end destroys acoustic evidence and can silently
-        # delete real dialogue, especially in dramas and interviews. Retain
-        # both word spans and require an explicit editorial decision.
-        for i in range(1, len(kept)):
-            prev, cur = kept[i - 1], kept[i]
-            if prev.end > cur.start:
+        # Sweep all overlapping spans, not just adjacent segments. Nested
+        # utterances (A spans B and C, but B and C do not overlap) are common
+        # when one speaker continues while another interjects.
+        active: List[Segment] = []
+        for cur in sorted(kept, key=lambda seg: (seg.start, seg.end)):
+            active = [prev for prev in active if prev.end > cur.start]
+            for prev in active:
                 log.warning(
-                    "ASR overlapping utterances %d / %d (%.3fs); "
-                    "preserve timestamps and flag BOTH for human review",
-                    prev.index, cur.index, prev.end - cur.start)
+                    "ASR simultaneous/overlapping utterances %d / %d "
+                    "(%.3fs); retain BOTH original timestamp ranges",
+                    prev.index, cur.index, min(prev.end, cur.end) - cur.start)
                 prev.needs_review = True
                 cur.needs_review = True
+            active.append(cur)
         out: List[Segment] = []
         for seg in kept:
             if seg.end <= seg.start:
