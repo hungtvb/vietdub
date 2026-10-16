@@ -413,7 +413,11 @@ class Orchestrator:
         # ghi đè. Chỉ áp dụng khi user đã đặt rõ male/female.
         manual = pio.load_speakers(job.job_dir, "gender") or {}
         for spk_id, mspk in manual.items():
-            if mspk.identity_verified and mspk.character_name and spk_id in speakers:
+            if mspk.identity_verified and mspk.character_name:
+                # F0 pitch detection can fail for short/quiet speech. Keep
+                # human-approved character even with no estimated gender.
+                if spk_id not in speakers:
+                    speakers[spk_id] = Speaker(id=spk_id)
                 speakers[spk_id].character_name = mspk.character_name
                 speakers[spk_id].identity_verified = True
             if mspk.gender in ("male", "female") and spk_id in speakers:
