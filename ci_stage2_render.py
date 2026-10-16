@@ -7,15 +7,18 @@ from core.orchestrator import Orchestrator
 from project.schema import Project,Segment,Speaker
 from project import io
 video=Path("private_input/input.mp4").resolve()
-p=Path(os.environ.get("VIETDUB_TRANSLATION_PATH", "translations/approved.json"))
+p=Path("translations/approved.json")
+# Never permit preview/draft dubbing through an environment override.
 assert video.is_file() and p.is_file(),"Missing video or approved translation"
 data=json.loads(p.read_text(encoding="utf-8"))
 assert data["schema_version"]==1
+assert data.get("video_metadata", {}).get("qa_status") == "APPROVED", "Translation QA not approved"
 segments=[Segment.from_dict(x) for x in data["segments"]]
 speakers={x["id"]:Speaker.from_dict(x) for x in data["speakers"]}
 assert segments and speakers and len({s.index for s in segments})==len(segments)
+assert all(not s.needs_review for s in segments), "Unreviewed segments found"
 assert all(s.text_vi.strip() and s.text_src.strip() and s.text_vi.strip()!=s.text_src.strip() and s.end>s.start and s.speaker in speakers for s in segments),"Missing or untranslated lines"
-output=Path("output",os.environ.get("VIETDUB_OUTPUT_NAME", "input_vidub.mp4")).resolve()
+output=Path("output/input_vidub.mp4").resolve()
 output.parent.mkdir(exist_ok=True)
 job=Job(project=Project(name="stage2",video_source="file",video_in=str(video),video_out=str(output),sub_mode="none",overnight=True,review_stops=False))
 settings=Settings(path=Path("output/stage2-settings.json"))
