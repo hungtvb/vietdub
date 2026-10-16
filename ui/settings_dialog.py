@@ -158,6 +158,12 @@ class SettingsDialog(QDialog):
         self.funasr_threads.setValue(int(
             self.settings.get("funasr_cpu_threads", 4)))
         f.addRow("FunASR CPU threads:", self.funasr_threads)
+        self.funasr_keep_loaded = QComboBox()
+        self.funasr_keep_loaded.addItem("Giữ 1 model trong RAM (nhanh hơn)", True)
+        self.funasr_keep_loaded.addItem("Giải phóng sau video (ít RAM)", False)
+        self.funasr_keep_loaded.setCurrentIndex(
+            0 if self.settings.get("funasr_keep_loaded", True) else 1)
+        f.addRow("Tái sử dụng model:", self.funasr_keep_loaded)
         self.funasr_batch = QSpinBox()
         self.funasr_batch.setRange(5, 600)
         self.funasr_batch.setValue(int(
