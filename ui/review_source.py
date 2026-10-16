@@ -418,9 +418,12 @@ class ReviewSourceWindow(QWidget):
                 return False
             from speaker.verification import clear_identity
             edited_text = self.tbl.item(r, 6).text()
+            speaker_changed = spk != seg.speaker
             if (seg.identity_status == "VERIFIED" and
-                    (edited_text != seg.text_src or spk != seg.speaker)):
+                    (edited_text != seg.text_src or speaker_changed)):
                 clear_identity(seg)
+                if speaker_changed:
+                    seg.detected_speaker = spk
             seg.speaker = spk
             seg.gender = gender
             seg.audience = aud
