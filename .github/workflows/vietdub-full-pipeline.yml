@@ -1,0 +1,69 @@
+name: VietDub full real video pipeline
+
+on:
+  push:
+    branches:
+      - ci/run-vietdub-20261016
+    paths:
+      - .github/workflows/vietdub-full-pipeline.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dubbing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      MODELSCOPE_CACHE: ${{ runner.temp }}/vietdub-models
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install system tools and video downloader
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install -q --upgrade pip
+          python -m pip install -q gdown
+      - name: Fetch user-supplied video (runner only, never committed)
+        run: |
+          mkdir -p private_input output
+          gdown --fuzzy 'https://drive.google.com/file/d/1hIdUbh_DAjlUdu1g39GTWJnfLOK-ZL7G/view' -O private_input/input.mp4
+          test -s private_input/input.mp4
+          ffprobe -v error -show_entries format=duration,size -of json private_input/input.mp4
+      - name: Install actual VietDub AI dependencies
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install 'funasr==1.4.16' modelscope addict datasets pillow simplejson kaldi-native-fbank librosa soundfile edge-tts gtts openai requests yt-dlp numpy
+      - name: Run nine actual pipeline steps headlessly (NO mocks)
+        env:
+          VIETDUB_9ROUTER_KEY: ${{ secrets.VIETDUB_9ROUTER_KEY }}
+        run: |
+          python run_cli.py --input private_input/input.mp4 --output output/input_vidub.mp4 --sub-mode srt --provider 9router
+      - name: Validate real dubbed video and subtitles
+        run: |
+          test -s output/input_vidub.mp4
+          ffprobe -v error -show_entries stream=codec_type:format=duration -of json output/input_vidub.mp4
+          find jobs -type f -name 'subs.vi.srt' -print -exec wc -l {} \;
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: vietdub-real-dubbed-output
+          path: |
+            output/input_vidub.mp4
+            jobs/*/stages/subs.vi.srt
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vietdub-real-run-status
+          path: output/vietdub-result.json
+          if-no-files-found: ignore
+          retention-days: 1
