@@ -27,6 +27,7 @@ class Segment:
     # who this line is addressed to: speaker id as str, "audience"
     # (viewers in general), "all" (everyone present), or "" (unknown)
     audience: str = ""
+    source_lang: str = ""   # ISO 639-1 code for this utterance, if known
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -137,7 +138,9 @@ class Project:
     video_url: str = ""          # set when video_source == "url"
     video_in: str = ""           # local input path (or resolved path after fetch)
     video_out: str = ""
-    src_lang: str = "zh"
+    src_lang: str = "auto"  # user selection: auto | en | zh | ja | ...
+    detected_src_lang: str = "und"  # acoustic result; never overwrites user selection
+    language_review_required: bool = False
     dst_lang: str = "vi"
     audio_track: int = 0       # edge 12: which audio track to extract (Wave 2: dropdown)
     voice_male: str = "vi-VN-NamMinhNeural"
