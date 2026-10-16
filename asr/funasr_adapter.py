@@ -144,6 +144,11 @@ class FunASRAdapter:
                 disable_log=True, device=self.device,
             )
 
+        # If the user disabled RAM caching after another project, remove
+        # its previous resident model before allocating this new instance.
+        if not self.keep_loaded:
+            from asr.model_pool import clear_model
+            clear_model()
         try:
             log.info("loading FunASR backend=%s on %s (keep_loaded=%s)",
                      self.backend, self.device, self.keep_loaded)
