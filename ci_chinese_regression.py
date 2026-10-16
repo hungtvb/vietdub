@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Real Mandarin regression against a Commons-licensed source video.
+
+This test NEVER uses fixture dialogue or claims a reference WER. All
+transcripts come directly from FunASR on a downloaded Chinese news clip.
+"""
+from __future__ import annotations
+import argparse
+import json
+import math
+import subprocess
+import time
+from pathlib import Path
+
+from asr.chinese_quality import qa_chinese_segments
+from asr.engine_router import select_asr_engine
+from asr.funasr_adapter import FunASRAdapter
+from asr.source_language import detect_source_language
+
+
+def main():
+    cli = argparse.ArgumentParser()
+    cli.add_argument("--video", required=True)
+    cli.add_argument("--out", default="chinese_regression")
+    cli.add_argument("--mode", choices=("smoke", "full"), default="full")
+    opts = cli.parse_args()
+    root = Path(opts.out)
+    root.mkdir(parents=True, exist_ok=True)
+    video = Path(opts.video)
+    if not video.is_file() or video.stat().st_size < 10000:
+        raise RuntimeError("Real Mandarin source video is missing")
+    wav = root / "chinese_source_16k.wav"
+    subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error",
+                    "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
+                    str(wav)], check=True)
+    from faster_whisper import WhisperModel
+    detector = WhisperModel("tiny", device="cpu", compute_type="int8")
+    language = detect_source_language(wav, detector)
+    del detector
+    route = select_asr_engine(language)
+    report = {
+        "source_video": "Wikimedia Commons: Chinese football interview",
+        "source_page": (
+            "https://commons.wikimedia.org/wiki/File:"
+            "【两会30秒】水庆霞：中国女足非世界顶级，但会不断追赶.webm"),
+        "license": "CC BY 3.0 (attribution: 中国新闻社)",
+        "language_detection": language.to_dict(),
+        "automatic_route": route.to_dict(),
+        "status": "LANGUAGE_PROBED" if opts.mode == "smoke" else "ASR_RUNNING",
+        "human_transcript_verified": False,
+        "model_quality_wer_measured": False,
+    }
+    if opts.mode == "full":
+        from core.settings import DEFAULTS
+        model = FunASRAdapter(
+            asr_model=DEFAULTS["asr_model"],
+            vad_model=DEFAULTS["vad_model"],
+            punc_model=DEFAULTS["punc_model"],
+            spk_model=DEFAULTS["spk_model"])
+        started = time.monotonic()
+        segments = model.transcribe(wav)
+        report["asr_elapsed_seconds"] = round(time.monotonic() - started, 2)
+        if not segments:
+            raise AssertionError("FunASR produced no real transcript")
+        qa = qa_chinese_segments(segments)
+        han_count = sum(sum("\u3400" <= ch <= "\u9fff"
+                            for ch in s.text_src) for s in segments)
+        if han_count < 10:
+            raise AssertionError(
+                "FunASR output has too little Chinese text to be a useful test")
+        for seg in segments:
+            if not math.isfinite(seg.start) or not math.isfinite(seg.end):
+                raise AssertionError("Nonfinite timestamp")
+            if seg.start < 0 or seg.end <= seg.start:
+                raise AssertionError("Bad timestamp range")
+        report.update({
+            "status": "CHINESE_FUNASR_REAL_ASR_COMPLETE",
+            "actual_hanzi_count": han_count,
+            "segment_count": len(segments),
+            "review_required_count": qa["review_required"],
+            "real_transcript": [s.to_dict() for s in segments],
+            "qa": qa,
+        })
+        print("REAL_MANDARIN_FUNASR_OK",
+              len(segments), "utterances /", han_count, "Chinese glyphs")
+    else:
+        print("REAL_MANDARIN_LANGUAGE_PROBE_OK", route.engine, language.primary)
+    (root / "report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps({
+        "status": report["status"],
+        "language_detected": language.primary,
+        "confidence": language.confidence,
+        "automatic_asr_route": route.engine,
+        "test_mode": opts.mode}, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
