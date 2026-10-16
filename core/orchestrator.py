@@ -183,29 +183,44 @@ class Orchestrator:
         cp.save_step(job.job_dir, "extract", {"wav_path": str(wav)})
 
     def _step_asr(self):
-        from asr.funasr_adapter import FunASRAdapter
-        job = self.job
-        s = self.settings
+        from project import io as pio
+        job, s = self.job, self.settings
         data = cp.load_step(job.job_dir, "extract") or {}
         wav = data.get("wav_path")
-        adapter = FunASRAdapter(asr_model=s.get("asr_model"),
-                                vad_model=s.get("vad_model"),
-                                punc_model=s.get("punc_model"),
-                                spk_model=s.get("spk_model"))
-        segments = adapter.transcribe(wav)
-        # edge case 5: low ASR confidence -> needs_review
-        conf_thr = float(s.get("asr_confidence_low", 0.5))
+        engine = s.get("asr_engine", "funasr")
+        if engine == "whisper_pyannote":
+            from asr.whisper_pyannote_adapter import WhisperPyannoteAdapter
+            adapter = WhisperPyannoteAdapter(
+                model=s.get("whisper_model", "large-v3-turbo"),
+                token=s.get("hf_token", ""),
+                device=s.get("asr_device", "auto"),
+                forced_alignment=bool(s.get("whisper_forced_alignment", True)))
+            segments = adapter.transcribe(wav)
+            cp.save_step(job.job_dir, "asr_quality", adapter.last_evidence)
+            self.logger.info(
+                "Whisper + pyannote: %d câu, %d lượt cần xác minh, "
+                "WhisperX aligned %d; QA chưa được người duyệt",
+                len(segments), sum(x.needs_review for x in segments),
+                adapter.last_evidence.get("alignment", {}).get("aligned", 0))
+        elif engine == "funasr":
+            from asr.funasr_adapter import FunASRAdapter
+            adapter = FunASRAdapter(asr_model=s.get("asr_model"),
+                                    vad_model=s.get("vad_model"),
+                                    punc_model=s.get("punc_model"),
+                                    spk_model=s.get("spk_model"))
+            segments = adapter.transcribe(wav)
+        else:
+            raise ValueError(f"ASR engine không hỗ trợ: {engine}")
+        conf_thr = float(s.get("asr_confidence_low", .5))
         for seg in segments:
             if seg.confidence < conf_thr:
                 seg.needs_review = True
-                self.logger.warning("câu %d confidence thấp (%.2f) -> "
-                                    "đánh dấu cần duyệt", seg.index,
-                                    seg.confidence)
+                self.logger.warning("ASR câu %d cần xác minh (QA/confidence %.2f)",
+                                    seg.index, seg.confidence)
         pio.save_segments(job.job_dir, "asr", segments)
-        n_review = sum(1 for x in segments if x.needs_review)
-        self.logger.info("ASR: %d câu, %d loa, %d câu cần duyệt tay",
+        self.logger.info("ASR: %d câu, %d speaker ID, %d cần duyệt",
                          len(segments), len({x.speaker for x in segments}),
-                         n_review)
+                         sum(x.needs_review for x in segments))
 
     def _step_gender(self):
         from speaker import gender as mgender
