@@ -19,7 +19,7 @@ jobs:
       PYTHONUNBUFFERED: "1"
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
-      MODELSCOPE_CACHE: ${{ runner.temp }}/vietdub-models
+      MODELSCOPE_CACHE: /tmp/vietdub-models
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
