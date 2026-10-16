@@ -61,6 +61,8 @@ source .venv/bin/activate
 # Windows CPU: cài torch bản CPU trước
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
+# Bắt buộc cho chế độ ASR tự động/Whisper + pyannote:
+pip install -r requirements-asr-hybrid.txt
 ```
 
 Cần thêm: **ffmpeg** có trong PATH
@@ -89,6 +91,7 @@ Có 2 cách chạy — chọn 1:
    .venv\Scripts\activate
    pip install torch --index-url https://download.pytorch.org/whl/cpu
    pip install -r requirements.txt
+   pip install -r requirements-asr-hybrid.txt
    python main.py
    ```
 
@@ -99,6 +102,7 @@ Có 2 cách chạy — chọn 1:
    .venv\Scripts\activate
    pip install torch --index-url https://download.pytorch.org/whl/cpu
    pip install -r requirements.txt
+   pip install -r requirements-asr-hybrid.txt
    pip install pyinstaller
    ```
 2. Tải ffmpeg bản Windows `release essentials`
