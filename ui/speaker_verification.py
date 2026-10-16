@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QObject, QThread, Signal, Slot
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -21,6 +21,29 @@ from speaker.verification import SpeakerVerification
 from ui.common import error_box, info_box
 
 
+class VoiceMatchWorker(QObject):
+    """Run free ECAPA speaker matching outside the Qt GUI thread."""
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, store, index, source_wav, anchor_dir):
+        super().__init__()
+        self.store = store
+        self.index = index
+        self.source_wav = source_wav
+        self.anchor_dir = anchor_dir
+
+    @Slot()
+    def run(self):
+        try:
+            from speaker.voice_similarity import compare_line_to_verified_anchors
+            result = compare_line_to_verified_anchors(
+                self.store, self.index, self.source_wav, self.anchor_dir)
+            self.finished.emit(result)
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {str(exc)[:300]}")
+
+
 class SpeakerVerificationDialog(QDialog):
     def __init__(self, job, segments, wav_path, parent=None):
         super().__init__(parent)
@@ -29,6 +52,8 @@ class SpeakerVerificationDialog(QDialog):
         self._initial_snapshot = [dict(s.__dict__) for s in segments]
         self.wav_path = Path(wav_path)
         self.source_video = Path(job.project.video_in) if job.project.video_in else None
+        self._match_thread = None
+        self._match_worker = None
         self.anchor_dir = job.stages_dir / "voice_anchor_review"
         manifest_path = self.anchor_dir / "voice_anchor_candidates.json"
         manifest = (json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -86,12 +111,15 @@ class SpeakerVerificationDialog(QDialog):
         controls.addWidget(self.watched)
         for title, handler in (
             ("Nghe mẫu / câu", self.play_audio),
+            ("So giọng AI (gợi ý, không xác minh)", self.compare_selected),
             ("Xem cảnh video gốc", self.play_video),
             ("XÁC MINH MỤC ĐANG CHỌN", self.verify_selected),
             ("Hủy xác minh mục", self.revoke_selected),
         ):
             btn = QPushButton(title)
             btn.clicked.connect(handler)
+            if handler == self.compare_selected:
+                self.btn_compare = btn
             controls.addWidget(btn)
         controls.addStretch()
         row.addWidget(left, 1)
@@ -234,6 +262,68 @@ class SpeakerVerificationDialog(QDialog):
         end = item.end if kind == "line" else item["end"]
         self._play(self.source_video, start, end)
 
+    def compare_selected(self):
+        """Compare real voice embeddings ONLY against human-reviewed anchors.
+
+        Scores are not probabilities; the result never changes any identity,
+        segment speaker ID, or approval state.
+        """
+        kind, segment = self._selected()
+        if kind != "line":
+            info_box(self, "Chọn câu thoại",
+                     "Hãy chuyển tab Từng câu thoại và chọn một câu để so giọng.")
+            return
+        if not self.store.anchor_decisions:
+            info_box(self, "Chưa có mẫu đã duyệt",
+                     "Hãy xác minh ít nhất một mẫu giọng trước khi chạy so khớp.")
+            return
+        if self._match_thread is not None and self._match_thread.isRunning():
+            return
+        thread = QThread(self)
+        worker = VoiceMatchWorker(
+            self.store, segment.index, self.wav_path, self.anchor_dir)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._match_result)
+        worker.failed.connect(self._match_error)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._match_cleanup)
+        self._match_thread = thread
+        self._match_worker = worker
+        self.btn_compare.setEnabled(False)
+        self.tabs.setEnabled(False)
+        thread.start()
+
+    def _match_result(self, report):
+        lines = []
+        for row in report.get("ranked", [])[:5]:
+            lines.append(
+                f"{row['character_name']}: cosine {row['cosine_similarity']:.4f} "
+                f"({row['reference_samples']} mẫu đã duyệt)")
+        body = "\n".join(lines) if lines else (
+            "Chưa có đủ mẫu độc lập hợp lệ để so giọng. "
+            "Mẫu trùng audio với chính câu đang chọn đã bị loại.")
+        info_box(
+            self, "Chỉ là GỢI Ý từ embedding",
+            body + "\n\nCosine không phải xác suất/độ tin cậy đã hiệu chuẩn. "
+            "Không có câu nào được tự động xác minh. "
+            "Hãy nghe và xem cảnh phim trước khi bấm xác nhận.")
+
+    def _match_error(self, message):
+        error_box(
+            self, "Không thể so giọng",
+            message + "\n\nTính năng không bắt buộc. "
+            "Nếu thiếu SpeechBrain: pip install -r requirements-speaker-v2.txt")
+
+    def _match_cleanup(self):
+        self._match_worker = None
+        self._match_thread = None
+        self.btn_compare.setEnabled(True)
+        self.tabs.setEnabled(True)
+
     def verify_selected(self):
         kind, item = self._selected()
         if item is None:
@@ -266,11 +356,17 @@ class SpeakerVerificationDialog(QDialog):
         self._refresh()
 
     def save(self):
+        if self._match_thread is not None and self._match_thread.isRunning():
+            info_box(self, "Đang so giọng", "Chỉ lưu sau khi tác vụ so giọng kết thúc.")
+            return
         self.store.save()
         self.player.stop()
         self.accept()
 
     def reject(self):
+        if self._match_thread is not None and self._match_thread.isRunning():
+            info_box(self, "Đang so giọng", "Hãy hoàn thành việc so giọng trước khi đóng.")
+            return
         self.player.stop()
         for seg, before in zip(self.segments, self._initial_snapshot):
             seg.__dict__.update(before)
