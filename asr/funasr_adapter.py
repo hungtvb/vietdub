@@ -215,8 +215,11 @@ class FunASRAdapter:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
     def _finalize(self, segments: List[Segment]) -> List[Segment]:
-        self.metrics["total_seconds"] = round(
-            time.perf_counter() - self._started_at, 3)
+        # Microsecond-scale mock jobs must not round total time to zero
+        # while inference time remains positive.
+        self.metrics["total_seconds"] = max(
+            round(time.perf_counter() - self._started_at, 6),
+            self.metrics["inference_seconds"])
         self.metrics["real_time_factor"] = round(
             self.metrics["inference_seconds"] / max(self.metrics["audio_seconds"], .001), 4)
         self.metrics["segment_count"] = len(segments)
