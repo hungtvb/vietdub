@@ -33,8 +33,9 @@ DEFAULTS = {
     "llm_temperature": 0.2,
     "translate_batch": 20,
     # --- ASR ---
-    "asr_engine": "funasr",  # legacy default; optionally whisper_pyannote
+    "asr_engine": "whisper_pyannote",  # multilingual default; FunASR = legacy Chinese-only
     "whisper_model": "large-v3-turbo",
+    "source_language": "auto",  # new video source detection: auto | en | zh | ...
     "asr_device": "auto",
     "whisper_forced_alignment": True,
     "voice_anchor_review": True,  # exports audition candidates; NEVER approves automatically
