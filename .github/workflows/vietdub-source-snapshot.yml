@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Package tested source
-        run: tar --exclude=.git -czf vietdub-source.tar.gz .
+        run: tar --exclude=.git --exclude=vietdub-source.tar.gz -czf vietdub-source.tar.gz .
       - uses: actions/upload-artifact@v4
         with:
           name: vietdub-source
