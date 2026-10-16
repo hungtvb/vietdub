@@ -3,18 +3,13 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "validate translation handoff, or render fully approved translation"
+        description: "Only validate handoff, or render fully reviewed/approved translation"
         required: true
         type: choice
         options:
           - validate
-          - render_draft
           - render_approved
         default: validate
-  push:
-    branches: [ci/run-vietdub-20261016]
-    paths:
-      - '.github/workflows/vietdub-stage2-zerotts.yml'
 permissions:
   contents: read
   actions: read
@@ -23,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      RUN_MODE: ${{ inputs.mode || 'render_draft' }}
+      RUN_MODE: ${{ inputs.mode || 'validate' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -59,18 +54,22 @@ jobs:
           print('Approved lines:',len(p['segments']))
           PY
       - name: Install offline ZeroTTS and FFmpeg
+        if: env.RUN_MODE == 'render_approved'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           pip install gdown zerotts numpy soundfile librosa
       - name: Download ZeroTTS ONNX model weights
+        if: env.RUN_MODE == 'render_approved'
         run: |
           python - <<'PY'
           from huggingface_hub import snapshot_download
           snapshot_download(repo_id='zeroweight-ai/ZeroTTS',local_dir='model/ZeroTTS')
           PY
       - name: Verify ZeroTTS speaks actual Vietnamese dialogue
+        if: env.RUN_MODE == 'render_approved'
         run: python ci_zerotts_smoke.py
       - name: Upload actual TTS sound check
+        if: env.RUN_MODE == 'render_approved'
         uses: actions/upload-artifact@v4
         with:
           name: vietdub-zerotts-real-audio-check
@@ -78,25 +77,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Download original video
-        if: env.RUN_MODE == 'render_approved' || env.RUN_MODE == 'render_draft'
+        if: env.RUN_MODE == 'render_approved'
         run: |
           mkdir -p private_input output
           gdown '1hIdUbh_DAjlUdu1g39GTWJnfLOK-ZL7G' -O private_input/input.mp4
           test -s private_input/input.mp4
-      - name: Render authentic Vietnamese draft for technical QC (not approved)
-        if: env.RUN_MODE == 'render_draft'
-        env:
-          VIETDUB_TRANSLATION_PATH: translations/review-draft.json
-          VIETDUB_OUTPUT_NAME: input_vidub_PREVIEW.mp4
-        run: python ci_stage2_render.py
-      - name: Upload real but unreviewed dubbing preview
-        if: env.RUN_MODE == 'render_draft' && success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: vietdub-zerotts-review-preview
-          path: output/input_vidub_PREVIEW.mp4
-          if-no-files-found: error
-          retention-days: 7
       - name: Real local Vietnamese TTS and MP4 render without subtitles
         if: env.RUN_MODE == 'render_approved'
         run: python ci_stage2_render.py
