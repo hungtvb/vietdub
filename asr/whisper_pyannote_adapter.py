@@ -171,11 +171,30 @@ class WhisperPyannoteAdapter:
         if self.forced_alignment:
             aligned, stats = forced_align(raw, wav_path, device=dev)
         segments, qa, mapping = construct_segments(aligned, exclusive)
+        # Retain independent acoustic evidence for audition; NEVER auto-approve
+        # mapping a pyannote cluster to a character identity.
+        regular = annotation_windows(result.speaker_diarization)
+        word_evidence = []
+        for part in aligned:
+            for word in part.get("words") or []:
+                a, b = word.get("start"), word.get("end")
+                if a is None or b is None or float(b) <= float(a):
+                    continue
+                label, coverage, share = assign_speaker(float(a), float(b), exclusive)
+                word_evidence.append({
+                    "start": float(a), "end": float(b),
+                    "word": word.get("word", ""), "speaker_label": label,
+                    "coverage": coverage, "speaker_vote_share": share,
+                })
         self.last_evidence = {
             "source": "whisper_pyannote_community_1",
             "language_detected": getattr(info, "language", ""),
             "speaker_mapping": mapping,
             "diarized_turns": exclusive,
+            "diarization_exclusive": exclusive,
+            "diarization_regular": regular,
+            "word_evidence": word_evidence,
+            "segments": [seg.to_dict() for seg in segments],
             "alignment": stats,
             "qa": qa,
             "qa_status": "UNAPPROVED",
