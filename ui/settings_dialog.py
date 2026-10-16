@@ -146,6 +146,29 @@ class SettingsDialog(QDialog):
             0 if self.settings.get("voice_anchor_review", True) else 1)
         f.addRow("Kiểm tra người nói:", self.voice_anchor_review)
         f.addRow(QLabel("Community-1 cần quyền truy cập model Hugging Face."))
+        self.funasr_backend = QComboBox()
+        self.funasr_backend.addItem("ModelScope — ổn định", "modelscope")
+        self.funasr_backend.addItem("AutoModel — VAD/batching tối ưu", "automodel")
+        self.funasr_backend.setCurrentIndex(max(
+            0, self.funasr_backend.findData(
+                self.settings.get("funasr_backend", "modelscope"))))
+        f.addRow("FunASR backend:", self.funasr_backend)
+        self.funasr_threads = QSpinBox()
+        self.funasr_threads.setRange(1, 32)
+        self.funasr_threads.setValue(int(
+            self.settings.get("funasr_cpu_threads", 4)))
+        f.addRow("FunASR CPU threads:", self.funasr_threads)
+        self.funasr_batch = QSpinBox()
+        self.funasr_batch.setRange(5, 600)
+        self.funasr_batch.setValue(int(
+            self.settings.get("funasr_batch_size_s", 60)))
+        f.addRow("FunASR batch (giây):", self.funasr_batch)
+        self.funasr_vad = QSpinBox()
+        self.funasr_vad.setRange(1000, 60000)
+        self.funasr_vad.setSingleStep(1000)
+        self.funasr_vad.setValue(int(
+            self.settings.get("funasr_max_vad_segment_ms", 15000)))
+        f.addRow("FunASR max VAD (ms):", self.funasr_vad)
         self.asr_model = QComboBox()
         self.asr_model.setEditable(True)
         self.asr_model.addItem(str(self.settings.get("asr_model")))
@@ -287,6 +310,11 @@ class SettingsDialog(QDialog):
             0 if DEFAULTS["whisper_forced_alignment"] else 1)
         self.voice_anchor_review.setCurrentIndex(
             0 if DEFAULTS["voice_anchor_review"] else 1)
+        self.funasr_backend.setCurrentIndex(max(
+            0, self.funasr_backend.findData(DEFAULTS["funasr_backend"])))
+        self.funasr_threads.setValue(int(DEFAULTS["funasr_cpu_threads"]))
+        self.funasr_batch.setValue(int(DEFAULTS["funasr_batch_size_s"]))
+        self.funasr_vad.setValue(int(DEFAULTS["funasr_max_vad_segment_ms"]))
         self.asr_model.setCurrentText(str(DEFAULTS["asr_model"]))
         self.vad_model.setText(str(DEFAULTS["vad_model"]))
         self.punc_model.setText(str(DEFAULTS["punc_model"]))
@@ -332,6 +360,10 @@ class SettingsDialog(QDialog):
             "hf_token": self.hf_token.text().strip(),
             "whisper_forced_alignment": bool(self.whisper_align.currentData()),
             "voice_anchor_review": bool(self.voice_anchor_review.currentData()),
+            "funasr_backend": self.funasr_backend.currentData(),
+            "funasr_cpu_threads": self.funasr_threads.value(),
+            "funasr_batch_size_s": self.funasr_batch.value(),
+            "funasr_max_vad_segment_ms": self.funasr_vad.value(),
             "asr_model": self.asr_model.currentText().strip(),
             "vad_model": self.vad_model.text().strip(),
             "punc_model": self.punc_model.text().strip(),
