@@ -9,13 +9,16 @@ def _seg(i, start, end, text, spk=0):
     return Segment(index=i, start=start, end=end, speaker=spk, text_src=text)
 
 
-def test_overlap_fixed_and_flagged():
-    # edge case 4
-    segs = [_seg(0, 0.0, 5.0, "câu một"), _seg(1, 4.0, 8.0, "câu hai")]
+def test_overlap_is_preserved_and_both_flagged():
+    # edge case 4: preserve simultaneous dialogue; never truncate speaker 1.
+    segs = [_seg(0, 0.0, 5.0, "câu một", 0),
+            _seg(1, 4.0, 8.0, "câu hai", 1)]
     out = FunASRAdapter.post_fix(segs)
-    assert out[0].end == 4.0
+    assert len(out) == 2
+    assert out[0].end == 5.0
+    assert out[1].start == 4.0
     assert out[0].needs_review is True
-    assert out[1].needs_review is False
+    assert out[1].needs_review is True
 
 
 def test_garbage_lines_dropped():
