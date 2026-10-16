@@ -267,7 +267,8 @@ class Orchestrator:
                 keep_loaded=bool(settings.get("funasr_keep_loaded", True)),
                 batch_size_s=int(settings.get("funasr_batch_size_s", 60)),
                 max_vad_segment_ms=int(
-                    settings.get("funasr_max_vad_segment_ms", 15000)))
+                    settings.get("funasr_max_vad_segment_ms", 15000)),
+                chunk_overlap_sec=float(settings.get("funasr_chunk_overlap_sec", 1.5)))
             segments = adapter.transcribe(wav)
             self.logger.info("FunASR profiling: %s", adapter.metrics)
             quality = {
