@@ -30,6 +30,19 @@ class ZeroTTSLocal:
             if not path.is_file() or path.stat().st_size<1024:
                 audio=engine.synthesize(text,voice=voice)
                 engine.save_audio(audio,str(path))
+                # ZeroTTS emits 48 kHz; VietDub's timeline mixer expects
+                # precisely 44.1 kHz for all sentence WAVs.
+                import math
+                import numpy as np
+                import soundfile as sf
+                from scipy.signal import resample_poly
+                samples, rate = sf.read(path, dtype="float32")
+                if samples.ndim != 1:
+                    samples = samples.mean(axis=1)
+                if rate != 44100:
+                    factor = math.gcd(rate, 44100)
+                    samples = resample_poly(samples, 44100 // factor, rate // factor)
+                sf.write(path, np.asarray(samples,dtype="float32"), 44100, subtype="PCM_16")
             if not path.is_file() or path.stat().st_size<1024: raise RuntimeError("TTS output missing: "+str(path))
             seg.audio_vi=str(path)
         return segments
