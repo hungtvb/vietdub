@@ -145,7 +145,11 @@ class BaseTranslator:
         for s in chunk:
             spk = speakers.get(s.speaker)
             g = spk.gender if spk else "unknown"
-            lines.append(f"[{s.index}] SPEAKER_{s.speaker} ({g}): {s.text_src}")
+            approved_name = (f" [verified character: {s.character_name}]"
+                             if s.identity_status == "VERIFIED" and s.character_name
+                             else "")
+            lines.append(f"[{s.index}] SPEAKER_{s.speaker}{approved_name} "
+                         f"({g}): {s.text_src}")
         user = prompts.build_analyze_user(lines)
         for attempt in range(ANALYZE_RETRIES):
             try:
@@ -556,6 +560,8 @@ class BaseTranslator:
     def _line_header(seg: Segment) -> str:
         """'SPEAKER_0 (to SPEAKER_1)' / 'SPEAKER_0 (to AUDIENCE)' / ..."""
         h = f"SPEAKER_{seg.speaker}"
+        if seg.identity_status == "VERIFIED" and seg.character_name:
+            h += f" [verified character: {seg.character_name}]"
         aud = (seg.audience or "").strip()
         if aud == "audience":
             h += " (to AUDIENCE)"
