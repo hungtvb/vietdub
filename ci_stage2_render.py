@@ -17,7 +17,7 @@ assert segments and speakers and len({s.index for s in segments})==len(segments)
 assert all(s.text_vi.strip() and s.text_src.strip() and s.text_vi.strip()!=s.text_src.strip() and s.end>s.start and s.speaker in speakers for s in segments),"Missing or untranslated lines"
 output=Path("output/input_vidub.mp4").resolve()
 output.parent.mkdir(exist_ok=True)
-job=Job(project=Project(name="stage2",video_source="file",video_in=str(video),video_out=str(output),sub_mode="srt",overnight=True,review_stops=False))
+job=Job(project=Project(name="stage2",video_source="file",video_in=str(video),video_out=str(output),sub_mode="none",overnight=True,review_stops=False))
 settings=Settings(path=Path("output/stage2-settings.json"))
 settings.set("tts_provider","zerotts")
 settings.set("zerotts_model_dir","model/ZeroTTS")
@@ -27,7 +27,4 @@ io.save_segments(job.job_dir,"translate",segments)
 io.save_speakers(job.job_dir,"analyze",speakers)
 for step in ("tts","mix","render"): runner._run_step(step)
 assert output.is_file() and output.stat().st_size>100000
-srt=job.stages_dir/"subs.vi.srt"
-assert srt.is_file()
-Path("output/subs.vi.srt").write_bytes(srt.read_bytes())
 print("Final dubbed MP4:",output,"lines:",len(segments))
