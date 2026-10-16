@@ -3,6 +3,7 @@
 # - peak RAM estimate + warning logic
 # - ASR transcribes long wavs in 10-minute chunks with offset re-join
 import logging
+from pathlib import Path
 
 import numpy as np
 import soundfile as sf
