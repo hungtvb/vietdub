@@ -67,7 +67,17 @@ def _wav_duration_sec(wav_path: Path) -> float:
 
 class FunASRAdapter:
     def __init__(self, asr_model: str, vad_model: str, punc_model: str,
-                 spk_model: str, device: str = "cpu"):
+                 spk_model: str, device: str = "cpu",
+                 backend: str = "modelscope", ncpu: int = 4,
+                 batch_size_s: int = 60, max_vad_segment_ms: int = 15000):
+        if backend not in ("modelscope", "automodel"):
+            raise ValueError("Unsupported Chinese ASR backend: " + backend)
+        if ncpu < 1 or batch_size_s < 1 or max_vad_segment_ms < 1000:
+            raise ValueError("Invalid Chinese ASR tuning configuration")
+        self.backend = backend
+        self.ncpu = ncpu
+        self.batch_size_s = batch_size_s
+        self.max_vad_segment_ms = max_vad_segment_ms
         self.asr_model = asr_model
         self.vad_model = vad_model
         self.punc_model = punc_model
@@ -75,7 +85,7 @@ class FunASRAdapter:
         self.device = device
         self._pipe = None
         self.metrics = {
-            "backend": "modelscope",
+            "backend": self.backend,
             "model_load_seconds": None,
             "inference_seconds": 0.0,
             "audio_seconds": 0.0,
@@ -102,25 +112,37 @@ class FunASRAdapter:
             log.info("model FunASR sẽ tải về: %s", models_dir)
         self.metrics["cache_dir"] = os.environ.get("MODELSCOPE_CACHE", str(models_dir))
         try:
-            from modelscope.pipelines import pipeline
-            from modelscope.utils.constant import Tasks
-        except ImportError as e:
-            raise ASRError(
-                "Chưa cài thư viện FunASR/modelscope.\n"
-                "Cách khắc phục: pip install funasr modelscope") from e
-        try:
-            log.info("loading FunASR models on %s ...", self.device)
-            self._pipe = pipeline(
-                task=Tasks.auto_speech_recognition,
-                model=self.asr_model,
-                vad_model=self.vad_model,
-                punc_model=self.punc_model,
-                spk_model=self.spk_model,
-                disable_update=True,
-                disable_progress_bar=True,
-                disable_log=True,
-                device=self.device,
-            )
+            log.info("loading FunASR backend=%s on %s ...", self.backend, self.device)
+            if self.backend == "automodel":
+                from funasr import AutoModel
+                # Official FunASR AutoModel path: VAD cuts long utterances
+                # before batching. Run against the same Chinese audio in CI
+                # before claiming any speed or accuracy advantage.
+                self._pipe = AutoModel(
+                    model="paraformer-zh",
+                    vad_model="fsmn-vad",
+                    vad_kwargs={"max_single_segment_time": self.max_vad_segment_ms},
+                    punc_model="ct-punc",
+                    spk_model="cam++",
+                    device=self.device,
+                    ncpu=self.ncpu,
+                    hub="ms",
+                    disable_update=True,
+                )
+            else:
+                from modelscope.pipelines import pipeline
+                from modelscope.utils.constant import Tasks
+                self._pipe = pipeline(
+                    task=Tasks.auto_speech_recognition,
+                    model=self.asr_model,
+                    vad_model=self.vad_model,
+                    punc_model=self.punc_model,
+                    spk_model=self.spk_model,
+                    disable_update=True,
+                    disable_progress_bar=True,
+                    disable_log=True,
+                    device=self.device,
+                )
             self.metrics["model_load_seconds"] = round(
                 time.perf_counter() - load_started, 3)
             log.info("FunASR model load %.2fs (cache: %s)",
@@ -196,7 +218,12 @@ class FunASRAdapter:
         """Transcribe a single (short) wav -> raw segments, no chunking."""
         started = time.perf_counter()
         try:
-            res = self._pipe(wav_path)
+            if self.backend == "automodel":
+                res = self._pipe.generate(
+                    input=wav_path, batch_size_s=self.batch_size_s,
+                    batch_size_threshold_s=max(5, self.batch_size_s // 2))
+            else:
+                res = self._pipe(wav_path)
         except Exception as e:  # noqa: BLE001
             raise ASRError(
                 "ASR bị lỗi khi nghe (có thể hết RAM).\n"
@@ -204,9 +231,11 @@ class FunASRAdapter:
         finally:
             self.metrics["inference_seconds"] += time.perf_counter() - started
         if not res or "sentence_info" not in res[0]:
+            keys = sorted(res[0].keys()) if res and isinstance(res[0], dict) else []
             raise ASRError(
-                "ASR không trả về câu nào (video có thể không có tiếng nói).\n"
-                "Cách khắc phục: kiểm tra video có tiếng người nói không.")
+                "ASR không trả về sentence_info có timestamp để lồng tiếng. "
+                "Chưa thể xác minh độ chính xác: " + str(keys)
+                + ". Chọn lại backend modelscope hoặc kiểm tra model FunASR.")
         segments: List[Segment] = []
         for i, it in enumerate(res[0]["sentence_info"]):
             text = (it.get("text") or "").strip()
