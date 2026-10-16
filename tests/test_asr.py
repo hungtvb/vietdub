@@ -1,5 +1,5 @@
 # ASR post_fix (port of recognition/_base.py::_post_fix):
-# edge case 4: overlap -> fix + needs_review; garbage lines dropped;
+# edge case 4: overlap -> preserve evidence + needs_review; garbage dropped;
 # end<=start dropped; index renumbered.
 from asr.funasr_adapter import FunASRAdapter
 from project.schema import Segment
