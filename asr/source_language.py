@@ -118,7 +118,7 @@ def choose_language(observations: list[dict], requested: str = "auto",
         warnings.append("Nhận diện ngôn ngữ chưa chắc chắn; đề nghị kiểm tra thủ công.")
     return LanguageDecision(
         requested="auto", primary=primary, mode="mixed" if mixed else "detected",
-        confidence=round(confidence, 3), multilingual=True,
+        confidence=round(confidence, 3), multilingual=bool(mixed),
         review_required=bool(warnings), observations=list(observations), warnings=warnings)
 
 
