@@ -1,7 +1,7 @@
 # VietDub - local WhisperX acoustic alignment shared by CI and desktop app.
 """Align words acoustically without assuming WhisperX preserves segment count."""
 from collections import defaultdict
-import re
+from asr.source_language import alignment_language
 
 
 def _overlap(a, b, x, y):
@@ -39,7 +39,12 @@ def forced_align(raw, wav, *, batch_size=20, device="cpu"):
              "fallback_to_whisper_words": 0, "errors": {}}
     groups = defaultdict(list)
     for i, part in enumerate(raw):
-        lang = "zh" if re.search(r"[\u3400-\u9fff]", part["text"]) else "en"
+        lang = alignment_language(part, default="und")
+        if lang == "und":
+            # Never silently force unidentified speech into an English aligner.
+            output[i]["alignment_status"] = "language_unverified"
+            stats["fallback_to_whisper_words"] += 1
+            continue
         groups[lang].append((i, part))
     for lang, parts in groups.items():
         try:
