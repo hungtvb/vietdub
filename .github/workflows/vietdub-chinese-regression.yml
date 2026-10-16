@@ -4,13 +4,22 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "smoke = language detection only; full = real FunASR inference"
+        description: "benchmark = 25s real audio; full = full interview; smoke = detection only"
         required: true
-        default: full
+        default: benchmark
         type: choice
         options:
+          - benchmark
           - full
           - smoke
+      backend:
+        description: "AutoModel (optimized VAD/batching) or legacy ModelScope"
+        required: true
+        default: automodel
+        type: choice
+        options:
+          - automodel
+          - modelscope
   push:
     branches: [ci/run-vietdub-20261016]
     paths:
@@ -25,7 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      RUN_MODE: ${{ inputs.mode || 'full' }}
+      RUN_MODE: ${{ inputs.mode || 'benchmark' }}
+      ASR_BACKEND: ${{ inputs.backend || 'automodel' }}
       MODELSCOPE_CACHE: ${{ github.workspace }}/.models
       OMP_NUM_THREADS: "4"
       PYTHONUNBUFFERED: "1"
@@ -38,12 +48,19 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg
+      - name: Restore persistent FunASR/ModelScope cache
+        uses: actions/cache@v4
+        with:
+          path: .models
+          key: ${{ runner.os }}-vietdub-modelscope-${{ env.ASR_BACKEND }}-v2
+          restore-keys: |
+            ${{ runner.os }}-vietdub-modelscope-
       - name: Install multilingual language detector
         run: |
           python -m pip install --upgrade pip
           pip install "faster-whisper>=1.1,<2" numpy soundfile scipy
       - name: Install real Chinese FunASR/ModelScope models
-        if: env.RUN_MODE == 'full'
+        if: env.RUN_MODE != 'smoke'
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install "funasr==1.4.16" modelscope addict datasets pillow simplejson kaldi-native-fbank librosa sortedcontainers
@@ -62,12 +79,14 @@ jobs:
           python ci_chinese_regression.py \
             --video chinese_regression/mandarin_source.webm \
             --out chinese_regression \
-            --mode "$RUN_MODE"
+            --mode "$RUN_MODE" \
+            --backend "$ASR_BACKEND" \
+            --benchmark-seconds 25
       - name: Upload Chinese ASR/route/QA evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: vietdub-mandarin-real-asr-${{ env.RUN_MODE }}
+          name: vietdub-mandarin-real-asr-${{ env.RUN_MODE }}-${{ env.ASR_BACKEND }}
           path: chinese_regression/report.json
           if-no-files-found: warn
           retention-days: 7
