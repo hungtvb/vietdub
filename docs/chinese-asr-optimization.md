@@ -124,6 +124,25 @@ Mandarin audio** in a single ASR pass versus artificially shortened chunks
 (8-second nominal chunks) and records sequence disagreement for QA, not
 a fabricated CER/WER metric.
 
+## Independent real-audio boundary regression — passed
+
+The [real 25-second Mandarin boundary CI](https://github.com/hungtvb/vietdub/actions/runs/38925349240)
+ran AutoModel on one continuous WAV (10 utterances / 124 Hanzi), then
+**reused exactly the same in-RAM pretrained model** to process the same
+recording as **four nominal 8-second chunks with 1.5-second overlap**.
+
+- Baseline: 10 segments; 124 Hanzi; 2.623 seconds CPU inference.
+- Chunked: 10 segments; 124 Hanzi; 3.044 seconds inference; four chunks.
+- Character-sequence agreement: **95.16%** (not a reference accuracy score).
+- Border QA: **6** nearby segments conservatively flagged.
+- In-memory model reuse: startup **0.0 seconds** for the second transcription
+  with the already-loaded adapter (as opposed to 33.561 seconds on initial load).
+
+This independently exercises the generic FunASR chunk-handling code with
+genuine speech, not just deterministic fixtures. Minor transcription
+differences remain (95.16% rather than 100%); never infer word accuracy or
+speaker correctness from this experiment.
+
 ## Where to run future tests
 
 - Real Chinese audio smoke: `.github/workflows/vietdub-chinese-routing-smoke.yml`
