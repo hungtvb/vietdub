@@ -330,6 +330,7 @@ class SettingsDialog(QDialog):
             0 if DEFAULTS["funasr_keep_loaded"] else 1)
         self.funasr_batch.setValue(int(DEFAULTS["funasr_batch_size_s"]))
         self.funasr_vad.setValue(int(DEFAULTS["funasr_max_vad_segment_ms"]))
+        self.funasr_overlap.setValue(float(DEFAULTS["funasr_chunk_overlap_sec"]))
         self.asr_model.setCurrentText(str(DEFAULTS["asr_model"]))
         self.vad_model.setText(str(DEFAULTS["vad_model"]))
         self.punc_model.setText(str(DEFAULTS["punc_model"]))
@@ -380,6 +381,7 @@ class SettingsDialog(QDialog):
             "funasr_keep_loaded": bool(self.funasr_keep_loaded.currentData()),
             "funasr_batch_size_s": self.funasr_batch.value(),
             "funasr_max_vad_segment_ms": self.funasr_vad.value(),
+            "funasr_chunk_overlap_sec": self.funasr_overlap.value(),
             "asr_model": self.asr_model.currentText().strip(),
             "vad_model": self.vad_model.text().strip(),
             "punc_model": self.punc_model.text().strip(),
