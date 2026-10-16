@@ -122,7 +122,7 @@ class WhisperPyannoteAdapter:
     def __init__(self, model="large-v3-turbo", token="", device="auto",
                  compute_type="auto", forced_alignment=True):
         self.model = model
-        self.token = token or os.getenv("HF_TOKEN", "")
+        self.token = os.getenv("HF_TOKEN") or token
         self.device = device
         self.compute_type = compute_type
         self.forced_alignment = forced_alignment
