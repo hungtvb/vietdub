@@ -53,6 +53,13 @@ def analyze_speaker_audio(review_plan: dict, source_wav, clips_dir, *,
     skipped = []
     for item in candidates:
         try:
+            # A diarization-only interval with no aligned source words may
+            # contain background music or nonspeech. Preserve that candidate
+            # for listening, but never use it to rank a person's identity.
+            if float(item.get("word_density", 0.)) < .2:
+                raise ValueError("LOW_WORD_DENSITY_UNVERIFIED_SPEECH")
+            if float(item.get("other_speaker_overlap", 0.)) > .25:
+                raise ValueError("OVERLAPPING_REFERENCE_AUDIO")
             path = _verified_clip_path(clips_dir, item["file"])
             if not path.is_file():
                 raise OSError("MISSING_VOICE_CLIP")
@@ -173,6 +180,12 @@ def analyze_speaker_audio(review_plan: dict, source_wav, clips_dir, *,
         "valid_reference_clips": sum(len(v) for v in vectors.values()),
         "invalid_reference_clips": skipped,
         "measured_line_samples": len(results),
+        "scored_line_samples": sum(
+            row["status"] == "UNVERIFIED_CLUSTER_SIMILARITY_ONLY"
+            for row in results),
+        "multispeaker_lines_skipped": sum(
+            row["status"] == "MULTIPLE_PYANNOTE_VOICES_SKIP_SCORING"
+            for row in results),
         "cross_model_accuracy_measured": False,
         "median_within_cluster_cosine": (
             round(statistics.median(within), 4) if within else None),
@@ -184,6 +197,8 @@ def analyze_speaker_audio(review_plan: dict, source_wav, clips_dir, *,
         "limitations": [
             "ECAPA cosine scores are NOT calibrated identity probabilities.",
             "Pyannote voice clusters may include more than one character.",
+            "References lacking aligned speech words or containing speaker "
+            "overlap are excluded from model ranking but retained for listening.",
             "All reference clips are UNVERIFIED until original audio and "
             "video scene review.",
             "The same source recording is not independent ground truth; "
