@@ -72,3 +72,66 @@ def test_regroup_refuses_twelve_second_overflow():
     assert len(merged) >= 2
     assert max(x.end-x.start for x in merged) <= 12
     assert [id for x in manifest for id in x["original_asr_ids"]] == list(range(5))
+
+
+
+def test_existing_base_translator_executes_analyze_then_translate_and_records_llm_calls():
+    import json
+    from translation.base import BaseTranslator
+    from translation.llm_e2e import analyze_and_translate
+    from translation import prompts
+    class StubExistingLLM(BaseTranslator):
+        name = "existing_llm_interface"
+        model = "test_stub_only"
+        def _chat(self, system, user):
+            if system == prompts.ANALYZE_SYSTEM:
+                return json.dumps({
+                    "speakers": [{"id": 0, "role": "interviewee",
+                                  "relations": [{"audience": "audience",
+                                                 "pronoun_i": "tôi",
+                                                 "pronoun_you": "quý vị",
+                                                 "is_default": True}]}],
+                    "lines": [{"id": 0, "audience": "audience"}]})
+            if system == prompts.VIDEO_META_SYSTEM:
+                return json.dumps({"genre": "interview", "style": "formal",
+                                   "setting": "modern", "tone_notes": "sports"})
+            if system.startswith(prompts.TRANSLATE_SYSTEM):
+                assert "tôi/quý vị" in user, "Locked speaker relation missing"
+                return json.dumps({"translations": [
+                    {"id": 0, "text_vi": "Bóng đá nữ Trung Quốc còn phải nỗ lực."}]})
+            raise AssertionError("Unexpected prompt")
+    segments=[Segment(index=0,start=0,end=4,speaker=0,source_lang="zh",
+                      text_src="中国女足还要努力")]
+    evidence=analyze_and_translate(segments, StubExistingLLM())
+    assert evidence["llm_call_counts"]["analyze"] == 1
+    assert evidence["llm_call_counts"]["translate"] == 1
+    assert evidence["video_context"]["genre"] == "interview"
+    assert segments[0].text_vi == "Bóng đá nữ Trung Quốc còn phải nỗ lực."
+    assert evidence["human_approved"] is False
+
+
+def test_existing_llm_fallback_to_chinese_source_is_rejected():
+    import json
+    from translation.base import BaseTranslator
+    from translation.llm_e2e import analyze_and_translate
+    from translation import prompts
+    class SourceEchoLLM(BaseTranslator):
+        name = "source_echo"
+        model = "stub"
+        def _chat(self, system, user):
+            if system == prompts.ANALYZE_SYSTEM:
+                return json.dumps({"speakers": [
+                    {"id": 0, "role": "speaker",
+                     "relations": [{"audience": "audience",
+                                    "pronoun_i": "tôi",
+                                    "pronoun_you": "quý vị",
+                                    "is_default": True}]}],
+                                    "lines":[{"id":0,"audience":"audience"}]})
+            if system == prompts.VIDEO_META_SYSTEM:
+                return json.dumps({"genre":"interview"})
+            return json.dumps({"translations": [
+                {"id":0,"text_vi":"中国女足"}]})
+    with pytest.raises(RuntimeError, match="untranslated"):
+        analyze_and_translate([
+            Segment(index=0, start=0, end=4, speaker=0,
+                    source_lang="zh", text_src="中国女足")], SourceEchoLLM())

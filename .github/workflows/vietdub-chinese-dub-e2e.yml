@@ -6,6 +6,7 @@ on:
       - '.github/workflows/vietdub-chinese-dub-e2e.yml'
       - 'ci_chinese_regression.py'
       - 'ci_chinese_dub_e2e.py'
+      - 'translation/llm_e2e.py'
       - 'asr/dub_grouping.py'
       - 'tests/test_chinese_dub_e2e.py'
   workflow_dispatch:
@@ -31,7 +32,7 @@ jobs:
           pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install 'funasr==1.4.16' modelscope addict datasets pillow simplejson kaldi-native-fbank librosa sortedcontainers
-          pip install 'faster-whisper>=1.1,<2' numpy scipy soundfile pytest edge-tts
+          pip install 'faster-whisper>=1.1,<2' numpy scipy soundfile pytest edge-tts requests openai
       - name: Test strict source and duration QA
         run: |
           python -m compileall -q ci_chinese_regression.py ci_chinese_dub_e2e.py
@@ -61,12 +62,21 @@ jobs:
           assert r["actual_hanzi_count"] > 10
           assert len(r["source_video_sha256"]) == 64
           PY
-      - name: Install free offline Chinese-to-Vietnamese MarianMT translation
+      - name: Start local real Ollama LLM (no third-party translation service)
         run: |
-          pip install 'transformers==4.46.3' 'sentencepiece>=0.2,<0.3' 'sacremoses>=0.1'
+          curl --fail --location https://ollama.com/install.sh -o /tmp/ollama-install.sh
+          sh /tmp/ollama-install.sh
+          ollama serve > /tmp/vietdub-ollama.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:11434/api/tags > /dev/null
+          ollama pull qwen2.5:3b
+          ollama list
       - name: Translate, generate REAL Edge-TTS, align and encode H264 MP4
         run: |
-          python ci_chinese_dub_e2e.py --video chinese_regression/mandarin_source.webm --asr-report chinese_regression/report.json --out chinese_dub
+          python ci_chinese_dub_e2e.py --video chinese_regression/mandarin_source.webm --asr-report chinese_regression/report.json --out chinese_dub --llm-provider ollama --llm-model qwen2.5:3b
       - name: Check QA metrics and unapproved gates
         run: |
           python - <<'PY'
@@ -82,6 +92,12 @@ jobs:
               for g in q["dub_grouping"]["original_id_mapping"])
           assert q["tts"]["failed_audio_files"]==0
           assert q["translation"]["human_approved"] is False
+          assert q["translation"]["provider"]=="ollama"
+          assert q["translation"]["llm_call_counts"]["analyze"] >= 1
+          assert q["translation"]["llm_call_counts"]["translate"] >= 1
+          assert q["llm_analysis_executed"] is True
+          assert q["llm_translation_executed"] is True
+          assert q["translation_quality_pass"] is False
           assert q["human_approved"] is False
           assert q["video"]["size_bytes"]>20000
           assert Path("chinese_dub/chinese_vidub_UNAPPROVED.mp4").is_file()

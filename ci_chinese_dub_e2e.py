@@ -16,10 +16,10 @@ import soundfile as sf
 from project.schema import Segment
 from asr.dub_grouping import group_for_vietnamese_dub
 from tts.edge_tts import EdgeTTS
+from translation.llm_e2e import analyze_and_translate, chinese_translation_flags
 from media.subs import write_srt
 from media.mix import mix
 
-MODEL_ID = "Helsinki-NLP/opus-mt-zh-vi"
 VI_VOICE = "vi-VN-HoaiMyNeural"
 
 def probe(path):
@@ -54,34 +54,23 @@ def verify_source(asr, video, duration):
         seg.source_lang = "zh"
     return items
 
-def translate(segments):
-    from transformers import MarianMTModel, MarianTokenizer
-    import torch
-    tokenizer = MarianTokenizer.from_pretrained(MODEL_ID)
-    model = MarianMTModel.from_pretrained(MODEL_ID)
-    model.eval()
-    out = []
-    for start in range(0, len(segments), 8):
-        group = [x.text_src for x in segments[start:start + 8]]
-        encoded = tokenizer(group, return_tensors="pt", padding=True,
-                            truncation=True, max_length=256)
-        with torch.inference_mode():
-            decoded = model.generate(**encoded, num_beams=4, max_new_tokens=160)
-        out += tokenizer.batch_decode(decoded, skip_special_tokens=True)
-    if len(out) != len(segments):
-        raise ValueError("Translation lost source lines")
-    flags = []
-    for seg, translated in zip(segments, out):
-        translated = " ".join(translated.split()).strip()
-        if not translated or translated == seg.text_src:
-            raise ValueError("Empty or untranslated Vietnamese line")
-        if any("\u3400" <= ch <= "\u9fff" for ch in translated):
-            flags.append(seg.index)
-        seg.text_vi = translated
-        seg.gender = "female"  # fixed demo voice, NOT verified speaker identity
-        seg.needs_review = True
-    return {"model": MODEL_ID, "provider": "local_marian_mt",
-            "human_approved": False, "suspected_untranslated_line_ids": flags}
+def make_llm(opts):
+    """Reuse the same existing provider classes as core/orchestrator.py."""
+    if opts.llm_provider == "ollama":
+        from translation.ollama import OllamaTranslator
+        return OllamaTranslator(base_url=opts.ollama_url,
+                                model=opts.llm_model,
+                                batch_size=20, max_retries=2)
+    if opts.llm_provider == "9router":
+        from translation.nine_router import NineRouterTranslator
+        import os
+        key = os.getenv("VIETDUB_9ROUTER_KEY", "").strip()
+        if not key:
+            raise ValueError("Configured 9Router API key missing; no silent fallback")
+        return NineRouterTranslator(api_key=key, model=opts.llm_model,
+                                    batch_size=20)
+    raise ValueError("Explicit LLM provider required")
+
 
 def tempo_filter(factor):
     if not math.isfinite(factor) or factor <= 0:
@@ -169,6 +158,9 @@ def main():
     parser.add_argument("--video", required=True)
     parser.add_argument("--asr-report", required=True)
     parser.add_argument("--out", default="chinese_dub")
+    parser.add_argument("--llm-provider", choices=("ollama", "9router"), default="ollama")
+    parser.add_argument("--llm-model", default="qwen2.5:3b")
+    parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     opts = parser.parse_args()
     out = Path(opts.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -190,7 +182,10 @@ def main():
                                       "dub_units": len(segments),
                                       "original_id_mapping": source_mapping,
                                       "human_verified": False},
-                        translation=translate(segments))
+                        translation=analyze_and_translate(segments, make_llm(opts)))
+        evidence["translation_quality_flags"] = chinese_translation_flags(segments)
+        evidence["llm_analysis_executed"] = True
+        evidence["llm_translation_executed"] = True
         EdgeTTS(voice_female=VI_VOICE, concurrency=2, retries=2).synthesize(
             segments, out / "tts")
         evidence["tts"] = fit_voices(segments, out)
@@ -200,12 +195,14 @@ def main():
         evidence["voice_naturalness_quality_pass"] = (
             evidence["tts"]["speed_review_count"] == 0)
         evidence["overall_quality_pass"] = False  # no human translation/voice review
+        evidence["translation_quality_pass"] = False  # no independent verified references
         evidence["quality_flags"] = {
             "translation_unverified": True, "asr_unverified": True,
             "speaker_identity_unverified": True,
             "speed_review": evidence["tts"]["speed_review_count"],
             "possible_chinese_untranslated": len(
-                evidence["translation"]["suspected_untranslated_line_ids"])}
+                evidence["translation_quality_flags"]["issues"]),
+            "llm_translation_flags": evidence["translation_quality_flags"]["flagged_line_count"]}
         (out / "review_lines.json").write_text(json.dumps(
             [s.to_dict() for s in segments], ensure_ascii=False, indent=2),
             encoding="utf-8")
