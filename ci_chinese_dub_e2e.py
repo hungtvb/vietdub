@@ -14,6 +14,7 @@ import subprocess
 import numpy as np
 import soundfile as sf
 from project.schema import Segment
+from asr.dub_grouping import group_for_vietnamese_dub
 from tts.edge_tts import EdgeTTS
 from media.subs import write_srt
 from media.mix import mix
@@ -177,11 +178,18 @@ def main():
         video = Path(opts.video)
         duration, _ = probe(video)
         asr = json.loads(Path(opts.asr_report).read_text(encoding="utf-8"))
-        segments = verify_source(asr, video, duration)
+        source = verify_source(asr, video, duration)
+        segments, source_mapping = group_for_vietnamese_dub(source)
         evidence.update(source_sha256=asr["source_video_sha256"],
-                        asr_segment_count=len(segments),
+                        asr_segment_count=len(source),
+                        dub_segment_count=len(segments),
                         asr_review_count=asr["review_required_count"],
                         asr_accuracy_measured=False,
+                        dub_grouping={"method": "speaker_and_time_scoped_semantic_windows",
+                                      "source_asr_lines": len(source),
+                                      "dub_units": len(segments),
+                                      "original_id_mapping": source_mapping,
+                                      "human_verified": False},
                         translation=translate(segments))
         EdgeTTS(voice_female=VI_VOICE, concurrency=2, retries=2).synthesize(
             segments, out / "tts")
@@ -189,6 +197,9 @@ def main():
         evidence["video"] = render_clip(video, out, segments, duration)
         evidence["status"] = "RENDERED_TECHNICALLY_REVIEW_REQUIRED"
         evidence["technical_pass"] = True
+        evidence["voice_naturalness_quality_pass"] = (
+            evidence["tts"]["speed_review_count"] == 0)
+        evidence["overall_quality_pass"] = False  # no human translation/voice review
         evidence["quality_flags"] = {
             "translation_unverified": True, "asr_unverified": True,
             "speaker_identity_unverified": True,

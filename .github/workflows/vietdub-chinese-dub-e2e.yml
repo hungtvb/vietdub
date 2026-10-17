@@ -6,6 +6,7 @@ on:
       - '.github/workflows/vietdub-chinese-dub-e2e.yml'
       - 'ci_chinese_regression.py'
       - 'ci_chinese_dub_e2e.py'
+      - 'asr/dub_grouping.py'
       - 'tests/test_chinese_dub_e2e.py'
   workflow_dispatch:
 permissions:
@@ -75,7 +76,10 @@ jobs:
           assert q["status"]=="RENDERED_TECHNICALLY_REVIEW_REQUIRED"
           assert q["technical_pass"] is True
           assert q["tts_provider"]=="Edge-TTS"
-          assert q["tts"]["real_audio_files"]==q["asr_segment_count"]
+          assert q["tts"]["real_audio_files"]==q["dub_segment_count"]
+          assert q["asr_segment_count"] == sum(
+              len(g["original_asr_ids"])
+              for g in q["dub_grouping"]["original_id_mapping"])
           assert q["tts"]["failed_audio_files"]==0
           assert q["translation"]["human_approved"] is False
           assert q["human_approved"] is False
