@@ -191,13 +191,15 @@ def _place_segment(buf: np.ndarray, chunk_start: float, seg: Segment,
             f"câu {seg.index}: sample rate {file_sr} != {sr}, không khớp track")
     if data.ndim > 1:
         data = data.mean(axis=1)
-    s0 = int((seg.start - chunk_start) * sr)
-    if s0 >= chunk_len:
-        return
-    s0 = max(0, s0)
-    s1 = min(chunk_len, s0 + len(data))
-    if s1 > s0:
-        buf[s0:s1] += data[:s1 - s0]
+    # If a sentence crosses a chunk boundary, the second chunk must
+    # consume its LATER samples. Starting from data[0] repeats the first
+    # half of the spoken word and breaks continuity at 60-second borders.
+    start = int(round((seg.start - chunk_start) * sr))
+    dst_offset = max(0, start)
+    src_offset = max(0, -start)
+    count = min(chunk_len - dst_offset, len(data) - src_offset)
+    if count > 0:
+        buf[dst_offset:dst_offset + count] += data[src_offset:src_offset + count]
 
 
 def build_track(segments: List[Segment], out_wav: str | Path,
