@@ -57,11 +57,20 @@ def clear_identity(seg: Segment) -> None:
 class SpeakerVerification:
     """Independent per-job review state; *never* auto-approves a whole cluster."""
 
-    def __init__(self, job_dir, segments, wav_path, manifest=None):
+    def __init__(self, job_dir, segments, wav_path, manifest=None, *,
+                 source_video=None):
         self.job_dir = Path(job_dir)
         self.segments = list(segments)
         self.audio_identity = audio_fingerprint(wav_path)
+        # Identity is reviewed against BOTH original sound and original
+        # pictures. Never reuse a human decision after the video changes
+        # while its audio track remains identical.
+        self.video_identity = (
+            audio_fingerprint(source_video) if source_video is not None else None)
         self.manifest = manifest or {"candidates": [], "clusters": []}
+        self.manifest_identity = sha256(json.dumps(
+            self.manifest, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":")).encode("utf-8")).hexdigest()
         self.candidates = {
             str(c["candidate_id"]): c for c in self.manifest.get("candidates", [])
             if isinstance(c, dict) and c.get("candidate_id")
@@ -72,11 +81,21 @@ class SpeakerVerification:
                 raise ValueError("Speaker Verification checkpoint khác version")
             if prior.get("audio_fingerprint") != self.audio_identity:
                 raise ValueError("Audio nguồn đã thay đổi; không dùng lại xác minh cũ")
+            if prior.get("video_fingerprint") != self.video_identity:
+                raise ValueError(
+                    "Video GỐC đã thay đổi hoặc checkpoint cũ chưa có "
+                    "fingerprint hình ảnh; cần xác minh nhân vật lại.")
+            if prior.get("manifest_fingerprint") != self.manifest_identity:
+                raise ValueError(
+                    "Mẫu giọng / diarization đã thay đổi; "
+                    "không dùng lại quyết định xác minh cũ.")
             self.state = prior
         else:
             self.state = {
                 "schema_version": SCHEMA_VERSION,
                 "audio_fingerprint": self.audio_identity,
+                "video_fingerprint": self.video_identity,
+                "manifest_fingerprint": self.manifest_identity,
                 "status": "PARTIAL_REVIEW", "characters": {},
                 "anchor_decisions": {}, "line_decisions": {},
                 "review_events": [], "translation_approved": False,
