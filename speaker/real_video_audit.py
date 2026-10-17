@@ -172,6 +172,55 @@ def build_review_plan(reconciled: dict, draft: dict | None = None, *,
     }
 
 
+
+def attach_ecapa_suggestions(review_plan: dict, ecapa_report: dict) -> dict:
+    """Join *unapproved* original-ASR acoustic hints into V5 split/merge rows.
+
+    The two timelines differ: V5 can split or merge Whisper utterances, so
+    joining on V5 row number is WRONG. Match only via original ASR IDs.
+    Existing manual identity decisions are never produced or modified here.
+    """
+    if review_plan.get("status") != "UNAPPROVED":
+        raise ValueError("Only unapproved review plans are supported")
+    if ecapa_report.get("status") != "REAL_ECAPA_CLUSTER_AUDIT_UNAPPROVED":
+        raise ValueError("Expected real unapproved ECAPA evidence")
+    if (ecapa_report.get("human_character_identity_verified") or
+            ecapa_report.get("embedding_vectors_persisted")):
+        raise ValueError("Reject apparently approved or exported voice biometrics")
+    if review_plan.get("source_asr_lines") != ecapa_report.get("review_plan_source_lines"):
+        raise ValueError("ASR count mismatch; do not mix unrelated films")
+    from copy import deepcopy
+    out = deepcopy(review_plan)
+    hints = {int(row["review_id"]): row
+             for row in ecapa_report.get("review_lines", [])}
+    for row in out["rows"]:
+        matches = [hints[i] for i in row["original_asr_ids"] if i in hints]
+        row["ecapa_source_line_ids"] = [
+            x["review_id"] for x in matches]
+        row["ecapa_top_cluster_unverified"] = ";".join(
+            sorted({str(x["nearest_cluster"]) for x in matches
+                    if x.get("nearest_cluster") is not None}))
+        row["ecapa_status"] = ";".join(sorted(
+            {str(x["status"]) for x in matches}))
+        row["ecapa_review_required"] = bool(matches)
+        row["human_verified"] = False
+        if matches and any(
+            x.get("status") == "UNVERIFIED_CLUSTER_SIMILARITY_ONLY" and
+            x.get("nearest_cluster") not in x.get("source_clusters", [])
+            for x in matches
+        ):
+            row["review_alerts"] = sorted(set(row["review_alerts"]) |
+                                         {"ECAPA_PYANNOTE_CLUSTER_DISAGREEMENT"})
+    out["attached_ecapa_evidence"] = {
+        "source_asr_hints": len(hints),
+        "review_rows_with_hints": sum(bool(row["ecapa_source_line_ids"])
+                                     for row in out["rows"]),
+        "human_verified": False,
+        "note": "Acoustic cluster hints are NOT actor names or identity probabilities.",
+    }
+    return out
+
+
 def save_review_plan(report: dict, out_dir):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -184,7 +233,9 @@ def save_review_plan(report: dict, out_dir):
                "original_asr_ids", "source_pyannote_clusters",
                "source_candidate_speakers", "provisional_role_name",
                "source_text_unverified", "provisional_translation_unapproved",
-               "review_alerts", "state"]
+               "review_alerts", "state",
+               "ecapa_source_line_ids", "ecapa_top_cluster_unverified",
+               "ecapa_status"]
     with (out/"speaker-review-queue.csv").open("w", encoding="utf-8-sig",
                                                 newline="") as f:
         writer = csv.DictWriter(f, fieldnames=columns)
@@ -192,7 +243,8 @@ def save_review_plan(report: dict, out_dir):
         for row in report["rows"]:
             data = {k: row.get(k, "") for k in columns}
             for key in ("original_asr_ids", "source_pyannote_clusters",
-                        "source_candidate_speakers", "review_alerts"):
-                data[key] = ";".join(str(v) for v in data[key])
+                        "source_candidate_speakers", "review_alerts",
+                        "ecapa_source_line_ids"):
+                data[key] = ";".join(str(v) for v in (data[key] or []))
             writer.writerow(data)
     return out
