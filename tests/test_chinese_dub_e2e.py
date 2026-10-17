@@ -205,3 +205,30 @@ def test_qa_revision_one_line_at_a_time_and_retry_diagnostics():
     assert len(q["diagnostics"])==3
     assert not q["diagnostics"][0]["accepted"]
     assert q["method"]=="individual_source_line_revision"
+
+
+
+def test_cross_segment_chinese_womens_team_not_vietnamese():
+    before=Segment(index=6,start=49,end=56.02,speaker=0,
+                   text_src="体育精神那中国。",text_vi="Đó là tinh thần thể thao.")
+    line=Segment(index=7,start=56.06,end=65.59,speaker=0,
+                 text_src="女足拿了亚洲杯冠军",
+                 text_vi="Đội bóng nữ Việt Nam vô địch Asian Cup.")
+    flagged=chinese_translation_flags([before,line])["issues"]
+    assert len(flagged)==1
+    assert "COUNTRY_CONTRADICTION:中国女足" in flagged[0]["reasons"]
+    assert "CHINA_TEAM_NAME_MISSING" in flagged[0]["reasons"]
+    line.text_vi="Đội tuyển bóng đá nữ Trung Quốc vô địch Asian Cup."
+    assert chinese_translation_flags([before,line])["flagged_line_count"]==0
+
+
+def test_explicit_not_necessarily_cannot_be_rewritten_as_win():
+    line=Segment(index=8,start=65.59,end=74.53,speaker=0,
+                 text_src="不一定说我们拿了冠军我们就是亚洲包括世界的顶级水平",
+                 text_vi="Chúng ta sẽ vượt qua tất cả và giành chức vô địch.")
+    reasons=chinese_translation_flags([line])["issues"][0]["reasons"]
+    assert "NEGATION_SCOPE_LOST:不一定" in reasons
+    assert "TOP_LEVEL_RANKING_MISSING:顶级" in reasons
+    line.text_vi=("Giành chức vô địch không có nghĩa là chúng ta "
+                  "đã đạt đẳng cấp hàng đầu châu Á hay thế giới.")
+    assert chinese_translation_flags([line])["flagged_line_count"]==0

@@ -7,6 +7,7 @@ on:
       - 'ci_chinese_regression.py'
       - 'ci_chinese_dub_e2e.py'
       - 'translation/llm_e2e.py'
+      - 'translation/chinese_semantic_guard.py'
       - 'translation/prompts.py'
       - 'asr/dub_grouping.py'
       - 'tests/test_chinese_dub_e2e.py'
@@ -103,6 +104,7 @@ jobs:
           assert q["translation_review_status"] in ("FLAGGED_NEEDS_REVIEW",
                                                    "HEURISTICS_CLEAR_HUMAN_REVIEW_REQUIRED")
           assert q["translation_quality_flags"]["is_ground_truth_score"] is False
+          assert q["translation_quality_flags"]["flagged_line_count"] == 0
           assert q["translation_quality_pass"] is False
           assert q["human_approved"] is False
           assert q["video"]["size_bytes"]>20000

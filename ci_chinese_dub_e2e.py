@@ -193,9 +193,14 @@ def main():
             else "HEURISTICS_CLEAR_HUMAN_REVIEW_REQUIRED")
         evidence["llm_analysis_executed"] = True
         evidence["llm_translation_executed"] = True
-        if any("CJK_REMAINS_IN_VI" in r["reasons"]
-               for r in evidence["translation_quality_flags"]["issues"]):
-            raise RuntimeError("Vietnamese translation still contains Chinese text")
+        blocking = {"CJK_REMAINS_IN_VI", "COUNTRY_CONTRADICTION:中国女足",
+                    "CHINA_TEAM_NAME_MISSING", "NEGATION_SCOPE_LOST:不一定",
+                    "TOP_LEVEL_RANKING_MISSING:顶级"}
+        critical = [r for r in evidence["translation_quality_flags"]["issues"]
+                    if blocking.intersection(r["reasons"])]
+        if critical:
+            raise RuntimeError("Critical source meaning remains incorrect: " +
+                               json.dumps(critical, ensure_ascii=False)[:500])
         EdgeTTS(voice_female=VI_VOICE, concurrency=2, retries=2).synthesize(
             segments, out / "tts")
         evidence["tts"] = fit_voices(segments, out)

@@ -56,7 +56,7 @@ any source language into Vietnamese.
 You receive: (1) VIDEO CONTEXT (genre/style, may be absent), (2) a speaker-relationship table with locked pronouns per (speaker, audience) pair - a speaker may have SEVERAL pairs, (3) previous lines for CONTEXT ONLY, (4) a list of lines to translate: id, speaker -> audience, start/end time and source dialogue with an optional language tag. Videos may contain multiple languages.
 
 Requirements:
-- Translate the COMPLETE Chinese utterance, with NO residual Chinese characters, source phrases or cut-off Vietnamese clauses.
+- Translate the COMPLETE source-language utterance into Vietnamese, with NO untranslated source phrases or cut-off Vietnamese clauses.
 - Preserve real events, proper nouns and tournaments. Never invent a fictional film in a news interview.
 - Be concise enough for each speech timestamp; avoid verbose filler and overly fast TTS.
 - For EACH line, look up its (speaker, audience) pair in the relationship table and use EXACTLY those pronouns for that line. Different lines of the same speaker may need different pronouns.
@@ -127,7 +127,7 @@ def translate_system_with_names(proper_nouns: list[str] | None = None,
     chinese_guide = (
         "\nCHINESE-SPECIFIC: handle both Simplified and Traditional forms, "
         "Chinese kinship terms, idioms, honorifics, particles, and consistent "
-        "Han-Viet/culturally established character names. For 中国女足 say Chinese women's football team; 亚洲杯 is Asian Cup/Cúp châu Á, NEVER Southeast Asia or ASEAN; 追赶 means catch up with others. No untranslated Hanzi in Vietnamese.\n"
+        "Han-Viet/culturally established character names. For 中国女足 say Chinese women's football team; 亚洲杯 is Asian Cup/Cúp châu Á, NEVER Southeast Asia or ASEAN; 追赶 means catch up with others. 不一定 means NOT NECESSARILY: winning a title does not itself prove top-level Asian or world ranking. 中国女足 is the Chinese women\u0027s team, not Vietnam. No untranslated Hanzi in Vietnamese.\n"
     ) if source == "zh" or mixed else ""
     return (TRANSLATE_SYSTEM + language_guide + chinese_guide
             + video_context_block(video_metadata)

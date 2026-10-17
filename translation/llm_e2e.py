@@ -9,6 +9,7 @@ import hashlib
 import json
 from collections import Counter
 from project.schema import Speaker
+from translation.chinese_semantic_guard import source_semantic_issues
 
 def _fingerprint(segments):
     payload = [{"id": s.index, "speaker": s.speaker, "start": s.start,
@@ -112,6 +113,20 @@ def chinese_translation_flags(segments):
             flags.append({"id": seg.index, "reasons": issues,
                           "source_zh": seg.text_src,
                           "draft_vi": seg.text_vi})
+    # Add cross-line entity facts and explicit polarity checks from source.
+    semantic = source_semantic_issues(segments)
+    by_id = {row["id"]: row for row in flags}
+    for seg in segments:
+        reasons = semantic.get(seg.index, [])
+        if not reasons:
+            continue
+        row = by_id.get(seg.index)
+        if row is None:
+            row = {"id": seg.index, "reasons": [],
+                   "source_zh": seg.text_src, "draft_vi": seg.text_vi}
+            by_id[seg.index] = row
+            flags.append(row)
+        row["reasons"] += [r for r in reasons if r not in row["reasons"]]
     return {"review_required": True, "flagged_line_count": len(flags),
             "issues": flags, "is_ground_truth_score": False}
 
@@ -134,13 +149,20 @@ def revise_flagged_lines(segments, provider, max_attempts=2):
         "中国女足": "đội tuyển bóng đá nữ Trung Quốc",
         "冠军": "giành chức vô địch, chức vô địch",
         "追赶": "bắt kịp, đuổi kịp, theo kịp đối thủ",
+        "中国女足": "đội tuyển nữ Trung Quốc, không phải Việt Nam",
+        "不一定": "không có nghĩa là / không nhất thiết / không đồng nghĩa",
+        "顶级": "đẳng cấp hàng đầu châu Á hoặc thế giới",
     }
     for issue in initial:
         sid = issue["id"]
         pos = next(i for i, seg in enumerate(segments) if seg.index == sid)
         seg = segments[pos]
         required = {zh: guidance[zh] for zh in guidance
-                    if "MISSING_TRANSLATION_TERM:" + zh in issue["reasons"]}
+                    if ("MISSING_TRANSLATION_TERM:" + zh in issue["reasons"]
+                        or (zh == "中国女足" and ("CHINA_TEAM_NAME_MISSING" in issue["reasons"] or
+                                                      "COUNTRY_CONTRADICTION:中国女足" in issue["reasons"]))
+                        or (zh == "不一定" and "NEGATION_SCOPE_LOST:不一定" in issue["reasons"])
+                        or (zh == "顶级" and "TOP_LEVEL_RANKING_MISSING:顶级" in issue["reasons"]))}
         for attempt in range(1, max_attempts + 1):
             source = {
                 "id": sid,
@@ -148,6 +170,8 @@ def revise_flagged_lines(segments, provider, max_attempts=2):
                 "current_vietnamese_draft": seg.text_vi,
                 "errors_to_fix": issue["reasons"],
                 "required_meanings": required,
+                "translation_constraints": ["Keep the team nationality across neighboring lines.",
+                                            "Do NOT reverse 不一定 (not necessarily): champion does not imply world class."],
                 "neighboring_context_not_to_translate": [
                     {"id": x.index, "zh": x.text_src, "vi_draft": x.text_vi}
                     for x in segments[max(0, pos-2): min(len(segments), pos+3)]
@@ -159,6 +183,9 @@ def revise_flagged_lines(segments, provider, max_attempts=2):
                 "Hãy sửa đúng MỘT câu bị lỗi. Nguồn tiếng Trung và nghĩa bắt "
                 "buộc nằm trong dữ liệu JSON; không bỏ sót thông tin, "
                 "đổi tên giải đấu hay chế thêm tình tiết. "
+                "Giữ đúng quốc tịch đội bóng giữa các câu liên tiếp: Trung Quốc không phải Việt Nam. "
+                "Nếu nguyên tác nói giành chức vô địch KHÔNG đồng nghĩa đẳng cấp hàng đầu, "
+                "phải giữ nghĩa phủ định; KHÔNG biến thành mục tiêu giành chức vô địch. "
                 "Phải viết toàn bộ bằng tiếng Việt, ngắn gọn và tự nhiên. "
                 "KHÔNG dịch riêng các câu neighboring_context. "
                 "Trả về đúng JSON object gồm id là số và text_vi là chuỗi, "
@@ -190,7 +217,8 @@ def revise_flagged_lines(segments, provider, max_attempts=2):
                 if proposal == old:
                     raise ValueError("The LLM returned the unchanged draft")
                 seg.text_vi = proposal
-                flagged = chinese_translation_flags([seg])["issues"]
+                flagged = [item for item in chinese_translation_flags(segments)["issues"]
+                           if item["id"] == sid]
                 if flagged:
                     seg.text_vi = old
                     raise ValueError("Still flagged: " + ",".join(flagged[0]["reasons"]))
