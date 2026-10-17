@@ -183,7 +183,7 @@ def test_qa_revision_one_line_at_a_time_and_retry_diagnostics():
             if sid==8 and self.calls[sid]==1:
                 return json.dumps({"id":sid,"text_vi":"Chúng tôi cố gắng."})
             answers={
-                8:"Chúng tôi vô địch nhưng chưa ở đẳng cấp hàng đầu.",
+                8:"Chúng tôi giành chức vô địch, nhưng điều đó không có nghĩa là đã ở đẳng cấp hàng đầu.",
                 9:"Chúng tôi phải nỗ lực nhiều hơn để bắt kịp đối thủ.",
             }
             return json.dumps({"id":sid,"text_vi":answers[sid]},
