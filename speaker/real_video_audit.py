@@ -78,7 +78,8 @@ def build_review_plan(reconciled: dict, draft: dict | None = None, *,
         raise ValueError("No usable source voice anchors for visual review")
     if draft is not None:
         meta = draft.get("video_metadata") or {}
-        if meta.get("qa_status") not in ("REVIEW_REQUIRED", "UNAPPROVED"):
+        if meta.get("qa_status") not in ("REVIEW_REQUIRED", "UNAPPROVED",
+                                         "DRAFT_CI1B_EVIDENCE_REVIEW"):
             raise ValueError("Draft must be unapproved")
         mapping = meta.get("original_ids_per_segment")
         if not isinstance(mapping, dict):
