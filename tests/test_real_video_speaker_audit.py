@@ -11,7 +11,7 @@ def evidence():
          "speaker": 0, "text_src": "Where are you?"},
         {"index": 1, "start": 3, "end": 5,
          "speaker": 1, "text_src": "I'm in the shower."},
-        {"index": 2, "start": 7, "end": 9,
+        {"index": 2, "start": 27, "end": 29,
          "speaker": 0, "text_src": "Don't go yet."},
     ]
     qa = [
@@ -26,7 +26,7 @@ def evidence():
     turns = [
         {"start": 0, "end": 2, "label": "S0"},
         {"start": 3, "end": 5, "label": "S1"},
-        {"start": 7, "end": 9, "label": "S0"},
+        {"start": 27, "end": 29, "label": "S0"},
     ]
     words = [{"start": t["start"], "end": t["end"]}
              for t in turns]
@@ -46,7 +46,7 @@ def draft():
              "text_src": "Where are you?", "text_vi": "Cậu đâu rồi?"},
             {"index": 1, "start": 3, "end": 5, "speaker": 1,
              "text_src": "I'm in the shower.", "text_vi": "Đang tắm."},
-            {"index": 2, "start": 7, "end": 9, "speaker": 0,
+            {"index": 2, "start": 27, "end": 29, "speaker": 0,
              "text_src": "Don't go yet.", "text_vi": "Đừng đi."},
         ],
         "speakers": [{"id": 0, "role": "Maddie"},
@@ -103,7 +103,7 @@ def test_diarization_must_be_real():
     e = evidence()
     e["video_metadata"]["diarization_executed"] = False
     with pytest.raises(ValueError, match="Real pyannote"):
-        build_review_plan(evidence=e)
+        build_review_plan(e)
 
 
 def test_ecapa_scores_use_independent_audio_and_never_verify(tmp_path):
