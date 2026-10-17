@@ -232,3 +232,33 @@ def test_explicit_not_necessarily_cannot_be_rewritten_as_win():
     line.text_vi=("Giành chức vô địch không có nghĩa là chúng ta "
                   "đã đạt đẳng cấp hàng đầu châu Á hay thế giới.")
     assert chinese_translation_flags([line])["flagged_line_count"]==0
+
+
+
+def test_retry_repair_rechecks_all_source_terms_and_gives_prior_failure():
+    import json
+    calls=[]
+    class Translator:
+        def _chat(self,system,user):
+            req=json.loads(user)
+            calls.append(req)
+            assert "冠军" in req["required_meanings"]
+            assert "不一定" in req["required_meanings"]
+            assert "顶级" in req["required_meanings"]
+            assert "không có nghĩa" in req["source_grounded_conditional_example"]
+            if len(calls)==1:
+                return json.dumps({"id":8,"text_vi":
+                    "Tuy nhiên chúng ta không nhất thiết đã đạt đẳng cấp hàng đầu."},
+                    ensure_ascii=False)
+            assert req["previous_rejection_reasons"]
+            return json.dumps({"id":8,"text_vi":
+                 "Giành chức vô địch không đồng nghĩa với việc đạt đẳng cấp hàng đầu."},
+                 ensure_ascii=False)
+    segment=Segment(index=8,start=60,end=70,speaker=0,
+                    text_src="拿了冠军不一定就是亚洲和世界的顶级水平",
+                    text_vi="Chúng ta đã đạt tới đỉnh cao.")
+    qa=revise_flagged_lines([segment],Translator(),max_attempts=3)
+    assert qa["llm_revision_calls"]==2
+    assert len(qa["revised"])==1
+    assert qa["unresolved"]==[]
+    assert "vô địch" in segment.text_vi

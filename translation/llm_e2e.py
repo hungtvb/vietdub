@@ -131,7 +131,7 @@ def chinese_translation_flags(segments):
             "issues": flags, "is_ground_truth_score": False}
 
 
-def revise_flagged_lines(segments, provider, max_attempts=2):
+def revise_flagged_lines(segments, provider, max_attempts=4):
     """Targeted, auditable same-LLM corrections, one source line per request.
 
     Small LLMs often fail batched JSON rewrites. Keep original source IDs and
@@ -157,12 +157,19 @@ def revise_flagged_lines(segments, provider, max_attempts=2):
         sid = issue["id"]
         pos = next(i for i, seg in enumerate(segments) if seg.index == sid)
         seg = segments[pos]
-        required = {zh: guidance[zh] for zh in guidance
-                    if ("MISSING_TRANSLATION_TERM:" + zh in issue["reasons"]
-                        or (zh == "中国女足" and ("CHINA_TEAM_NAME_MISSING" in issue["reasons"] or
-                                                      "COUNTRY_CONTRADICTION:中国女足" in issue["reasons"]))
-                        or (zh == "不一定" and "NEGATION_SCOPE_LOST:不一定" in issue["reasons"])
-                        or (zh == "顶级" and "TOP_LEVEL_RANKING_MISSING:顶级" in issue["reasons"]))}
+        # Lock ALL key source meanings on EVERY repair, even those already
+        # translated correctly. Otherwise repairing a missing negation can
+        # silently drop the championship fact or the top-level comparison.
+        required = {zh: hint for zh, hint in guidance.items()
+                    if zh in (seg.text_src or "")}
+        if ("CHINA_TEAM_NAME_MISSING" in issue["reasons"] or
+                "COUNTRY_CONTRADICTION:中国女足" in issue["reasons"]):
+            required["中国女足"] = guidance["中国女足"]
+        conditional_claim = (
+            "Dù giành chức vô địch, điều đó không có nghĩa là đã đạt đẳng cấp hàng đầu."
+            if all(term in seg.text_src for term in ("冠军", "不一定", "顶级"))
+            else "")
+        rejection_reasons = []
         for attempt in range(1, max_attempts + 1):
             source = {
                 "id": sid,
@@ -170,6 +177,9 @@ def revise_flagged_lines(segments, provider, max_attempts=2):
                 "current_vietnamese_draft": seg.text_vi,
                 "errors_to_fix": issue["reasons"],
                 "required_meanings": required,
+                "preserve_all_of_these_meanings": True,
+                "source_grounded_conditional_example": conditional_claim,
+                "previous_rejection_reasons": rejection_reasons[-2:],
                 "translation_constraints": ["Keep the team nationality across neighboring lines.",
                                             "Do NOT reverse 不一定 (not necessarily): champion does not imply world class."],
                 "neighboring_context_not_to_translate": [
@@ -190,6 +200,9 @@ def revise_flagged_lines(segments, provider, max_attempts=2):
                 "KHÔNG dịch riêng các câu neighboring_context. "
                 "Trả về đúng JSON object gồm id là số và text_vi là chuỗi, "
                 "ví dụ: {\"id\":7,\"text_vi\":\"Đội vẫn cần cố gắng hơn.\"}. "
+                "Hãy giữ TẤT CẢ các ý đã có trong required_meanings, "
+                "kể cả ý đã đúng ở bản dịch cũ; không được sửa được ý này "
+                "nhưng làm rơi ý khác. "
                 "Không dùng markdown hay trả thêm trường giải thích."
             )
             if attempt > 1:
@@ -228,9 +241,10 @@ def revise_flagged_lines(segments, provider, max_attempts=2):
                                      "accepted":True, "reason":"HEURISTIC_QA_CLEAR"})
                 break
             except Exception as err:
+                message = type(err).__name__+": "+str(err)[:200]
+                rejection_reasons.append(message)
                 attempts_log.append({"id":sid, "attempt":attempt,
-                                     "accepted":False,
-                                     "reason":type(err).__name__+": "+str(err)[:200]})
+                                     "accepted":False, "reason":message})
     remaining = chinese_translation_flags(segments)["issues"]
     return {
         "llm_revision_calls": calls,
