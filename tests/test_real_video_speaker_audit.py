@@ -1,7 +1,8 @@
 """Real-data review plan + optional ECAPA scores remain unapproved."""
 import pytest
 
-from speaker.real_video_audit import build_review_plan, save_review_plan
+from speaker.real_video_audit import (build_review_plan, save_review_plan,
+                                      attach_ecapa_suggestions)
 from speaker.real_voice_scan import analyze_speaker_audio
 
 
@@ -163,3 +164,54 @@ def test_untranscribed_reference_is_excluded_from_voice_ranking(tmp_path):
     assert report["scored_line_samples"] >= 1
     assert report["embedding_vectors_persisted"] is False
     assert report["human_character_identity_verified"] is False
+
+
+def test_join_acoustic_hints_by_original_asr_ids_not_v5_row_number(tmp_path):
+    base = draft()
+    # Turn ASR 1 into two Vietnamese dub sentences (same original ID).
+    base["segments"] = [
+        base["segments"][0],
+        {**base["segments"][1], "index": 1, "start": 3, "end": 4},
+        {**base["segments"][1], "index": 2, "start": 4, "end": 5},
+        {**base["segments"][2], "index": 3},
+    ]
+    base["video_metadata"]["original_ids_per_segment"] = {
+        "0": [0], "1": [1], "2": [1], "3": [2],
+    }
+    report = build_review_plan(evidence(), base)
+    acoustic = {
+        "status": "REAL_ECAPA_CLUSTER_AUDIT_UNAPPROVED",
+        "human_character_identity_verified": False,
+        "embedding_vectors_persisted": False,
+        "review_plan_source_lines": 3,
+        "review_lines": [{
+            "review_id": 1,
+            "status": "UNVERIFIED_CLUSTER_SIMILARITY_ONLY",
+            "nearest_cluster": "S0",
+            "source_clusters": ["S1"],
+        }],
+    }
+    merged = attach_ecapa_suggestions(report, acoustic)
+    matched = [row for row in merged["rows"] if row["ecapa_source_line_ids"]]
+    assert sorted(x["review_id"] for x in matched) == [1, 2]
+    assert all(x["ecapa_top_cluster_unverified"] == "S0" for x in matched)
+    assert all("ECAPA_PYANNOTE_CLUSTER_DISAGREEMENT" in x["review_alerts"]
+               for x in matched)
+    assert all(not row["human_verified"] for row in merged["rows"])
+    assert merged["attached_ecapa_evidence"]["review_rows_with_hints"] == 2
+    save_review_plan(merged, tmp_path)
+    assert "ECAPA_PYANNOTE_CLUSTER_DISAGREEMENT" in (
+        tmp_path / "speaker-review-queue.csv").read_text(encoding="utf-8-sig")
+    # Never mutate the original V5 draft in place or approve translation.
+    assert report["rows"][0].get("ecapa_source_line_ids") is None
+
+
+def test_rejects_faked_approved_acoustic_hints():
+    review = build_review_plan(evidence(), draft())
+    acoustic = {
+        "status": "REAL_ECAPA_CLUSTER_AUDIT_UNAPPROVED",
+        "human_character_identity_verified": True,
+        "review_plan_source_lines": 3,
+    }
+    with pytest.raises(ValueError, match="approved"):
+        attach_ecapa_suggestions(review, acoustic)
