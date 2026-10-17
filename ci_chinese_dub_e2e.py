@@ -16,7 +16,8 @@ import soundfile as sf
 from project.schema import Segment
 from asr.dub_grouping import group_for_vietnamese_dub
 from tts.edge_tts import EdgeTTS
-from translation.llm_e2e import analyze_and_translate, chinese_translation_flags
+from translation.llm_e2e import (analyze_and_translate, chinese_translation_flags,
+                                revise_flagged_lines)
 from media.subs import write_srt
 from media.mix import mix
 
@@ -172,6 +173,7 @@ def main():
         asr = json.loads(Path(opts.asr_report).read_text(encoding="utf-8"))
         source = verify_source(asr, video, duration)
         segments, source_mapping = group_for_vietnamese_dub(source)
+        llm_provider = make_llm(opts)
         evidence.update(source_sha256=asr["source_video_sha256"],
                         asr_segment_count=len(source),
                         dub_segment_count=len(segments),
@@ -182,10 +184,15 @@ def main():
                                       "dub_units": len(segments),
                                       "original_id_mapping": source_mapping,
                                       "human_verified": False},
-                        translation=analyze_and_translate(segments, make_llm(opts)))
+                        translation=analyze_and_translate(segments, llm_provider))
+        evidence["llm_revision"] = revise_flagged_lines(segments, llm_provider)
         evidence["translation_quality_flags"] = chinese_translation_flags(segments)
+        evidence["translation"]["llm_call_counts"]["revision"] = evidence["llm_revision"]["llm_revision_calls"]
         evidence["llm_analysis_executed"] = True
         evidence["llm_translation_executed"] = True
+        if any("CJK_REMAINS_IN_VI" in r["reasons"]
+               for r in evidence["translation_quality_flags"]["issues"]):
+            raise RuntimeError("Vietnamese translation still contains Chinese text")
         EdgeTTS(voice_female=VI_VOICE, concurrency=2, retries=2).synthesize(
             segments, out / "tts")
         evidence["tts"] = fit_voices(segments, out)

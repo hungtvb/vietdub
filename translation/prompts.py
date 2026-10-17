@@ -20,7 +20,7 @@ Return ONLY a valid JSON object, no other text:
 {
   "speakers": [
     { "id": 0,
-      "role": "the person's role (e.g. young reporter)",
+      "role": "a concrete inferred role, such as football interviewee",
       "tone": "formal | friendly | neutral",
       "relations": [
         { "audience": "audience | all | <speaker id as string>",
@@ -56,6 +56,9 @@ any source language into Vietnamese.
 You receive: (1) VIDEO CONTEXT (genre/style, may be absent), (2) a speaker-relationship table with locked pronouns per (speaker, audience) pair - a speaker may have SEVERAL pairs, (3) previous lines for CONTEXT ONLY, (4) a list of lines to translate: id, speaker -> audience, start/end time and source dialogue with an optional language tag. Videos may contain multiple languages.
 
 Requirements:
+- Translate the COMPLETE Chinese utterance, with NO residual Chinese characters, source phrases or cut-off Vietnamese clauses.
+- Preserve real events, proper nouns and tournaments. Never invent a fictional film in a news interview.
+- Be concise enough for each speech timestamp; avoid verbose filler and overly fast TTS.
 - For EACH line, look up its (speaker, audience) pair in the relationship table and use EXACTLY those pronouns for that line. Different lines of the same speaker may need different pronouns.
 - If a line's (speaker, audience) pair is not in the table, use the pair marked [default] for that speaker.
 - The "previous lines" are CONTEXT ONLY: never translate them, never include their ids in your JSON output.
@@ -124,7 +127,7 @@ def translate_system_with_names(proper_nouns: list[str] | None = None,
     chinese_guide = (
         "\nCHINESE-SPECIFIC: handle both Simplified and Traditional forms, "
         "Chinese kinship terms, idioms, honorifics, particles, and consistent "
-        "Han-Viet/culturally established character names.\n"
+        "Han-Viet/culturally established character names. For 中国女足 say Chinese women's football team; 亚洲杯 is Asian Cup/Cúp châu Á, NEVER Southeast Asia or ASEAN; 追赶 means catch up with others. No untranslated Hanzi in Vietnamese.\n"
     ) if source == "zh" or mixed else ""
     return (TRANSLATE_SYSTEM + language_guide + chinese_guide
             + video_context_block(video_metadata)
@@ -157,7 +160,7 @@ Return ONLY a valid JSON object, no other text:
   "tone_notes": "1-2 sentences describing the tone, in English"
 }
 
-Base your judgment on vocabulary, topics, speaker roles, and how people address each other. Speaker roles like "news anchor" or "cartoon narrator" are strong genre signals."""
+Base your judgment on vocabulary, topics, speaker roles, and how people address each other. Speaker roles like "news anchor" or "cartoon narrator" are strong genre signals. A football interview talking about school education is an interview FORMAT, not a classroom education video. Never output template placeholders as actual roles."""
 
 
 def build_video_meta_user(sample_lines: list[str], rel_lines: list[str],

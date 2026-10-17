@@ -3,6 +3,7 @@ import hashlib
 import pytest
 from project.schema import Segment
 from ci_chinese_dub_e2e import tempo_filter, verify_source
+from translation.llm_e2e import (revise_flagged_lines, chinese_translation_flags)
 
 def test_speed_filter_includes_safe_multi_step_factors():
     assert tempo_filter(1.25) == "atempo=1.250000"
@@ -135,3 +136,36 @@ def test_existing_llm_fallback_to_chinese_source_is_rejected():
         analyze_and_translate([
             Segment(index=0, start=0, end=4, speaker=0,
                     source_lang="zh", text_src="中国女足")], SourceEchoLLM())
+
+
+
+def test_llm_repairs_specific_errors_not_all_lines():
+    import json
+    class FakeLLM:
+        def _chat(self, system, user):
+            ids=json.loads(user)["requested_ids"]
+            return json.dumps({"translations":[{"id":i,
+                "text_vi":"Bóng đá nữ Trung Quốc vô địch Asian Cup và vẫn phải bắt kịp đối thủ."}
+                for i in ids]}, ensure_ascii=False)
+    lines=[Segment(index=0,start=0,end=5,speaker=0,
+                   text_src="中国女足亚洲杯冠军追赶",
+                   text_vi="Vô địch Đông Nam Á để追赶."),
+           Segment(index=1,start=5,end=7,speaker=0,
+                   text_src="继续努力",text_vi="Cần tiếp tục cố gắng.")]
+    outcome=revise_flagged_lines(lines,FakeLLM())
+    assert outcome["llm_revision_calls"]==1
+    assert len(outcome["revised"])==1
+    assert outcome["unresolved"]==[]
+    assert lines[1].text_vi=="Cần tiếp tục cố gắng."
+
+
+def test_invalid_llm_revision_does_not_overwrite_translation():
+    class BadLLM:
+        def _chat(self, system, user):
+            return '{"translations":[{"id":99,"text_vi":"Bị sai ID"}]}'
+    line=Segment(index=0,start=0,end=5,speaker=0,
+                 text_src="亚洲杯冠军",text_vi="Vô địch Đông Nam Á.")
+    outcome=revise_flagged_lines([line],BadLLM(),max_attempts=1)
+    assert outcome["llm_revision_calls"]==1
+    assert outcome["unresolved"]
+    assert line.text_vi=="Vô địch Đông Nam Á."

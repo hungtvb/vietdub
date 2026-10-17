@@ -114,3 +114,79 @@ def chinese_translation_flags(segments):
                           "draft_vi": seg.text_vi})
     return {"review_required": True, "flagged_line_count": len(flags),
             "issues": flags, "is_ground_truth_score": False}
+
+
+def revise_flagged_lines(segments, provider, max_attempts=2):
+    """Ask the SAME authorized LLM provider to correct concrete QA failures.
+
+    A revision is not human verification or an independent translation score.
+    Preserve source IDs and source text; reject invalid JSON, introduced Hanzi,
+    missing glossary equivalents and unrequested outputs.
+    """
+    from translation.base import _parse_json
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be positive")
+    changes = []
+    attempts = 0
+    for _ in range(max_attempts):
+        pending = chinese_translation_flags(segments)["issues"]
+        if not pending:
+            break
+        requested = [item["id"] for item in pending]
+        context = []
+        for item in pending:
+            i = next(i for i, s in enumerate(segments) if s.index == item["id"])
+            context.append({
+                "id": item["id"], "errors": item["reasons"],
+                "surrounding_dialogue": [
+                    {"id": s.index, "zh": s.text_src, "vi_draft": s.text_vi}
+                    for s in segments[max(0,i-2):min(len(segments),i+3)]
+                ]})
+        prompt = json.dumps({"requested_ids": requested,
+                             "review_items": context}, ensure_ascii=False)
+        system = (
+            "You are repairing Chinese-to-Vietnamese video dubbing translations. "
+            "Use the Chinese source and neighboring dialogue to correct ONLY the "
+            "requested Vietnamese lines. Translate EVERY Chinese character and "
+            "preserve ALL meaning, factual team/tournament names and fluency. "
+            "Asian Cup 亚洲杯 is Cúp châu Á, NOT a Southeast Asian tournament; "
+            "中国女足 is the Chinese women's football team; "
+            "追赶 is bắt kịp/theo kịp. Do not invent film plots. "
+            "Keep speech concise and natural. Output ONLY JSON: "
+            '{"translations":[{"id":0,"text_vi":"..."}]}. '
+            "Return each requested ID once, and NO other IDs."
+        )
+        attempts += 1
+        try:
+            items = _parse_json(provider._chat(system, prompt)).get("translations")
+            if not isinstance(items, list) or len(items) != len(requested):
+                continue
+            mapping = {}
+            for item in items:
+                if not isinstance(item, dict) or type(item.get("id")) is not int:
+                    raise ValueError("Invalid revision ID")
+                if item["id"] in mapping:
+                    raise ValueError("Duplicate revision ID")
+                if not isinstance(item.get("text_vi"), str):
+                    raise ValueError("Non-string Vietnamese revision")
+                mapping[item["id"]] = " ".join(item["text_vi"].split())
+            if set(mapping) != set(requested):
+                continue
+        except (ValueError, KeyError, TypeError):
+            continue
+        for item in pending:
+            seg = next(s for s in segments if s.index == item["id"])
+            proposal = mapping[seg.index]
+            old = seg.text_vi
+            if not proposal or proposal == seg.text_src:
+                continue
+            seg.text_vi = proposal
+            if any(x["id"] == seg.index
+                   for x in chinese_translation_flags([seg])["issues"]):
+                seg.text_vi = old
+                continue
+            changes.append({"id":seg.index, "before":old, "after":proposal,
+                            "human_verified":False})
+    remaining = chinese_translation_flags(segments)["issues"]
+    return {"llm_revision_calls":attempts, "revised":changes,
+            "unresolved":remaining, "human_approved":False}
