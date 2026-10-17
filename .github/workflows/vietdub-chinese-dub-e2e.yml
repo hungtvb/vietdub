@@ -99,6 +99,9 @@ jobs:
           assert q["llm_analysis_executed"] is True
           assert q["llm_translation_executed"] is True
           assert q["llm_revision"]["human_approved"] is False
+          assert q["llm_revision"]["method"] == "individual_source_line_revision"
+          assert q["translation_review_status"] in ("FLAGGED_NEEDS_REVIEW",
+                                                   "HEURISTICS_CLEAR_HUMAN_REVIEW_REQUIRED")
           assert q["translation_quality_flags"]["is_ground_truth_score"] is False
           assert q["translation_quality_pass"] is False
           assert q["human_approved"] is False

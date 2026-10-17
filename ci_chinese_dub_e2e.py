@@ -188,6 +188,9 @@ def main():
         evidence["llm_revision"] = revise_flagged_lines(segments, llm_provider)
         evidence["translation_quality_flags"] = chinese_translation_flags(segments)
         evidence["translation"]["llm_call_counts"]["revision"] = evidence["llm_revision"]["llm_revision_calls"]
+        evidence["translation_review_status"] = ("FLAGGED_NEEDS_REVIEW"
+            if evidence["translation_quality_flags"]["flagged_line_count"]
+            else "HEURISTICS_CLEAR_HUMAN_REVIEW_REQUIRED")
         evidence["llm_analysis_executed"] = True
         evidence["llm_translation_executed"] = True
         if any("CJK_REMAINS_IN_VI" in r["reasons"]

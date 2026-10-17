@@ -143,10 +143,9 @@ def test_llm_repairs_specific_errors_not_all_lines():
     import json
     class FakeLLM:
         def _chat(self, system, user):
-            ids=json.loads(user)["requested_ids"]
-            return json.dumps({"translations":[{"id":i,
-                "text_vi":"Bóng đá nữ Trung Quốc vô địch Asian Cup và vẫn phải bắt kịp đối thủ."}
-                for i in ids]}, ensure_ascii=False)
+            item=json.loads(user)
+            return json.dumps({"id":item["id"],
+                "text_vi":"Bóng đá nữ Trung Quốc vô địch Asian Cup và vẫn phải bắt kịp đối thủ."}, ensure_ascii=False)
     lines=[Segment(index=0,start=0,end=5,speaker=0,
                    text_src="中国女足亚洲杯冠军追赶",
                    text_vi="Vô địch Đông Nam Á để追赶."),
@@ -162,10 +161,47 @@ def test_llm_repairs_specific_errors_not_all_lines():
 def test_invalid_llm_revision_does_not_overwrite_translation():
     class BadLLM:
         def _chat(self, system, user):
-            return '{"translations":[{"id":99,"text_vi":"Bị sai ID"}]}'
+            return '{"id":99,"text_vi":"Bị sai ID"}'
     line=Segment(index=0,start=0,end=5,speaker=0,
                  text_src="亚洲杯冠军",text_vi="Vô địch Đông Nam Á.")
     outcome=revise_flagged_lines([line],BadLLM(),max_attempts=1)
     assert outcome["llm_revision_calls"]==1
     assert outcome["unresolved"]
     assert line.text_vi=="Vô địch Đông Nam Á."
+
+
+
+def test_qa_revision_one_line_at_a_time_and_retry_diagnostics():
+    import json
+    class LLM:
+        def __init__(self):
+            self.calls = {}
+        def _chat(self, system, user):
+            req=json.loads(user)
+            sid=req["id"]
+            self.calls[sid]=self.calls.get(sid,0)+1
+            if sid==8 and self.calls[sid]==1:
+                return json.dumps({"id":sid,"text_vi":"Chúng tôi cố gắng."})
+            answers={
+                8:"Chúng tôi vô địch nhưng chưa ở đẳng cấp hàng đầu.",
+                9:"Chúng tôi phải nỗ lực nhiều hơn để bắt kịp đối thủ.",
+            }
+            return json.dumps({"id":sid,"text_vi":answers[sid]},
+                              ensure_ascii=False)
+    segs=[
+        Segment(index=8,start=65,end=75,speaker=0,
+                text_src="我们拿了冠军但不一定是顶级",
+                text_vi="Chúng tôi cố gắng."),
+        Segment(index=9,start=75,end=84,speaker=0,
+                text_src="我们要追赶强队",
+                text_vi="Cần tiếp tục tiến lên."),
+    ]
+    provider=LLM()
+    q=revise_flagged_lines(segs,provider)
+    assert q["initial_flagged_count"]==2
+    assert q["llm_revision_calls"]==3
+    assert len(q["revised"])==2
+    assert q["unresolved"]==[]
+    assert len(q["diagnostics"])==3
+    assert not q["diagnostics"][0]["accepted"]
+    assert q["method"]=="individual_source_line_revision"
