@@ -13,7 +13,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from speaker.real_video_audit import build_review_plan, save_review_plan
+from speaker.real_video_audit import (
+    build_review_plan, save_review_plan, attach_ecapa_suggestions)
 from speaker.real_voice_scan import analyze_speaker_audio
 from speaker.voice_anchors import extract_candidates
 from speaker.voice_similarity import extract_embedding
@@ -59,7 +60,8 @@ def main():
     if voice["scored_line_samples"] < 2:
         raise RuntimeError("Real drama did not produce usable independent voice comparisons")
     # Deliberately save ONLY text-based QA and model scores.
-    out = save_review_plan(review_plan, args.output)
+    out = save_review_plan(
+        attach_ecapa_suggestions(review_plan, voice), args.output)
     (out / "speaker-ecapa-audit.json").write_text(
         json.dumps(voice, ensure_ascii=False, indent=2), encoding="utf-8")
     assert review_plan["human_identity_approvals"] == 0
