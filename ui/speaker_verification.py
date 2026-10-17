@@ -58,7 +58,9 @@ class SpeakerVerificationDialog(QDialog):
         manifest_path = self.anchor_dir / "voice_anchor_candidates.json"
         manifest = (json.loads(manifest_path.read_text(encoding="utf-8"))
                     if manifest_path.exists() else None)
-        self.store = SpeakerVerification(job.job_dir, segments, self.wav_path, manifest)
+        self.store = SpeakerVerification(
+            job.job_dir, segments, self.wav_path, manifest,
+            source_video=self.source_video)
         self.anchors = list(self.store.candidates.values())
         self.setWindowTitle(f"Xác minh nhân vật V2 — {job.project.name}")
         self.resize(1100, 720)
