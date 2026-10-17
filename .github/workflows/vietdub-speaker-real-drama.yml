@@ -89,7 +89,7 @@ jobs:
           assert q["status"] == "UNAPPROVED"
           assert q["human_identity_approvals"] == 0
           assert r["valid_reference_clips"] >= 2
-          assert r["measured_line_samples"] >= 2
+          assert r["scored_line_samples"] >= 2
           assert all(not x["human_verified"] for x in r["review_lines"])
           print("VALID_UNAPPROVED_REAL_DRAMA_SPEAKER_AUDIT",
                 r["valid_reference_clips"], r["measured_line_samples"])
