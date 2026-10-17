@@ -7,6 +7,7 @@ transcripts come directly from FunASR on a downloaded Chinese news clip.
 from __future__ import annotations
 import argparse
 import json
+import hashlib
 import math
 from difflib import SequenceMatcher
 import subprocess
@@ -52,6 +53,7 @@ def main():
     route = select_asr_engine(language)
     report = {
         "source_video": "Wikimedia Commons: Chinese football interview",
+        "source_video_sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
         "source_page": (
             "https://commons.wikimedia.org/wiki/File:"
             "【两会30秒】水庆霞：中国女足非世界顶级，但会不断追赶.webm"),
