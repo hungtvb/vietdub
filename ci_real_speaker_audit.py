@@ -56,7 +56,7 @@ def main():
             diarization_regular=evidence.get("diarization_regular") or [])
     if voice["valid_reference_clips"] < 2:
         raise RuntimeError("Real video did not produce enough valid speaker references")
-    if voice["measured_line_samples"] < 2:
+    if voice["scored_line_samples"] < 2:
         raise RuntimeError("Real drama did not produce usable independent voice comparisons")
     # Deliberately save ONLY text-based QA and model scores.
     out = save_review_plan(review_plan, args.output)
