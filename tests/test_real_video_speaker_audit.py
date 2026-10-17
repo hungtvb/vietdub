@@ -65,6 +65,7 @@ def test_rank_real_evidence_without_approving_a_character(tmp_path):
     report = build_review_plan(evidence(), draft())
     assert report["status"] == "UNAPPROVED"
     assert report["source_asr_lines"] == 3
+    assert len(report["source_evidence_sha256"]) == 64
     assert report["review_lines"] == 3
     assert report["distinct_pyannote_clusters"] == 2
     assert len(report["voice_anchor_manifest"]["candidates"]) == 3
@@ -123,6 +124,7 @@ def test_ecapa_scores_use_independent_audio_and_never_verify(tmp_path):
         plan, "test_source.wav", tmp_path, encoder=fake_embedding,
         max_lines=3, diarization_regular=evidence()["diarization_regular"])
     assert report["status"] == "REAL_ECAPA_CLUSTER_AUDIT_UNAPPROVED"
+    assert report["source_evidence_sha256"] == plan["source_evidence_sha256"]
     assert report["valid_reference_clips"] == 3
     assert len(report["review_lines"]) == 3
     assert all(not line["human_verified"] for line in report["review_lines"])
@@ -184,8 +186,10 @@ def test_join_acoustic_hints_by_original_asr_ids_not_v5_row_number(tmp_path):
         "human_character_identity_verified": False,
         "embedding_vectors_persisted": False,
         "review_plan_source_lines": 3,
+        "source_evidence_sha256": report["source_evidence_sha256"],
         "review_lines": [{
             "review_id": 1,
+            "human_verified": False,
             "status": "UNVERIFIED_CLUSTER_SIMILARITY_ONLY",
             "nearest_cluster": "S0",
             "source_clusters": ["S1"],
@@ -215,3 +219,64 @@ def test_rejects_faked_approved_acoustic_hints():
     }
     with pytest.raises(ValueError, match="approved"):
         attach_ecapa_suggestions(review, acoustic)
+
+
+
+def test_source_evidence_fingerprint_stable_across_v5_but_changes_with_audio_evidence():
+    original = evidence()
+    without_draft = build_review_plan(original)
+    with_v5 = build_review_plan(original, draft())
+    assert without_draft["source_evidence_sha256"] == with_v5["source_evidence_sha256"]
+    changed = evidence()
+    changed["segments"][0]["text_src"] = "Different movie; same number of lines."
+    different = build_review_plan(changed)
+    assert without_draft["source_evidence_sha256"] != different["source_evidence_sha256"]
+
+
+def test_ecapa_fails_closed_for_other_film_with_same_asr_line_count():
+    first = build_review_plan(evidence())
+    other = evidence()
+    other["segments"][2]["text_src"] = "Different source movie"
+    second = build_review_plan(other)
+    acoustic = {
+        "status": "REAL_ECAPA_CLUSTER_AUDIT_UNAPPROVED",
+        "human_character_identity_verified": False,
+        "embedding_vectors_persisted": False,
+        "review_plan_source_lines": 3,
+        "source_evidence_sha256": first["source_evidence_sha256"],
+        "review_lines": [],
+    }
+    with pytest.raises(ValueError, match="fingerprint"):
+        attach_ecapa_suggestions(second, acoustic)
+    del acoustic["source_evidence_sha256"]
+    with pytest.raises(ValueError, match="fingerprint"):
+        attach_ecapa_suggestions(first, acoustic)
+
+
+def test_ecapa_rejects_duplicate_hint_ids_and_forged_human_approval():
+    plan = build_review_plan(evidence())
+    acoustic = {
+        "status": "REAL_ECAPA_CLUSTER_AUDIT_UNAPPROVED",
+        "human_character_identity_verified": False,
+        "embedding_vectors_persisted": False,
+        "review_plan_source_lines": 3,
+        "source_evidence_sha256": plan["source_evidence_sha256"],
+        "review_lines": [{
+            "review_id": 1,
+            "status": "UNVERIFIED_CLUSTER_SIMILARITY_ONLY",
+            "human_verified": False,
+            "ranked_clusters": [],
+        }],
+    }
+    acoustic["review_lines"].append(dict(acoustic["review_lines"][0]))
+    with pytest.raises(ValueError, match="Duplicate"):
+        attach_ecapa_suggestions(plan, acoustic)
+    acoustic["review_lines"].pop()
+    acoustic["review_lines"][0]["human_verified"] = True
+    with pytest.raises(ValueError, match="human-approved"):
+        attach_ecapa_suggestions(plan, acoustic)
+    acoustic["review_lines"][0]["human_verified"] = False
+    acoustic["review_lines"][0]["ranked_clusters"] = [
+        {"score_is_probability": True}]
+    with pytest.raises(ValueError, match="probabilities"):
+        attach_ecapa_suggestions(plan, acoustic)

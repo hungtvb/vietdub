@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 import csv
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -76,6 +77,18 @@ def build_review_plan(reconciled: dict, draft: dict | None = None, *,
         evidence, per_cluster=max_candidates_per_cluster)
     if not manifest["candidates"]:
         raise ValueError("No usable source voice anchors for visual review")
+    # Bind scores to the exact ASR, QA, diarization and selected anchors.
+    # A segment count alone cannot distinguish two source films.
+    evidence_sha256 = hashlib.sha256(json.dumps({
+        "fingerprint_schema": 1,
+        "segments": source,
+        "qa": qa_rows,
+        "diarization_exclusive": evidence["diarization_exclusive"],
+        "diarization_regular": evidence["diarization_regular"],
+        "word_evidence": evidence["word_evidence"],
+        "voice_anchor_manifest": manifest,
+    }, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8")).hexdigest()
     if draft is not None:
         meta = draft.get("video_metadata") or {}
         if meta.get("qa_status") not in ("REVIEW_REQUIRED", "UNAPPROVED",
@@ -158,6 +171,7 @@ def build_review_plan(reconciled: dict, draft: dict | None = None, *,
         "schema_version": 1,
         "status": "UNAPPROVED",
         "source": "REAL_WHISPERX_PYANNOTE_UNVERIFIED",
+        "source_evidence_sha256": evidence_sha256,
         "human_identity_approvals": 0,
         "source_asr_lines": len(source),
         "review_lines": len(ordered),
@@ -187,12 +201,31 @@ def attach_ecapa_suggestions(review_plan: dict, ecapa_report: dict) -> dict:
     if (ecapa_report.get("human_character_identity_verified") or
             ecapa_report.get("embedding_vectors_persisted")):
         raise ValueError("Reject apparently approved or exported voice biometrics")
+    digest = review_plan.get("source_evidence_sha256")
+    if (not isinstance(digest, str) or len(digest) != 64
+            or any(c not in "0123456789abcdef" for c in digest)
+            or ecapa_report.get("source_evidence_sha256") != digest):
+        raise ValueError("Source evidence fingerprint mismatch; refuse cross-film ECAPA join")
     if review_plan.get("source_asr_lines") != ecapa_report.get("review_plan_source_lines"):
         raise ValueError("ASR count mismatch; do not mix unrelated films")
     from copy import deepcopy
     out = deepcopy(review_plan)
-    hints = {int(row["review_id"]): row
-             for row in ecapa_report.get("review_lines", [])}
+    hints = {}
+    for hint in ecapa_report.get("review_lines", []):
+        source_id = int(hint["review_id"])
+        if source_id in hints or not 0 <= source_id < review_plan["source_asr_lines"]:
+            raise ValueError("Duplicate or out-of-range original ASR hint ID")
+        if hint.get("human_verified") is not False:
+            raise ValueError("ECAPA cannot supply human-approved identities")
+        if hint.get("status") not in (
+                "UNVERIFIED_CLUSTER_SIMILARITY_ONLY",
+                "MULTIPLE_PYANNOTE_VOICES_SKIP_SCORING",
+                "EMBEDDING_UNUSABLE"):
+            raise ValueError("Unexpected ECAPA status")
+        if any(score.get("score_is_probability") is not False
+               for score in hint.get("ranked_clusters", [])):
+            raise ValueError("Cosine scores are not identity probabilities")
+        hints[source_id] = hint
     for row in out["rows"]:
         matches = [hints[i] for i in row["original_asr_ids"] if i in hints]
         row["ecapa_source_line_ids"] = [

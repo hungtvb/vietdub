@@ -67,3 +67,19 @@ locally from the freely licensed SpeechBrain ECAPA model.
 CI workflow: `.github/workflows/vietdub-speaker-real-drama.yml`.
 Test suite: `tests/test_real_video_speaker_audit.py`,
 `tests/test_speaker_verification_v2.py`.
+
+
+## Cross-film evidence isolation
+
+ECAPA reports now carry a deterministic `source_evidence_sha256` from the
+original ASR transcript, per-line QA, pyannote turns, alignment words and
+selected voice-anchor manifest. The optional V5 draft cannot change that
+source digest. Attaching ECAPA hints to a translated draft fails closed if
+the fingerprint is absent or differs, **even if both films contain the same
+number of ASR lines**. Duplicate or out-of-range hint IDs, human-approved
+speaker flags and fake identity probabilities are also rejected.
+
+Older ECAPA reports without this digest must be recomputed from their real
+source evidence before attaching suggestions. This guards evidence **joins**,
+but does not independently authenticate the original movie bytes: the
+video, transcript and scene must still be cross-checked before human approval.
