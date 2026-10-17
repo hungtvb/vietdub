@@ -557,8 +557,9 @@ class BaseTranslator:
         self._flag_missing_pronouns(segments, speakers)
         # Apply source-grounded review warnings to ALL normal VietDub videos,
         # not only the dedicated Chinese CI. Never auto-approve LLM output.
+        semantic_warnings = source_semantic_issues(segments)  # linear scan per film
         for seg in segments:
-            issues = source_semantic_issues(segments).get(seg.index, [])
+            issues = semantic_warnings.get(seg.index, [])
             if issues:
                 seg.needs_review = True
                 log.warning("Chinese source meaning review: id=%d, %s",
