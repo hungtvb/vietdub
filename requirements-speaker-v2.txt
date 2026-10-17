@@ -1,0 +1,6 @@
+# Optional voice matching for Speaker Verification V2.
+# Install this *after* requirements.txt and a platform-compatible torch build.
+# SpeechBrain ECAPA is a locally executed, free pretrained embedding model.
+# It produces uncalibrated cosine suggestions; never auto-approves identities.
+speechbrain>=1.0,<2
+soundfile>=0.12

@@ -25,6 +25,7 @@ from typing import Dict, List, Tuple
 
 from project.schema import Segment, Speaker
 from translation import prompts
+from translation.chinese_semantic_guard import source_semantic_issues
 
 log = logging.getLogger("vietdub.translate")
 
@@ -145,7 +146,11 @@ class BaseTranslator:
         for s in chunk:
             spk = speakers.get(s.speaker)
             g = spk.gender if spk else "unknown"
-            lines.append(f"[{s.index}] SPEAKER_{s.speaker} ({g}): {s.text_src}")
+            approved_name = (f" [verified character: {s.character_name}]"
+                             if s.identity_status == "VERIFIED" and s.character_name
+                             else "")
+            lines.append(f"[{s.index}] SPEAKER_{s.speaker}{approved_name} "
+                         f"({g}): {s.text_src}")
         user = prompts.build_analyze_user(lines)
         for attempt in range(ANALYZE_RETRIES):
             try:
@@ -522,7 +527,9 @@ class BaseTranslator:
             ctx_lines = [f"[{s.index}] {self._line_header(s)}: {s.text_src}"
                          for s in segments[ctx0:b0]]
             lines = [f"[{s.index}] {self._line_header(s)} "
-                     f"{s.start:.1f}-{s.end:.1f}s: {s.text_src}" for s in chunk]
+                     f"{s.start:.1f}-{s.end:.1f}s"
+                     + (f" [lang={s.source_lang}]" if s.source_lang else "")
+                     + f": {s.text_src}" for s in chunk]
             user = prompts.build_translate_user(rel_table, lines,
                                                 self.proper_nouns,
                                                 ctx_lines or None)
@@ -548,12 +555,23 @@ class BaseTranslator:
             log.warning("dịch xong vẫn có %d câu text_vi rỗng: %s",
                         len(empty), empty[:10])
         self._flag_missing_pronouns(segments, speakers)
+        # Apply source-grounded review warnings to ALL normal VietDub videos,
+        # not only the dedicated Chinese CI. Never auto-approve LLM output.
+        semantic_warnings = source_semantic_issues(segments)  # linear scan per film
+        for seg in segments:
+            issues = semantic_warnings.get(seg.index, [])
+            if issues:
+                seg.needs_review = True
+                log.warning("Chinese source meaning review: id=%d, %s",
+                            seg.index, ",".join(issues))
         return segments
 
     @staticmethod
     def _line_header(seg: Segment) -> str:
         """'SPEAKER_0 (to SPEAKER_1)' / 'SPEAKER_0 (to AUDIENCE)' / ..."""
         h = f"SPEAKER_{seg.speaker}"
+        if seg.identity_status == "VERIFIED" and seg.character_name:
+            h += f" [verified character: {seg.character_name}]"
         aud = (seg.audience or "").strip()
         if aud == "audience":
             h += " (to AUDIENCE)"
@@ -634,7 +652,9 @@ class BaseTranslator:
                           seg: Segment) -> str:
         user = prompts.build_translate_user(
             rel_table,
-            [f"[{seg.index}] {self._line_header(seg)}: {seg.text_src}"],
+            [f"[{seg.index}] {self._line_header(seg)}"
+             + (f" [lang={seg.source_lang}]" if seg.source_lang else "")
+             + f": {seg.text_src}"],
             self.proper_nouns)
         for _ in range(2):
             try:
@@ -668,7 +688,7 @@ def _parse_json(raw: str) -> dict:
     return data
 
 
-def google_translate_free(texts: List[str], src: str = "zh-CN",
+def google_translate_free(texts: List[str], src: str = "auto",
                           dst: str = "vi") -> List[str]:
     """Last-resort fallback (edge case 15): free Google endpoint, no key.
 
@@ -731,7 +751,9 @@ def translate_with_fallback(providers: List[BaseTranslator],
         log.warning("tất cả nguồn LLM đều lỗi, dùng Google Translate free "
                     "(dự phòng cuối): chất lượng đại từ có thể kém, nên "
                     "duyệt lại bản dịch ở bước [5]")
-        vi = google_translate_free([s.text_src for s in segments])
+        language = (video_metadata or {}).get("source_language", "auto")
+        language = language if language not in ("und", "mixed", "") else "auto"
+        vi = google_translate_free([s.text_src for s in segments], src=language)
         for s, t in zip(segments, vi):
             s.text_vi = (t or "").strip() or s.text_src
         return segments, "google_free"

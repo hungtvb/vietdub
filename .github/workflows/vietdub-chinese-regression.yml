@@ -1,0 +1,92 @@
+name: VietDub Chinese real-video regression
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "benchmark = 25s real audio; full = full interview; smoke = detection only"
+        required: true
+        default: benchmark
+        type: choice
+        options:
+          - benchmark
+          - full
+          - smoke
+      backend:
+        description: "AutoModel (optimized VAD/batching) or legacy ModelScope"
+        required: true
+        default: automodel
+        type: choice
+        options:
+          - automodel
+          - modelscope
+  push:
+    branches: [ci/run-vietdub-20261016]
+    paths:
+      - '.github/workflows/vietdub-chinese-regression.yml'
+      - 'ci_chinese_regression.py'
+
+permissions:
+  contents: read
+
+jobs:
+  mandarin-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      RUN_MODE: ${{ inputs.mode || 'benchmark' }}
+      ASR_BACKEND: ${{ inputs.backend || 'automodel' }}
+      MODELSCOPE_CACHE: ${{ github.workspace }}/.models
+      OMP_NUM_THREADS: "4"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+      - name: Restore persistent FunASR/ModelScope cache
+        uses: actions/cache@v4
+        with:
+          path: .models
+          key: ${{ runner.os }}-vietdub-modelscope-${{ env.ASR_BACKEND }}-v2
+          restore-keys: |
+            ${{ runner.os }}-vietdub-modelscope-
+      - name: Install multilingual language detector
+        run: |
+          python -m pip install --upgrade pip
+          pip install "faster-whisper>=1.1,<2" numpy soundfile scipy
+      - name: Install real Chinese FunASR/ModelScope models
+        if: env.RUN_MODE != 'smoke'
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install "funasr==1.4.16" modelscope addict datasets pillow simplejson kaldi-native-fbank librosa sortedcontainers
+      - name: Download real Mandarin speech video from Wikimedia Commons
+        run: |
+          mkdir -p chinese_regression
+          curl --fail --location --retry 4 --connect-timeout 30 \
+            --user-agent 'VietDubRegression/1.0 (open-source ASR QA; Wikimedia Commons)' \
+            'https://upload.wikimedia.org/wikipedia/commons/c/c3/%E3%80%90%E4%B8%A4%E4%BC%9A30%E7%A7%92%E3%80%91%E6%B0%B4%E5%BA%86%E9%9C%9E%EF%BC%9A%E4%B8%AD%E5%9B%BD%E5%A5%B3%E8%B6%B3%E9%9D%9E%E4%B8%96%E7%95%8C%E9%A1%B6%E7%BA%A7%EF%BC%8C%E4%BD%86%E4%BC%9A%E4%B8%8D%E6%96%AD%E8%BF%BD%E8%B5%B6.webm' \
+            --output chinese_regression/mandarin_source.webm
+          test -s chinese_regression/mandarin_source.webm
+          ffprobe -hide_banner -v error -show_entries format=duration,size -of json \
+            chinese_regression/mandarin_source.webm
+      - name: Detect Chinese and run real FunASR transcription
+        run: |
+          python ci_chinese_regression.py \
+            --video chinese_regression/mandarin_source.webm \
+            --out chinese_regression \
+            --mode "$RUN_MODE" \
+            --backend "$ASR_BACKEND" \
+            --benchmark-seconds 25
+      - name: Upload Chinese ASR/route/QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vietdub-mandarin-real-asr-${{ env.RUN_MODE }}-${{ env.ASR_BACKEND }}
+          path: chinese_regression/report.json
+          if-no-files-found: warn
+          retention-days: 7

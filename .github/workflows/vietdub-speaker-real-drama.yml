@@ -1,0 +1,108 @@
+name: VietDub 13m real drama ECAPA speaker audit
+
+on:
+  push:
+    branches: [ci/run-vietdub-20261016]
+    paths:
+      - '.github/workflows/vietdub-speaker-real-drama.yml'
+      - 'ci_real_speaker_audit.py'
+      - 'speaker/real_video_audit.py'
+      - 'speaker/real_voice_scan.py'
+      - 'tests/test_real_video_speaker_audit.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  original-drama-speaker-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    env:
+      PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: "4"
+      VIETDUB_SPEAKER_MODEL_CACHE: ${{ github.workspace }}/.speaker_models
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install real local voice model and FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg libsndfile1
+          python -m pip install --upgrade pip
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-speaker-v2.txt
+          pip install numpy soundfile gdown pytest
+      - name: Check data-driven speaker QA logic before processing film
+        run: |
+          python -m pytest -q tests/test_real_video_speaker_audit.py
+      - name: Reuse local ECAPA pretrained weights
+        uses: actions/cache@v4
+        with:
+          path: .speaker_models
+          key: ${{ runner.os }}-vietdub-speechbrain-ecapa-v1
+      - name: Restore genuine unapproved WhisperX and pyannote evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p prior_evidence private_source
+          gh run download 38887405087 -R "${{ github.repository }}" \
+            -n vietdub-asr-diarization-qa-diarize -D prior_evidence
+          test -s prior_evidence/asr-reconciled-UNAPPROVED.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path("prior_evidence/asr-reconciled-UNAPPROVED.json").read_text())
+          assert p["video_metadata"]["diarization_executed"] is True
+          assert p["video_metadata"]["forced_alignment_executed"] is True
+          assert p["video_metadata"]["human_verified"] is False
+          assert len(p["segments"]) >= 200
+          assert len(p["diarization_exclusive"]) >= 20
+          PY
+      - name: Download the ORIGINAL English drama only inside CI
+        run: |
+          gdown '1hIdUbh_DAjlUdu1g39GTWJnfLOK-ZL7G' -O private_source/film.mp4
+          test -s private_source/film.mp4
+          ffprobe -hide_banner -loglevel error \
+            -show_entries format=duration -of csv=p=0 private_source/film.mp4
+      - name: Compute actual ECAPA similarity on real film speech
+        run: |
+          python ci_real_speaker_audit.py \
+            --reconciled prior_evidence/asr-reconciled-UNAPPROVED.json \
+            --video private_source/film.mp4 \
+            --output speaker_v2_real \
+            --max-lines 18
+      - name: Guard no character was automatically verified
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r = json.loads(Path("speaker_v2_real/speaker-ecapa-audit.json").read_text())
+          q = json.loads(Path("speaker_v2_real/speaker-review-plan.json").read_text())
+          assert r["status"] == "REAL_ECAPA_CLUSTER_AUDIT_UNAPPROVED"
+          assert not r["human_character_identity_verified"]
+          assert not r["embedding_vectors_persisted"]
+          assert not r["original_audio_exported"]
+          assert q["status"] == "UNAPPROVED"
+          assert q["human_identity_approvals"] == 0
+          assert r["valid_reference_clips"] >= 2
+          assert r["scored_line_samples"] >= 2
+          assert all(not x["human_verified"] for x in r["review_lines"])
+          print("VALID_UNAPPROVED_REAL_DRAMA_SPEAKER_AUDIT",
+                r["valid_reference_clips"], r["measured_line_samples"])
+          PY
+      - name: Upload only speaker QA reports, NOT video/audio/embeddings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vietdub-real-drama-speaker-ecapa-UNAPPROVED
+          path: |
+            speaker_v2_real/speaker-ecapa-audit.json
+            speaker_v2_real/speaker-review-plan.json
+            speaker_v2_real/speaker-review-queue.csv
+            speaker_v2_real/voice-anchor-candidates.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,157 @@
+# Chinese ASR optimization and benchmark evidence
+
+This optimization applies to **any new Chinese-speaking video**, not to the
+interview script or translated content. Source-language routing happens before
+full transcription: clear Mandarin -> FunASR; other/mixed/uncertain sources ->
+multilingual Whisper. The user may override the backend.
+
+## Actual Mandarin audio benchmark — 2026-10-16
+
+Source: Wikimedia Commons, [China women's football interview](https://commons.wikimedia.org/wiki/File:〖两会30秒〗水庆霞：中国女足非世界顶级，但会不断追赶.webm).
+Clip: first **25 seconds**, PCM 16 kHz mono, GitHub-hosted Ubuntu standard CPU.
+Both FunASR backends used the same audio. These are measurements from two
+independent CI runs, not reference transcription-quality scores.
+
+| Actual measurement | Legacy ModelScope pipeline | FunASR AutoModel |
+| --- | ---: | ---: |
+| Model initialization incl. initial download | 137.832 sec | 163.006 sec |
+| Audio inference (same 25 sec) | 4.037 sec | **3.278 sec** |
+| Cold total | **141.869 sec** | 166.285 sec |
+| Real-time factor (inference only) | 0.1615 | **0.1311** |
+| Transcript segments | 12 | 10 |
+| CJK characters extracted | 123 | 124 |
+
+**Important trade-off:** AutoModel achieved **18.8% lower inference
+latency** for this sample, but its first-load startup was about 25 seconds
+slower. These are not guarantees across CPUs, audio, GPU platforms or video
+lengths. Keep the proven legacy backend as default until a broader sample
+benchmark and transcript reference are available; select AutoModel in Settings
+for experimental speed testing.
+
+Transcript text produced by both backends is ~97.17% similar after removal
+of punctuation. This is **cross-model agreement**, not CER or WER. Both
+outputs lack a verified human ground-truth transcript, and some speaker IDs
+are unverified.
+
+- [AutoModel benchmark CI](https://github.com/hungtvb/vietdub/actions/runs/38916558536)
+- [ModelScope benchmark CI](https://github.com/hungtvb/vietdub/actions/runs/38917438382)
+- [Chinese vs Whisper Small comparison CI](https://github.com/hungtvb/vietdub/actions/runs/38916993799)
+
+Whisper Small was transcribed on the **same interview's first 30 seconds**
+and took 4.208 seconds of CPU inference in one recorded run. Once OpenCC
+normalizes Simplified/Traditional, its transcript has **86.32% character
+sequence agreement** with legacy FunASR on that excerpt; without
+normalization it has **63.86%**. Neither score identifies which text is
+correct. Each divergent window remains an editorial QA candidate.
+
+## Verified warm-cache rerun (same AutoModel and audio)
+
+GitHub Actions restored cache key `Linux-vietdub-modelscope-automodel-v2`
+successfully (about **1,913 MiB** uncompressed). A second independent CI
+runner processed the exact same 25-second speech sample.
+
+| Measured AutoModel metric | Initial run | Restored cache run |
+| --- | ---: | ---: |
+| Model load | 163.006 s | **45.256 s** |
+| Audio inference | 3.278 s | 4.121 s |
+| Total ASR operation | 166.285 s | **49.378 s** |
+| Segments / recognized Hanzi | 10 / 124 | 10 / 124 |
+
+The restored-cache model load time improved by **72.2%** and total ASR time by
+**70.3%**. These timings include CPU runner variance. **The cache avoids
+network download but does not eliminate deserialization**. The one-model
+in-memory pool inside the desktop process eliminates repeated deserialization
+for subsequent videos while the same model remains loaded and the process
+is alive. This behavior is validated with offline automated tests, not yet
+a multi-video GPU end-to-end benchmark.
+
+- [Warm-cache proof and run logs](https://github.com/hungtvb/vietdub/actions/runs/38918612292)
+
+## Reusable local optimization
+
+VietDub keeps ModelScope weights on disk at
+`~/.config/VietDub/models` (Windows: `%APPDATA%/VietDub/models`) unless
+the user provides `MODELSCOPE_CACHE`. Disk cache avoids downloading weights
+again but does not remove neural-network deserialization and warmup.
+
+VietDub can also keep a **single initialized FunASR model in RAM** between
+jobs (Settings > ASR > Reuse model). The in-memory registry is bounded to one
+model; switching model/device/backend replaces its cached instance. Shared
+inference is guarded by an RLock because ASR internals are not safely
+concurrent by default. Turn this off on memory-limited systems.
+
+Each FunASR result records `asr_quality.performance` with independent
+`model_load_seconds`, `inference_seconds`, `total_seconds`,
+`reused_loaded_model`, `real_time_factor`, `cache_dir` and
+`segment_count`. Separate CI scripts benchmark actual audio, never mock it
+for published performance numbers.
+
+The experimental AutoModel backend configures
+`paraformer-zh` + FSMN VAD (15 s max segment) + CT punctuation + CAM++
+speaker model, with bounded 60-second dynamic batches and CPU thread
+settings. Full-video pyannote can reconcile speaker identities but does not
+automatically identify film characters. Chinese lines still require
+translation/editorial review; neither CI nor model agreement writes
+`translations/approved.json`.
+
+## Long-video dialogue preservation (all source files)
+
+Earlier FunASR post-processing truncated `previous.end` to `next.start`
+whenever two utterances overlapped. This silently deleted legitimate dialogue
+in scenes with simultaneous speakers. **New rule:** retain the full original
+timestamp span and text for both utterances and flag both for manual review.
+It also detects nested multi-speaker interjections, not only adjacent overlaps.
+
+For an audio recording longer than the configured nominal chunk size
+(default ten minutes), FunASR decodes a configurable **1.5-second
+look-behind and look-ahead** per chunk. Each ASR hypothesis belongs to the
+nominal chunk containing its midpoint. This avoids double-counting words in
+the duplicated border audio and reduces broken speech at the split.
+Segments near boundaries remain flagged for editorial QA; a heuristic
+midpoint is **not proof** that a sentence has been perfectly reconstructed.
+
+The generic settings are:
+`funasr_chunk_overlap_sec` (0..15), `funasr_keep_loaded` (on/off),
+`funasr_backend`, `funasr_batch_size_s` and
+`funasr_max_vad_segment_ms`. None of the logic depends on the source
+file name, scene contents or the Mandarin regression dialogue.
+
+Automated tests include `tests/test_funasr_long_video_boundaries.py`:
+nested simultaneous dialogue, nominal chunk ownership, deduplication and
+speaker-ID isolation across chunks. A separate CI job
+`.github/workflows/vietdub-chinese-boundary.yml` checks the **same real
+Mandarin audio** in a single ASR pass versus artificially shortened chunks
+(8-second nominal chunks) and records sequence disagreement for QA, not
+a fabricated CER/WER metric.
+
+## Independent real-audio boundary regression — passed
+
+The [real 25-second Mandarin boundary CI](https://github.com/hungtvb/vietdub/actions/runs/38925349240)
+ran AutoModel on one continuous WAV (10 utterances / 124 Hanzi), then
+**reused exactly the same in-RAM pretrained model** to process the same
+recording as **four nominal 8-second chunks with 1.5-second overlap**.
+
+- Baseline: 10 segments; 124 Hanzi; 2.623 seconds CPU inference.
+- Chunked: 10 segments; 124 Hanzi; 3.044 seconds inference; four chunks.
+- Character-sequence agreement: **95.16%** (not a reference accuracy score).
+- Border QA: **6** nearby segments conservatively flagged.
+- In-memory model reuse: startup **0.0 seconds** for the second transcription
+  with the already-loaded adapter (as opposed to 33.561 seconds on initial load).
+
+This independently exercises the generic FunASR chunk-handling code with
+genuine speech, not just deterministic fixtures. Minor transcription
+differences remain (95.16% rather than 100%); never infer word accuracy or
+speaker correctness from this experiment.
+
+## Where to run future tests
+
+- Real Chinese audio smoke: `.github/workflows/vietdub-chinese-routing-smoke.yml`
+- Real Chinese FunASR benchmark: `.github/workflows/vietdub-chinese-regression.yml`
+- Independent Chinese/Whisper comparison:
+  `.github/workflows/vietdub-chinese-compare.yml`
+- Offline test suite: `tests/test_funasr_performance.py`,
+  `tests/test_funasr_model_pool.py` and
+  `tests/test_chinese_comparison.py`
+
+Do not promote any ASR backend to "most accurate" without comparing to a
+human-verified transcript from the same acoustic sample.

@@ -72,7 +72,8 @@ class ReviewViWindow(QWidget):
         root.addLayout(meta_form)
 
         self.tbl = QTableWidget(len(self.segments), len(COLS))
-        self.tbl.setHorizontalHeaderLabels(COLS)        self.tbl.verticalHeader().setVisible(False)
+        self.tbl.setHorizontalHeaderLabels(COLS)
+        self.tbl.verticalHeader().setVisible(False)
         for r, seg in enumerate(self.segments):
             self._fill_row(r, seg)
         self.tbl.setColumnWidth(0, 44)

@@ -158,10 +158,15 @@ class EdgeTTS:
                     and key_file.read_text().strip() == key:
                 seg.audio_vi = str(fname)
                 continue
-            key_file.write_text(key)
+            # CRITICAL: the old WAV is stale when text/voice/rate changes.
+            # Remove it BEFORE the worker's 'file exists' resume shortcut.
+            # Write cache metadata only AFTER successful resynthesis.
+            fname.unlink(missing_ok=True)
+            key_file.unlink(missing_ok=True)
             queue.append({"index": seg.index, "text": text,
                           "voice": self.voice_for(seg.gender),
-                          "filename": str(fname), "seg": seg})
+                          "filename": str(fname), "seg": seg,
+                          "key": key, "key_file": str(key_file)})
 
         if queue:
             try:
@@ -178,6 +183,7 @@ class EdgeTTS:
                     "tới Microsoft), thử lại sau ít phút.")
             for it in queue:
                 if _vail_file(it["filename"]):
+                    Path(it["key_file"]).write_text(it["key"])
                     it["seg"].audio_vi = it["filename"]
                 else:
                     log.warning("câu %d TTS lỗi -> chèn im lặng ở bước khớp giờ",

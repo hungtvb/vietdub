@@ -1,0 +1,106 @@
+name: VietDub 1B - Diarization and alignment QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "QA-only (no model), or real pyannote Community-1 plus WhisperX alignment"
+        required: true
+        type: choice
+        options:
+          - qa_only
+          - diarize
+        default: diarize
+  push:
+    branches: [ci/run-vietdub-20261016]
+    paths:
+      - '.github/workflows/vietdub-stage1-reconcile.yml'
+      - 'ci_stage1_reconcile.py'
+      - 'tests/test_stage1_reconcile.py'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      RUN_MODE: ${{ inputs.mode || 'diarize' }}
+      OMP_NUM_THREADS: "4"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Restore genuine Whisper results, not translated draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p prior_asr output
+          gh run download 38856145757 -R "${{ github.repository }}" -n vietdub-whisper-asr-handoff -D prior_asr
+          test -s prior_asr/asr-handoff.json
+          test -s prior_asr/whisper-raw-and-qa.json
+      - name: Install numeric QA dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy pytest
+      - name: Test evidence-based reconciliation logic
+        run: python -m pytest -q tests/test_stage1_reconcile.py
+      - name: Check gated pyannote model access for real diarization
+        if: env.RUN_MODE == 'diarize'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::Set GitHub Actions secret HF_TOKEN after accepting pyannote/speaker-diarization-community-1 access terms on Hugging Face"
+            exit 1
+          fi
+      - name: Install local pyannote Community-1 and WhisperX models
+        if: env.RUN_MODE == 'diarize'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          pip install torch torchaudio pyannote.audio whisperx
+      - name: Download original movie ONLY for real diarization
+        if: env.RUN_MODE == 'diarize'
+        run: |
+          pip install gdown
+          mkdir -p private_input
+          gdown '1hIdUbh_DAjlUdu1g39GTWJnfLOK-ZL7G' -O private_input/input.mp4
+          test -s private_input/input.mp4
+      - name: Run real pyannote diarization and WhisperX forced alignment
+        if: env.RUN_MODE == 'diarize'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python ci_stage1_reconcile.py --mode diarize --forced-align
+      - name: Produce evidence-only QA without pretrained diarizer
+        if: env.RUN_MODE == 'qa_only'
+        run: python ci_stage1_reconcile.py --mode qa_only
+      - name: Guard against fake approvals
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          f = Path("output/asr-reconciled-UNAPPROVED.json")
+          data = json.loads(f.read_text(encoding="utf-8"))
+          assert data["video_metadata"]["qa_status"] == "UNAPPROVED"
+          assert data["segments"] and data["qa"]
+          # CI 1B must never write an approval; existing approved versions may remain.
+          print("Real evidence QA rows:", len(data["qa"]),
+                "diarization executed:", data["video_metadata"]["diarization_executed"],
+                "alignment executed:", data["video_metadata"]["forced_alignment_executed"])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vietdub-asr-diarization-qa-${{ env.RUN_MODE }}
+          path: |
+            output/asr-reconciled-UNAPPROVED.json
+            output/reconciliation-qa.json
+            output/reconciliation-summary.json
+            output/diarization-evidence.json
+          if-no-files-found: warn
+          retention-days: 7

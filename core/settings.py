@@ -33,6 +33,22 @@ DEFAULTS = {
     "llm_temperature": 0.2,
     "translate_batch": 20,
     # --- ASR ---
+    "asr_engine": "auto",  # auto: zh -> FunASR, others -> Whisper
+    "language_detection_model": "tiny",  # light acoustic language probe
+    "chinese_asr_min_confidence": 0.70,  # below threshold use multilingual Whisper + QA
+    "whisper_model": "large-v3-turbo",
+    "source_language": "auto",  # new video source detection: auto | en | zh | ...
+    "asr_device": "auto",
+    "whisper_forced_alignment": True,
+    "voice_anchor_review": True,  # exports audition candidates; NEVER approves automatically
+    "hf_token": "",  # optional; HF_TOKEN environment variable takes priority
+
+    "funasr_backend": "modelscope",  # automodel is opt-in pending real benchmarking
+    "funasr_cpu_threads": 4,
+    "funasr_keep_loaded": True,  # one reusable model in RAM; disable for low-memory computers
+    "funasr_batch_size_s": 60,
+    "funasr_max_vad_segment_ms": 15000,
+    "funasr_chunk_overlap_sec": 1.5,  # protects speech at 10-minute boundaries
     "asr_model": "damo/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
     "vad_model": "damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
     "punc_model": "damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",  # 290M, light
