@@ -156,3 +156,53 @@ def test_speaker_and_project_metadata_roundtrip():
                 detected_speaker=2, character_id="CHAR_001",
                 character_name="Ethan", identity_status="VERIFIED")
     assert Segment.from_dict(s.to_dict()).detected_speaker == 2
+
+
+def test_saved_speaker_identity_is_bound_to_original_video_not_just_audio(tmp_path):
+    job, wav, lines, man = setup_job(tmp_path)
+    original_video = job / "movie.mp4"
+    original_video.write_bytes(b"actual original visuals")
+    verifier = SpeakerVerification(
+        job, lines, wav, man, source_video=original_video)
+    verifier.verify_line(0, "Maddie", heard_audio=True, checked_video=True)
+    verifier.save()
+    clean_lines = [
+        Segment(index=seg.index, start=seg.start, end=seg.end,
+                speaker=(seg.detected_speaker if seg.detected_speaker is not None
+                         else seg.speaker), text_src=seg.text_src)
+        for seg in lines
+    ]
+    same = SpeakerVerification(
+        job, clean_lines, wav, man, source_video=original_video)
+    assert same.summary()["verified_lines"] == 1
+    original_video.write_bytes(b"swapped video SAME sound")
+    with pytest.raises(ValueError, match="Video GỐC"):
+        SpeakerVerification(
+            job, clean_lines, wav, man, source_video=original_video)
+
+
+def test_replacing_voice_anchor_manifest_revokes_checkpoint_reuse(tmp_path):
+    job, wav, lines, man = setup_job(tmp_path)
+    video = job / "movie.mp4"
+    video.write_bytes(b"scene video for original voices")
+    state = SpeakerVerification(job, lines, wav, man, source_video=video)
+    state.verify_anchor("a", "Maddie", heard_audio=True, checked_video=True)
+    state.save()
+    changed = {
+        **man,
+        "candidates": [dict(item) for item in man["candidates"]],
+    }
+    changed["candidates"][0]["start"] = .5
+    with pytest.raises(ValueError, match="Mẫu giọng"):
+        SpeakerVerification(job, lines, wav, changed, source_video=video)
+
+
+def test_old_audio_only_checkpoint_does_not_revalidate_video_identity(tmp_path):
+    job, wav, lines, man = setup_job(tmp_path)
+    old = SpeakerVerification(job, lines, wav, man)
+    old.verify_line(0, "Maddie", heard_audio=True, checked_video=True)
+    old.save()
+    film = job / "original.mp4"
+    film.write_bytes(b"source movie pictures")
+    with pytest.raises(ValueError, match="video GỐC|Video GỐC"):
+        SpeakerVerification(job, lines, wav, man, source_video=film)
