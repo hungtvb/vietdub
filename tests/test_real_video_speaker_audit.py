@@ -141,3 +141,25 @@ def test_path_traversal_in_voice_manifest_cannot_escape(tmp_path):
     with pytest.raises(RuntimeError, match="No valid"):
         analyze_speaker_audio(plan, "unused.wav", tmp_path,
                               encoder=lambda *a, **k: [1., 0.], max_lines=2)
+
+
+def test_untranscribed_reference_is_excluded_from_voice_ranking(tmp_path):
+    plan = build_review_plan(evidence())
+    samples = plan["voice_anchor_manifest"]["candidates"]
+    samples[0]["word_density"] = 0.0
+    for clip in samples:
+        path = tmp_path / clip["file"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"valid dummy")
+    def fake_embedding(path, start=0., end=None):
+        if end is None:
+            return [1., .1, 0.] if "S0" in str(path) else [0., 1., .1]
+        return [1., .1, 0.]
+    report = analyze_speaker_audio(plan, "source.wav", tmp_path,
+                                   encoder=fake_embedding, max_lines=2)
+    assert report["valid_reference_clips"] == len(samples) - 1
+    assert any("LOW_WORD_DENSITY" in entry["reason"]
+               for entry in report["invalid_reference_clips"])
+    assert report["scored_line_samples"] >= 1
+    assert report["embedding_vectors_persisted"] is False
+    assert report["human_character_identity_verified"] is False
