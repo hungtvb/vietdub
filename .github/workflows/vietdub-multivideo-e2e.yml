@@ -1,0 +1,190 @@
+name: VietDub Multi-Video Real-World E2E
+on:
+  push:
+    branches: [ci/run-vietdub-20261016]
+    paths:
+      - '.github/workflows/vietdub-multivideo-e2e.yml'
+      - 'ci_english_dub_e2e.py'
+      - 'ci_chinese_dub_e2e.py'
+      - 'ci_chinese_regression.py'
+      - 'translation/quality.py'
+      - 'translation/llm_e2e.py'
+      - 'translation/prompts.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-real-videos:
+    name: ${{ matrix.id }} / ${{ matrix.language }} to vi
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - id: zh-economy
+            language: zh
+            start: 0
+            seconds: 48
+            source_label: 'Paul Chan economic interview'
+            source_license: 'CC BY 4.0 - China News Service (Commons review pending)'
+            source_page: 'https://commons.wikimedia.org/wiki/File:2026年10月14日_专访陈茂波：鼓励内地及香港企业“并船出海”.webm'
+            url: 'https://upload.wikimedia.org/wikipedia/commons/d/d7/2026%E5%B9%B410%E6%9C%8814%E6%97%A5_%E4%B8%93%E8%AE%BF%E9%99%88%E8%8C%82%E6%B3%A2%EF%BC%9A%E9%BC%93%E5%8A%B1%E5%86%85%E5%9C%B0%E5%8F%8A%E9%A6%99%E6%B8%AF%E4%BC%81%E4%B8%9A%E2%80%9C%E5%B9%B6%E8%88%B9%E5%87%BA%E6%B5%B7%E2%80%9D.webm'
+          - id: zh-greetings
+            language: zh
+            start: 14
+            seconds: 21
+            source_label: 'Ding Zhen Mandarin greeting excerpt'
+            source_license: 'CC BY 3.0 - China News Service'
+            source_page: 'https://commons.wikimedia.org/wiki/File:Chinese_New_Year_greetings_in_Mandarin_and_Amdo_Tibetan_by_Ding_Zhen.webm'
+            url: 'https://upload.wikimedia.org/wikipedia/commons/c/cd/Chinese_New_Year_greetings_in_Mandarin_and_Amdo_Tibetan_by_Ding_Zhen.webm'
+          - id: en-radio
+            language: en
+            start: 0
+            seconds: 59
+            source_label: 'Angel Tree Navy English Q-and-A radio interview'
+            source_license: 'Public domain - U.S. Navy'
+            source_page: 'https://commons.wikimedia.org/wiki/File:Angel_Tree_Radio_Interview_(988155).webm'
+            url: 'https://upload.wikimedia.org/wikipedia/commons/c/c7/Angel_Tree_Radio_Interview_%28988155%29.webm'
+    env:
+      OMP_NUM_THREADS: '4'
+      PYTHONUNBUFFERED: '1'
+      MODELSCOPE_CACHE: ${{ github.workspace }}/.models
+      HF_HOME: ${{ github.workspace }}/.hf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU ASR and dubbing dependencies
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libsndfile1
+          pip install -q 'numpy<3' scipy soundfile 'faster-whisper>=1.1,<2' pytest requests openai edge-tts
+          if [ '${{ matrix.language }}' = 'zh' ]; then
+            pip install -q 'funasr==1.4.16' modelscope addict datasets pillow simplejson kaldi-native-fbank librosa sortedcontainers torch
+          fi
+      - name: Validate bilingual QA unit tests
+        run: |
+          python -m compileall -q ci_english_dub_e2e.py ci_chinese_regression.py ci_chinese_dub_e2e.py translation
+          python -m pytest -q tests/test_chinese_dub_e2e.py
+      - name: Restore Mandarin ASR model cache
+        if: matrix.language == 'zh'
+        uses: actions/cache@v4
+        with:
+          path: .models
+          key: ${{ runner.os }}-vietdub-modelscope-automodel-v2
+      - name: Download independent real video and trim to spoken sample
+        env:
+          SOURCE_URL: ${{ matrix.url }}
+          SOURCE_PAGE: ${{ matrix.source_page }}
+          SOURCE_LICENSE: ${{ matrix.source_license }}
+          SOURCE_LABEL: ${{ matrix.source_label }}
+        run: |
+          mkdir -p sample regression dubbed
+          curl -fL --retry 3 --connect-timeout 30 --max-time 180 \
+            --user-agent 'VietDubE2E/1.0 (multi-video regression)' \
+            "$SOURCE_URL" -o sample/original.webm
+          ffmpeg -nostdin -y -v error -ss '${{ matrix.start }}' -t '${{ matrix.seconds }}' \
+            -i sample/original.webm -vf scale=640:-2 -c:v libx264 -preset ultrafast \
+            -crf 30 -pix_fmt yuv420p -c:a aac -b:a 96k sample/source.mp4
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          data=json.loads(subprocess.check_output(['ffprobe','-v','error',
+            '-show_entries','stream=codec_type:format=duration','-of','json',
+            'sample/source.mp4'],text=True))
+          assert {"audio","video"}.issubset({s["codec_type"] for s in data["streams"]})
+          assert float(data["format"]["duration"]) >= 8
+          Path('sample/source_attribution.json').write_text(json.dumps({
+            'source_page':os.environ['SOURCE_PAGE'],
+            'source_label':os.environ['SOURCE_LABEL'],
+            'license':os.environ['SOURCE_LICENSE'],
+            'test_only':True,'human_approved':False},ensure_ascii=False,indent=2))
+          PY
+      - name: Real Mandarin FunASR ASR
+        if: matrix.language == 'zh'
+        env:
+          SOURCE_PAGE: ${{ matrix.source_page }}
+          SOURCE_LICENSE: ${{ matrix.source_license }}
+          SOURCE_LABEL: ${{ matrix.source_label }}
+        run: |
+          python ci_chinese_regression.py --video sample/source.mp4 --out regression \
+            --backend automodel --mode full --source-page "$SOURCE_PAGE" \
+            --source-license "$SOURCE_LICENSE" --source-label "$SOURCE_LABEL"
+          python - <<'PY'
+          import json
+          r=json.load(open('regression/report.json'))
+          assert r['status']=='CHINESE_FUNASR_REAL_ASR_COMPLETE'
+          assert r['segment_count'] > 0
+          assert r['actual_hanzi_count'] >= 10
+          PY
+      - name: Start Ollama Qwen2.5 real LLM
+        run: |
+          curl -fsSL https://ollama.com/install.sh -o /tmp/ollama-install.sh
+          sh /tmp/ollama-install.sh
+          ollama serve > /tmp/vietdub-ollama.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:11434/api/tags >/dev/null
+          ollama pull qwen2.5:3b
+      - name: Real Mandarin FunASR to LLM to Vietnamese Edge-TTS MP4
+        if: matrix.language == 'zh'
+        run: |
+          python ci_chinese_dub_e2e.py --video sample/source.mp4 \
+            --asr-report regression/report.json --out dubbed \
+            --llm-provider ollama --llm-model qwen2.5:3b
+      - name: Real English Whisper to LLM to Vietnamese Edge-TTS MP4
+        if: matrix.language == 'en'
+        run: |
+          python ci_english_dub_e2e.py --video sample/source.mp4 --out dubbed \
+            --whisper-model base --llm-provider ollama --llm-model qwen2.5:3b
+      - name: Video QA and dialogue-coverage assertion
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('dubbed/qa.json').read_text())
+          assert data['status']=='RENDERED_TECHNICALLY_REVIEW_REQUIRED'
+          assert data['video']['size_bytes'] > 20000
+          assert data['technical_pass'] is True
+          assert data['translation']['llm_call_counts']['analyze'] >= 1
+          assert data['translation']['llm_call_counts']['translate'] >= 1
+          assert data['human_approved'] is False
+          lines=json.loads(Path('dubbed/review_lines.json').read_text())
+          assert len(lines)>0 and all(line['text_src'] and line['text_vi'] for line in lines)
+          assert all('audio_vi' in line for line in lines)
+          if 'dub_segment_count' in data:
+            assert data['asr_segment_count']==sum(len(row['original_asr_ids'])
+                for row in data['dub_grouping']['original_id_mapping'])
+            assert len(lines)==data['dub_segment_count']
+          else:
+            assert len(lines)==data['asr']['segment_count']
+          assert Path('dubbed/chinese_vidub_UNAPPROVED.mp4').is_file()
+          print('REAL_MULTI_VIDEO_TECHNICAL_PASS_NO_HUMAN_QA',len(lines))
+          PY
+      - name: Upload full QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.id }}-qa
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            sample/source_attribution.json
+            regression/report.json
+            dubbed/qa.json
+            dubbed/review_lines.json
+      - name: Upload actual Vietnamese dubbed video and subtitles
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.id }}-video-UNAPPROVED
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dubbed/chinese_vidub_UNAPPROVED.mp4
+            dubbed/chinese_source.srt
+            dubbed/vietnamese_review.srt
