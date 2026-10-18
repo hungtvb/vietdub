@@ -478,7 +478,7 @@ def test_distinct_source_lines_do_not_silently_share_batch_translation():
            for i,source in enumerate(sources)]
     collapsed=json.dumps({"translations":[{"id":i,"text_vi":
         ("Đến lấy bưu kiện tại quầy." if i<3 else "Cảm ơn.")
-        } for i in range(4)],ensure_ascii=False)
+        } for i in range(4)]},ensure_ascii=False)
     replacements=[
         "Bưu điện đóng cửa lúc trưa.",
         "Chúng tôi giao hàng vào thứ Ba.",
