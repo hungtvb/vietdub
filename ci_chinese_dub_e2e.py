@@ -215,9 +215,13 @@ def main():
         evidence["llm_translation_executed"] = True
         # Only structural failures block a preview. LLM semantic checks are
         # advisory: unresolved issues keep the output UNAPPROVED for review.
-        if any("EMPTY_OR_SOURCE_ECHO" in x["reasons"]
+        # Do not let a technically playable video mask a visibly half-
+        # untranslated Chinese subtitle. Repair if possible, fail closed
+        # if the same LLM still leaves source Hanzi after attempts.
+        if any(("EMPTY_OR_SOURCE_ECHO" in x["reasons"] or
+                "SOURCE_SCRIPT_REMAINS" in x["reasons"])
                for x in evidence["translation_quality_flags"]["issues"]):
-            raise RuntimeError("Untranslated or empty Vietnamese line")
+            raise RuntimeError("Untranslated source script in Vietnamese output")
         EdgeTTS(voice_female=VI_VOICE, concurrency=2, retries=2).synthesize(
             segments, out / "tts")
         evidence["tts"] = fit_voices(segments, out)

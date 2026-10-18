@@ -237,3 +237,26 @@ def test_overlong_translation_repair_is_rejected():
     assert q["revised"]==[]
     assert "too long" in q["diagnostics"][0]["reason"]
     assert line.text_vi=="Vì sao."
+
+
+
+def test_source_script_guard_requires_full_vietnamese_for_chinese():
+    from project.schema import Segment
+    from translation.quality import structural_issues
+    from translation.llm_e2e import revise_flagged_lines
+    import json
+    class Repair:
+        def _chat(self,system,user):
+            obj=json.loads(user)
+            return json.dumps({"id":obj["requested_id"],
+              "text_vi":"Doanh nghiệp phát triển hoạt động trên toàn cầu."},
+              ensure_ascii=False)
+    seg=Segment(index=0,start=0,end=4,speaker=0,
+                source_lang="zh",text_src="企业布局全球的业务。",
+                text_vi="Doanh nghiệp phát triển全球的业务。")
+    assert "SOURCE_SCRIPT_REMAINS" in structural_issues([seg])[0]
+    original=[{"id":0,"reasons":structural_issues([seg])[0]}]
+    result=revise_flagged_lines([seg],Repair(),flagged=original)
+    assert len(result["revised"])==1
+    assert structural_issues([seg])=={}
+    assert "toàn cầu" in seg.text_vi

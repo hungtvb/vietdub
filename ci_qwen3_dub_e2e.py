@@ -40,11 +40,23 @@ def main():
         repair_ids=set(initial["auto_repair_eligible_ids"])
         repair=[row for row in initial["issues"] if row["id"] in repair_ids]
         qa["revision"]=revise_flagged_lines(segs,provider,flagged=repair)
+        # The first review model can miss untranslated source script.
+        # Re-detect deterministically, then REPAIR via the same LLM, never
+        # silently pass a half-Chinese/half-Vietnamese dubbed output.
+        remaining=structural_issues(segs)
+        unresolved_source=[{"id":i,"reasons":reasons}
+                           for i,reasons in remaining.items()
+                           if "SOURCE_SCRIPT_REMAINS" in reasons]
+        if unresolved_source:
+            qa["source_script_repair"]=revise_flagged_lines(
+                segs,provider,flagged=unresolved_source,max_attempts=4)
         qa["final_review"]=review_with_llm(segs,provider,
                    video_metadata=qa["translation"]["video_context"])
         issues=structural_issues(segs)
-        if any("EMPTY_OR_SOURCE_ECHO" in x for x in issues.values()):
-            raise RuntimeError("LLM left untranslated source text")
+        blocked={"EMPTY_OR_SOURCE_ECHO","SOURCE_SCRIPT_REMAINS"}
+        if any(blocked.intersection(reasons) for reasons in issues.values()):
+            raise RuntimeError("Untranslated source text remains after LLM retries: "
+                               +json.dumps(issues,ensure_ascii=False))
         EdgeTTS(voice_female=VI_VOICE,concurrency=2,retries=2).synthesize(
             segs,out/"tts")
         qa["tts"]=fit_voices(segs,out)
