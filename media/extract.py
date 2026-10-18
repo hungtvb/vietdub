@@ -79,7 +79,8 @@ def extract_audio(video_path: str | Path, out_wav: str | Path,
 
     cmd = [_bin.ffmpeg_cmd(), "-y", "-i", str(video_path),
            "-map", f"0:a:{audio_track}",
-           "-vn", "-ar", "16000", "-ac", "1",
+           "-vn", "-af", "aresample=async=1:first_pts=0",
+           "-ar", "16000", "-ac", "1",
            "-c:a", "pcm_s16le", str(out_wav)]
     p = _run(cmd)
     if p.returncode != 0 or not out_wav.exists():

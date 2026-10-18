@@ -21,8 +21,15 @@ from tts.edge_tts import EdgeTTS
 
 def transcribe_real_english(video, duration, model_name="base"):
     from faster_whisper import WhisperModel
+    # Video can have an audio stream with nonzero PTS start. Preserve
+    # that delay as silence in WAV, so Whisper timestamps match video time.
+    wav=Path(video).parent/"english_whisper_timeline_16k.wav"
+    subprocess.run(["ffmpeg","-nostdin","-y","-v","error",
+                    "-i",str(video),"-vn","-af",
+                    "aresample=async=1:first_pts=0",
+                    "-ar","16000","-ac","1",str(wav)],check=True)
     model=WhisperModel(model_name,device="cpu",compute_type="int8")
-    raw,details=model.transcribe(str(video),language="en",beam_size=5,
+    raw,details=model.transcribe(str(wav),language="en",beam_size=5,
                                  vad_filter=True)
     rows=list(raw)
     segments=[]

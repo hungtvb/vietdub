@@ -45,8 +45,20 @@ jobs:
             -o sample/original.webm
           ffmpeg -nostdin -y -v error -ss 0 -t 24 \
             -i sample/original.webm -vf scale=640:-2 -c:v libx264 -preset ultrafast \
-            -crf 32 -pix_fmt yuv420p -c:a aac -b:a 96k sample/source.mp4
-          ffmpeg -nostdin -y -v error -i sample/source.mp4 -vn -ar 16000 -ac 1 sample/mono16k.wav
+            -crf 32 -pix_fmt yuv420p             -af 'aresample=async=1:first_pts=0'             -c:a aac -b:a 96k sample/source.mp4
+          ffmpeg -nostdin -y -v error -i sample/source.mp4 -vn             -af 'aresample=async=1:first_pts=0'             -ar 16000 -ac 1 sample/mono16k.wav
+          python - <<'PY'
+          import subprocess,json,soundfile as sf
+          data=json.loads(subprocess.check_output(
+             ['ffprobe','-v','error','-show_entries',
+              'stream=codec_type,start_time,duration:format=duration',
+              '-of','json','sample/source.mp4'],text=True))
+          audio=next(s for s in data['streams'] if s['codec_type']=='audio')
+          assert abs(float(audio.get('start_time',0))) < 0.12, audio
+          wav=sf.info('sample/mono16k.wav')
+          assert wav.duration>23.5 and wav.duration<24.5, wav
+          print('VIDEO_AUDIO_PTS_ZERO_PRESERVED',audio['start_time'],wav.duration)
+          PY
           test -s sample/mono16k.wav
           cat > sample/attribution.txt <<'TXT'
           Video: Paul Chan economic interview, China News Service (Wikimedia Commons)

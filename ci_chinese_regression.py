@@ -39,7 +39,9 @@ def main():
         raise RuntimeError("Real Mandarin source video is missing")
     wav = root / "chinese_source_16k.wav"
     subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error",
-                    "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
+                    "-i", str(video), "-vn",
+                    "-af", "aresample=async=1:first_pts=0",
+                    "-ac", "1", "-ar", "16000",
                     str(wav)], check=True)
     if opts.mode in ("benchmark", "boundary"):
         if opts.benchmark_seconds < 5 or opts.benchmark_seconds > 180:

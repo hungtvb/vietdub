@@ -130,7 +130,8 @@ def render_clip(video, out, segments, duration):
     dub = build_track(segments, out / "dub.wav", duration)
     original = out / "original.wav"
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(video),
-                    "-vn", "-ar", "44100", "-ac", "2", str(original)], check=True)
+                    "-vn", "-af", "aresample=async=1:first_pts=0",
+                    "-ar", "44100", "-ac", "2", str(original)], check=True)
     mixed = mix(dub, original, out / "mixed.wav",
                 dub_volume=1.0, orig_volume=.12)
     output = out / "chinese_vidub_UNAPPROVED.mp4"
