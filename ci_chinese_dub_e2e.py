@@ -189,8 +189,20 @@ def main():
         pre_review=review_with_llm(segments,llm_provider,
                                    video_metadata=evidence["translation"]["video_context"])
         evidence["initial_llm_semantic_review"]=pre_review
+        # The LLM QA can collapse into copy/paste of the same alleged error.
+        # Do not blindly rewrite every line. Structural question-loss warnings
+        # are reviewable even if the semantic reviewer is unreliable.
+        eligible=set(pre_review["auto_repair_eligible_ids"])
+        repairable=[item for item in pre_review["issues"]
+                    if item["id"] in eligible]
+        seen_ids={item["id"] for item in repairable}
+        from translation.quality import structural_issues
+        basic_issues=structural_issues(segments)
+        for seg in segments:
+            if seg.index not in seen_ids and "QUESTION_FORM_LOST" in basic_issues.get(seg.index,[]):
+                repairable.append({"id":seg.index,"reasons":["QUESTION_FORM_LOST"]})
         evidence["llm_revision"]=revise_flagged_lines(
-            segments,llm_provider,flagged=pre_review["issues"])
+            segments,llm_provider,flagged=repairable)
         evidence["translation_quality_flags"]=translation_quality_flags(segments)
         evidence["final_llm_semantic_review"]=review_with_llm(
             segments,llm_provider,

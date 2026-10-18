@@ -16,6 +16,10 @@ def structural_issues(segments):
         target = (s.text_vi or "").strip()
         if not target or target == source:
             issues.append("EMPTY_OR_SOURCE_ECHO")
+        # ASR punctuation is probabilistic. This is only a REVIEW WARNING:
+        # a direct / rhetorical question can legitimately be indirect speech.
+        if ("?" in source or "？" in source) and "?" not in target:
+            issues.append("QUESTION_FORM_LOST")
         # Only a warning: proper nouns may legitimately retain source script.
         if s.source_lang == "zh" and any("\u3400" <= c <= "\u9fff" for c in target):
             issues.append("SOURCE_SCRIPT_REMAINS")
@@ -29,7 +33,8 @@ REVIEW_SYSTEM = (
     "Use ONLY the provided original-language dialogue and neighboring context. "
     "For every line assess factual entities and proper names, pronouns, numbers, "
     "negation/polarity, conditionals, time, causal relations, tone, omissions, "
-    "hallucinations and mistranslated terminology. These checks apply to ANY "
+    "hallucinations, mistranslated terminology, and missing or inverted "
+    "questions, answers, speech acts and rhetorical intent. These checks apply to ANY "
     "language, genre, or topic. Do not inject outside facts or a sports glossary. "
     "If the source audio transcript is ambiguous, mark as needs_review instead "
     "of guessing. Return ONLY JSON: "
@@ -110,6 +115,29 @@ def review_with_llm(segments, provider, video_metadata=None, batch_size=10):
                     "category":"REVIEW_UNAVAILABLE",
                     "detail":type(exc).__name__+": "+str(exc)[:200]
                 }],"source":s.text_src,"draft_vi":s.text_vi})
+    # Guard against a collapsed small-model reviewer which copies the same
+    # "error" verbatim across unrelated source sentences. Its verdicts
+    # MUST NOT be used to rewrite the video automatically.
+    from collections import Counter
+    frequencies = Counter(
+        (err["category"].casefold(),err["detail"].casefold().strip())
+        for row in records for err in row["issues"])
+    bad = {item for item,num in frequencies.items()
+           if num >= 3 and num >= len(segments) / 2}
+    unreliable_ids = []
+    if bad:
+        for row in records:
+            matches=[e for e in row["issues"]
+                     if (e["category"].casefold(),
+                         e["detail"].casefold().strip()) in bad]
+            if matches:
+                row["issues"]=[{
+                    "category":"REVIEW_UNRELIABLE_REPEAT",
+                    "detail":"Reviewer repeated the same purported error "
+                             "across unrelated source lines: "+matches[0]["detail"][:160]
+                }]
+                unreliable_ids.append(row["id"])
+                next(s for s in segments if s.index == row["id"]).needs_review=True
     issues = [r for r in records if r["issues"]]
     basics=structural_issues(segments)
     for s in segments:
@@ -121,6 +149,10 @@ def review_with_llm(segments, provider, video_metadata=None, batch_size=10):
         "llm_calls":calls,"reviewed_lines":len(records),
         "flagged_lines":len(set(r["id"] for r in issues)|set(basics)),
         "issues":issues,
+        "unreliable_reviewer_ids":unreliable_ids,
+        "auto_repair_eligible_ids":[r["id"] for r in issues
+            if all(e["category"] not in ("REVIEW_UNRELIABLE_REPEAT",
+                      "REVIEW_UNAVAILABLE") for e in r["issues"])],
         "structural_flags":[{"id":k,"reasons":v} for k,v in basics.items()],
         "status":"LLM_ADVISORY_REVIEW_ONLY",
         "independent_quality_verified":False,

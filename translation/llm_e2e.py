@@ -113,6 +113,9 @@ def revise_flagged_lines(segments,provider,max_attempts=2,flagged=None):
     if not 1 <= max_attempts <= 5:
         raise ValueError("Invalid revision count")
     original=flagged if flagged is not None else translation_quality_flags(segments)["issues"]
+    original=[item for item in original
+              if not any(e.get("category") in ("REVIEW_UNRELIABLE_REPEAT",
+                  "REVIEW_UNAVAILABLE") for e in item.get("issues",[]))]
     revised,diagnostics,calls=[],[],0
     ids={s.index for s in segments}
     for item in original:
@@ -136,6 +139,8 @@ def revise_flagged_lines(segments,provider,max_attempts=2,flagged=None):
                 "errors_to_correct":problems,
                 "context_only":context,
                 "prior_rejection_reasons":rejections[-2:],
+                "max_spoken_words":max(6,int((seg.end-seg.start)*4.2)),
+                "preserve_question":("?" in seg.text_src or "？" in seg.text_src),
             },ensure_ascii=False)
             system=(
                 "Bạn là biên dịch viên lồng tiếng Việt từ mọi ngôn ngữ. "
@@ -143,6 +148,8 @@ def revise_flagged_lines(segments,provider,max_attempts=2,flagged=None):
                 "Giữ nguyên mọi thực thể, người nói, quan hệ nhân vật, "
                 "số liệu, phủ định, điều kiện, sự kiện và sắc thái gốc. "
                 "Không tự thêm thông tin hoặc thuật ngữ từ video khác. "
+                "Nếu câu nguồn là câu hỏi, giữ ý hỏi (bao gồm câu hỏi tu từ). "
+                "Ưu tiên ngắn gọn đủ đọc theo mốc thời gian, không lặp câu. "
                 "Trả về đúng JSON {\"id\":0,\"text_vi\":\"...\"}. "
                 "ID phải đúng và nội dung tiếng Việt tự nhiên, dễ đọc."
             )
@@ -163,6 +170,10 @@ def revise_flagged_lines(segments,provider,max_attempts=2,flagged=None):
                 old=seg.text_vi
                 if proposed==seg.text_src or proposed==old:
                     raise ValueError("Unchanged or untranslated")
+                # Never lengthen a line until Edge-TTS needs severe time warp.
+                word_limit=max(6,int((seg.end-seg.start)*4.2))
+                if len(proposed.split())>word_limit:
+                    raise ValueError(f"Dubbing sentence too long: {len(proposed.split())} > {word_limit} words")
                 seg.text_vi=proposed
                 structural=structural_issues([seg])
                 if structural:

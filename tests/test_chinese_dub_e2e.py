@@ -158,3 +158,82 @@ def test_default_existing_llm_analysis_and_translation_calls():
     assert result["llm_call_counts"]["analyze"]>=1
     assert result["llm_call_counts"]["translate"]>=1
     assert seg[0].text_vi=="Xin chào."
+
+
+
+def test_questions_are_flagged_from_chinese_english_and_japanese():
+    from translation.quality import structural_issues
+    lines=[
+        Segment(index=0,start=0,end=3,speaker=0,source_lang="zh",
+                text_src="你喜欢足球吗？",text_vi="Bạn thích bóng đá."),
+        Segment(index=1,start=3,end=5,speaker=0,source_lang="en",
+                text_src="Do you agree?",text_vi="Bạn đồng ý."),
+        Segment(index=2,start=5,end=7,speaker=0,source_lang="ja",
+                text_src="そうですか？",text_vi="Là như vậy."),
+    ]
+    issues=structural_issues(lines)
+    assert all("QUESTION_FORM_LOST" in issues[s.index] for s in lines)
+    lines[0].text_vi="Bạn thích bóng đá không?"
+    assert 0 not in structural_issues(lines)
+
+
+def test_repeated_identical_llm_qa_verdict_is_quarantined():
+    from translation.quality import review_with_llm
+    import json
+    class Collapsed:
+        name="ollama"
+        model="tiny"
+        def _chat(self,sys,user):
+            item=json.loads(user)
+            return json.dumps({"reviews":[
+                {"id":s["id"],"issues":[{"category":"omission",
+                 "detail":"The same unrelated source line was omitted."}]}
+                for s in item["review_these"]]})
+    segs=[Segment(index=i,start=2*i,end=2*i+2,speaker=0,
+                  source_lang="en",text_src=f"Question {i}?",
+                  text_vi=f"Câu hỏi {i}?") for i in range(6)]
+    reviewed=review_with_llm(segs,Collapsed())
+    assert reviewed["flagged_lines"]==6
+    assert reviewed["auto_repair_eligible_ids"]==[]
+    assert reviewed["unreliable_reviewer_ids"]==list(range(6))
+    assert all(s.needs_review for s in segs)
+
+
+def test_question_revision_requires_question_and_audio_budget():
+    import json
+    from translation.llm_e2e import revise_flagged_lines
+    class Fake:
+        def __init__(self):
+            self.calls=0
+        def _chat(self,sys,user):
+            self.calls+=1
+            obj=json.loads(user)
+            if self.calls==1:
+                return json.dumps({"id":0,"text_vi":"Bạn thích bóng đá."},ensure_ascii=False)
+            return json.dumps({"id":0,"text_vi":"Bạn thích bóng đá không?"},ensure_ascii=False)
+    line=Segment(index=0,start=0,end=3,speaker=0,
+                 source_lang="zh",text_src="你喜欢足球吗？",
+                 text_vi="Bạn thích bóng đá.")
+    qa=revise_flagged_lines([line],Fake(),flagged=[
+       {"id":0,"reasons":["QUESTION_FORM_LOST"]}])
+    assert qa["llm_revision_calls"]==2
+    assert qa["unresolved"]==[]
+    assert line.text_vi.endswith("?")
+
+
+def test_overlong_translation_repair_is_rejected():
+    import json
+    from translation.llm_e2e import revise_flagged_lines
+    class Verbose:
+        def _chat(self,sys,user):
+            obj=json.loads(user)
+            return json.dumps({"id":obj["requested_id"],
+                "text_vi":"Rất dài và lặp đi lặp lại " * 10},
+                ensure_ascii=False)
+    line=Segment(index=0,start=0,end=2,speaker=0,
+                 source_lang="en",text_src="Why?",text_vi="Vì sao.")
+    q=revise_flagged_lines([line],Verbose(),flagged=[
+        {"id":0,"reasons":["QUESTION_FORM_LOST"]}],max_attempts=1)
+    assert q["revised"]==[]
+    assert "too long" in q["diagnostics"][0]["reason"]
+    assert line.text_vi=="Vì sao."
