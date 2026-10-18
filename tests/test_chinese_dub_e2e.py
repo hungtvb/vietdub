@@ -260,3 +260,25 @@ def test_source_script_guard_requires_full_vietnamese_for_chinese():
     assert len(result["revised"])==1
     assert structural_issues([seg])=={}
     assert "toàn cầu" in seg.text_vi
+
+
+def test_all_lines_flagged_by_small_reviewer_prevents_mass_rewrite():
+    import json
+    from translation.quality import review_with_llm
+    class UnreliableReviewer:
+        name="ollama"
+        model="tiny"
+        def _chat(self,sys,user):
+            req=json.loads(user)
+            return json.dumps({"reviews":[{
+                "id":row["id"],"issues":[{"category":"omission",
+                "detail":"This line is missing information no. "+str(row["id"])}]}
+                for row in req["review_these"]]})
+    segments=[Segment(index=i,start=i*2,end=i*2+2,speaker=0,
+                source_lang="en",text_src=f"Unrelated line {i}",
+                text_vi=f"Câu tiếng Việt {i}") for i in range(10)]
+    qa=review_with_llm(segments,UnreliableReviewer())
+    assert qa["status"]=="LLM_REVIEWER_UNRELIABLE"
+    assert qa["auto_repair_eligible_ids"]==[]
+    assert qa["flagged_lines"]==10
+    assert qa["human_approved"] is False

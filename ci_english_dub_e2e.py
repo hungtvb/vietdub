@@ -85,8 +85,9 @@ def main():
         seen={item["id"] for item in requested}
         basic=structural_issues(lines)
         for seg in lines:
-            if seg.index not in seen and "QUESTION_FORM_LOST" in basic.get(seg.index,[]):
-                requested.append({"id":seg.index,"reasons":["QUESTION_FORM_LOST"]})
+            reasons=basic.get(seg.index,[])
+            if seg.index not in seen and ("QUESTION_FORM_LOST" in reasons):
+                requested.append({"id":seg.index,"reasons":reasons})
         qa["llm_revision"]=revise_flagged_lines(lines,provider,flagged=requested)
         qa["translation_quality_flags"]=translation_quality_flags(lines)
         qa["final_llm_semantic_review"]=review_with_llm(

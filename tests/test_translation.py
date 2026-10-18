@@ -464,3 +464,57 @@ def test_normal_translation_does_not_impose_a_domain_glossary():
     t=FakeTranslator([json.dumps({"translations":[{"id":0,
                "text_vi":"Hợp đồng kéo dài sáu tháng."}]},ensure_ascii=False)])
     assert t.translate([seg],make_speakers())[0].needs_review is False
+
+
+def test_distinct_source_lines_do_not_silently_share_batch_translation():
+    import json
+    from project.schema import Segment
+    sources=["The post office closes at noon.",
+             "We will deliver the parcel on Tuesday.",
+             "Please sign the receipt before leaving.",
+             "Thank you for the update."]
+    lines=[Segment(index=i,start=i*3,end=i*3+2,speaker=0,
+                   text_src=source,source_lang="en")
+           for i,source in enumerate(sources)]
+    collapsed=json.dumps({"translations":[{"id":i,"text_vi":
+        ("Đến lấy bưu kiện tại quầy." if i<3 else "Cảm ơn.")
+        } for i in range(4)],ensure_ascii=False)
+    replacements=[
+        "Bưu điện đóng cửa lúc trưa.",
+        "Chúng tôi giao hàng vào thứ Ba.",
+        "Vui lòng ký vào biên nhận trước khi đi."]
+    replies=[collapsed]+[
+        json.dumps({"translations":[{"id":i,"text_vi":vi}]},
+                   ensure_ascii=False) for i,vi in enumerate(replacements)]
+    t=FakeTranslator(replies)
+    result=t.translate(lines,make_speakers())
+    assert [s.text_vi for s in result][:3]==replacements
+    assert result[3].text_vi=="Cảm ơn."
+    assert t.last_translation_collapse["suspicious_ids"]==[0,1,2]
+    assert t.last_translation_collapse["repaired_ids"]==[0,1,2]
+    assert all(s.needs_review for s in result[:3])
+
+
+def test_individual_translation_rejects_wrong_id_even_if_text_is_present():
+    from project.schema import Segment
+    line=Segment(index=7,start=0,end=2,speaker=0,text_src="Where are you?",
+                 source_lang="en")
+    wrong=json.dumps({"translations":[{"id":0,
+         "text_vi":"Bạn đang ở đâu?"}]},ensure_ascii=False)
+    correct=json.dumps({"translations":[{"id":7,
+         "text_vi":"Bạn đang ở đâu?"}]},ensure_ascii=False)
+    t=FakeTranslator([wrong,correct])
+    assert t._translate_single("Translate",[],line)=="Bạn đang ở đâu?"
+    assert t.calls==2
+
+
+def test_multiple_identical_translations_for_unrelated_sources_trigger_qa():
+    from project.schema import Segment
+    from translation.quality import structural_issues
+    sources=["Where is the train?","The doctor opened the window.",
+             "Please call the school."]
+    lines=[Segment(index=i,start=i*2,end=i*2+1.5,speaker=0,
+           source_lang="en",text_src=src,text_vi="Tàu đã đến.")
+           for i,src in enumerate(sources)]
+    assert all("REPEATED_TRANSLATION_DISTINCT_SOURCES" in
+               structural_issues(lines)[i] for i in range(3))

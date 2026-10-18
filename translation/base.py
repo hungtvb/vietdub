@@ -546,6 +546,48 @@ class BaseTranslator:
                     continue
                 out[s.index] = self._translate_single(system, rel_table, s)
 
+        # A small batched LLM can repeat the exact SAME Vietnamese sentence
+        # for many DIFFERENT source turns while keeping every JSON id valid.
+        # Re-translate these suspicious runs in individually scoped calls.
+        # Never consider successful JSON parsing sufficient semantic coverage.
+        self.last_translation_collapse = {
+            "suspicious_ids": [], "repaired_ids": [], "unresolved_ids": [],
+        }
+        affected = []
+        i = 0
+        while i < len(segments):
+            j = i + 1
+            same = (out.get(segments[i].index, "") or "").strip().casefold()
+            while (same and j < len(segments)
+                   and (out.get(segments[j].index, "") or "").strip().casefold() == same):
+                j += 1
+            if j - i >= 3 and len({
+                (seg.text_src or "").strip().casefold() for seg in segments[i:j]
+            }) >= 3:
+                affected.extend(range(i, j))
+            i = j
+        self.last_translation_collapse["suspicious_ids"] = [
+            segments[pos].index for pos in affected]
+        for pos in affected:
+            line = segments[pos]
+            old = out.get(line.index, "")
+            context = segments[max(0,pos-2):pos]
+            candidate = self._translate_single(system,rel_table,line,
+                                               context=context)
+            if (candidate.strip() and candidate.strip() != line.text_src.strip()
+                    and candidate.strip().casefold() != old.strip().casefold()):
+                out[line.index] = candidate
+                self.last_translation_collapse["repaired_ids"].append(line.index)
+            else:
+                self.last_translation_collapse["unresolved_ids"].append(line.index)
+            # Semantic correctness is still unverified after individual repair.
+            line.needs_review = True
+        if affected:
+            log.warning("LLM batch collapse: %d distinct source lines repeated; "
+                        "%d individually rewritten, %d unresolved; all need review",
+                        len(affected),
+                        len(self.last_translation_collapse["repaired_ids"]),
+                        len(self.last_translation_collapse["unresolved_ids"]))
         for s in segments:
             s.text_vi = out.get(s.index, s.text_src)
         # validate: số câu ra phải == số câu vào; câu nào rớt đại từ so với
@@ -649,22 +691,35 @@ class BaseTranslator:
         return {}
 
     def _translate_single(self, system: str, rel_table: List[str],
-                          seg: Segment) -> str:
+                          seg: Segment, context=None) -> str:
+        ctx_lines = [
+            f"[{previous.index}] {self._line_header(previous)}: "
+            f"{previous.text_src}"
+            for previous in (context or []) if previous.index != seg.index]
         user = prompts.build_translate_user(
             rel_table,
             [f"[{seg.index}] {self._line_header(seg)}"
              + (f" [lang={seg.source_lang}]" if seg.source_lang else "")
              + f": {seg.text_src}"],
-            self.proper_nouns)
-        for _ in range(2):
+            self.proper_nouns, ctx_lines or None)
+        # Keep original ID and do not accept another dialogue turn's output.
+        for attempt in range(3):
             try:
                 data = _parse_json(self._chat(system, user))
-                items = data.get("translations") or []
-                if items:
-                    return str(items[0].get("text_vi", seg.text_src))
-            except (ValueError, KeyError, TypeError):
-                continue
-        return seg.text_src  # last resort: keep source text
+                items = data.get("translations")
+                if (not isinstance(items, list) or len(items) != 1
+                        or not isinstance(items[0],dict)
+                        or type(items[0].get("id")) is not int
+                        or items[0]["id"] != seg.index):
+                    raise ValueError(f"Single translation must use source ID {seg.index}")
+                text = items[0].get("text_vi")
+                if not isinstance(text,str) or not text.strip():
+                    raise ValueError("Empty single-line translation")
+                return text.strip()
+            except (ValueError, KeyError, TypeError) as exc:
+                log.warning("Individual translation line %d attempt %d failed: %s",
+                            seg.index,attempt+1,str(exc)[:160])
+        return seg.text_src  # last resort; structural QA flags source echo
 
 
 def _parse_json(raw: str) -> dict:

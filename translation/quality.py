@@ -10,12 +10,30 @@ from project.schema import Segment
 def structural_issues(segments):
     """Deterministic source/translation integrity checks, no glossary."""
     result = {}
+    from collections import Counter
+    # Alert only, never silently rewrite real repeated lines. Requires three
+    # different source utterances yielding the same consecutive target.
+    collapse_ids = set()
+    cursor = 0
+    while cursor < len(segments):
+        nxt=cursor+1
+        same=(segments[cursor].text_vi or "").strip().casefold()
+        while (same and nxt<len(segments) and
+               (segments[nxt].text_vi or "").strip().casefold()==same):
+            nxt+=1
+        if nxt-cursor>=3 and len({
+                (s.text_src or "").strip().casefold()
+                for s in segments[cursor:nxt]})>=3:
+            collapse_ids.update(s.index for s in segments[cursor:nxt])
+        cursor=nxt
     for s in segments:
         issues = []
         source = (s.text_src or "").strip()
         target = (s.text_vi or "").strip()
         if not target or target == source:
             issues.append("EMPTY_OR_SOURCE_ECHO")
+        if s.index in collapse_ids:
+            issues.append("REPEATED_TRANSLATION_DISTINCT_SOURCES")
         # ASR punctuation is probabilistic. This is only a REVIEW WARNING:
         # a direct / rhetorical question can legitimately be indirect speech.
         if ("?" in source or "？" in source) and "?" not in target:
@@ -124,18 +142,29 @@ def review_with_llm(segments, provider, video_metadata=None, batch_size=10):
         for row in records for err in row["issues"])
     bad = {item for item,num in frequencies.items()
            if num >= 3 and num >= len(segments) / 2}
+    # Batch-review collapse is also unsafe if the small reviewer claims
+    # essentially EVERY unrelated utterance is wrong. In that case it is
+    # still valid as a manual-review alert, but NEVER as an automatic rewrite
+    # instruction: this previously corrupted an English 15-line interview.
+    high_flag_rate = (len(segments) >= 8 and
+                      sum(bool(row["issues"]) for row in records)
+                      >= len(segments)*.85)
     unreliable_ids = []
-    if bad:
+    if bad or high_flag_rate:
         for row in records:
             matches=[e for e in row["issues"]
                      if (e["category"].casefold(),
                          e["detail"].casefold().strip()) in bad]
-            if matches:
-                row["issues"]=[{
+            if matches or high_flag_rate:
+                # Retain original issues in the exported report for auditing,
+                # while barring an unreliable model from mass auto-rewriting.
+                row["issues"].append({
                     "category":"REVIEW_UNRELIABLE_REPEAT",
-                    "detail":"Reviewer repeated the same purported error "
-                             "across unrelated source lines: "+matches[0]["detail"][:160]
-                }]
+                    "detail":("Reviewer flagged nearly every unrelated turn"
+                              if high_flag_rate else
+                              "Repeated the same alleged error across unrelated "
+                              "source lines: "+matches[0]["detail"][:160])
+                })
                 unreliable_ids.append(row["id"])
                 next(s for s in segments if s.index == row["id"]).needs_review=True
     issues = [r for r in records if r["issues"]]
@@ -154,7 +183,8 @@ def review_with_llm(segments, provider, video_metadata=None, batch_size=10):
             if all(e["category"] not in ("REVIEW_UNRELIABLE_REPEAT",
                       "REVIEW_UNAVAILABLE") for e in r["issues"])],
         "structural_flags":[{"id":k,"reasons":v} for k,v in basics.items()],
-        "status":"LLM_ADVISORY_REVIEW_ONLY",
+        "status":("LLM_REVIEWER_UNRELIABLE" if unreliable_ids
+                  else "LLM_ADVISORY_REVIEW_ONLY"),
         "independent_quality_verified":False,
         "human_approved":False,
     }

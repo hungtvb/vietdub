@@ -85,6 +85,8 @@ def analyze_and_translate(segments, provider):
             "speakers": [s.to_dict() for s in speakers.values()],
             "analyzed_audience_count": sum(bool(s.audience) for s in segments),
             "translated_line_count": len(segments),
+            "batch_translation_collapse": getattr(
+                provider, "last_translation_collapse", {}),
             "untranslated_line_ids": [],
             "quality_human_verified": False
         }
@@ -103,7 +105,7 @@ def translation_quality_flags(segments):
             "is_ground_truth_score":False}
 
 
-def revise_flagged_lines(segments,provider,max_attempts=2,flagged=None):
+def revise_flagged_lines(segments,provider,max_attempts=3,flagged=None):
     """Revise QA-flagged utterances using SAME configured LLM.
 
     Unlike the previous implementation, no video-specific words or facts are
@@ -135,6 +137,7 @@ def revise_flagged_lines(segments,provider,max_attempts=2,flagged=None):
                 if s.index != idx]
             user=json.dumps({
                 "requested_id":idx,
+                "required_response_id":idx,
                 "source_language":seg.source_lang,
                 "source":seg.text_src,
                 "previous_draft_vi":seg.text_vi,
@@ -150,10 +153,13 @@ def revise_flagged_lines(segments,provider,max_attempts=2,flagged=None):
                 "Giữ nguyên mọi thực thể, người nói, quan hệ nhân vật, "
                 "số liệu, phủ định, điều kiện, sự kiện và sắc thái gốc. "
                 "Không tự thêm thông tin hoặc thuật ngữ từ video khác. "
+                "Không lặp bản dịch của câu trước hoặc câu sau. "
                 "Nếu câu nguồn là câu hỏi, giữ ý hỏi (bao gồm câu hỏi tu từ). "
                 "Ưu tiên ngắn gọn đủ đọc theo mốc thời gian, không lặp câu. "
-                "Trả về đúng JSON {\"id\":0,\"text_vi\":\"...\"}. "
-                "ID phải đúng và nội dung tiếng Việt tự nhiên, dễ đọc."
+                f"Trả về đúng JSON {{\"id\":{idx},\"text_vi\":\"...\"}}. "
+                f"ID BẮT BUỘC bằng {idx}, không phải id=0 nếu câu đang sửa không phải 0. "
+                "Nội dung tiếng Việt tự nhiên, dễ đọc, không tự thêm câu trả lời "
+                "vào một câu nguồn chỉ đang đặt câu hỏi."
             )
             calls+=1
             try:

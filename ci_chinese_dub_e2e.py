@@ -200,8 +200,10 @@ def main():
         from translation.quality import structural_issues
         basic_issues=structural_issues(segments)
         for seg in segments:
-            if seg.index not in seen_ids and "QUESTION_FORM_LOST" in basic_issues.get(seg.index,[]):
-                repairable.append({"id":seg.index,"reasons":["QUESTION_FORM_LOST"]})
+            reasons=basic_issues.get(seg.index,[])
+            if seg.index not in seen_ids and any(x in reasons for x in (
+                    "QUESTION_FORM_LOST","SOURCE_SCRIPT_REMAINS")):
+                repairable.append({"id":seg.index,"reasons":reasons})
         evidence["llm_revision"]=revise_flagged_lines(
             segments,llm_provider,flagged=repairable)
         evidence["translation_quality_flags"]=translation_quality_flags(segments)
