@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 import math
 import time
+import unicodedata
+from types import SimpleNamespace
 from pathlib import Path
 
 from project.schema import Segment
@@ -26,6 +28,45 @@ LANGUAGE_CODES = {value.casefold(): key for key, value in QWEN_LANGUAGES.items()
 
 class QwenASRError(RuntimeError):
     pass
+
+
+def restore_asr_punctuation(items, recognized_text):
+    """Map Qwen transcription punctuation onto its genuine timed tokens.
+
+    No word insertion or deletion: restore only if the source and aligned
+    Unicode alphanumeric sequences match exactly. This preserves speech-act
+    punctuation (?/？), clauses, and commas for all source languages.
+    """
+    def lexical_chars(value):
+        return "".join(ch for ch in value if
+                       not ch.isspace() and
+                       not unicodedata.category(ch).startswith("P"))
+
+    source=str(recognized_text or "")
+    span_list=list(items)
+    tokens=[str(getattr(it,"text","") or "") for it in span_list]
+    original=lexical_chars(source)
+    from_aligner="".join(lexical_chars(t) for t in tokens)
+    if not original or original != from_aligner:
+        return span_list, False
+    positions=[i for i,ch in enumerate(source)
+               if not ch.isspace() and
+               not unicodedata.category(ch).startswith("P")]
+    cursor=0
+    fixed=[]
+    for i,token in enumerate(tokens):
+        count=len(lexical_chars(token))
+        if count<=0:
+            return span_list,False
+        start=0 if i==0 else positions[cursor]
+        cursor+=count
+        end=positions[cursor] if cursor<len(positions) else len(source)
+        own_text=source[start:end].strip()
+        fixed.append(SimpleNamespace(
+            text=own_text,
+            start_time=getattr(span_list[i],"start_time"),
+            end_time=getattr(span_list[i],"end_time")))
+    return fixed,True
 
 
 def aligned_to_segments(items, *, duration, language="und", max_window=9.0):
@@ -174,7 +215,13 @@ class Qwen3ASRAdapter:
         detected = LANGUAGE_CODES.get(raw_lang)
         if detected is None:
             detected = self.language if self.language in QWEN_LANGUAGES else "und"
-        segments = aligned_to_segments(spans, duration=duration,
+        restored, matched=restore_asr_punctuation(
+            spans,str(getattr(entry,"text","") or ""))
+        self.last_evidence["punctuation_restored"]=matched
+        if not matched:
+            log.warning("Qwen transcript characters differ from forced aligner; "
+                        "cannot restore punctuation. Requires manual review.")
+        segments = aligned_to_segments(restored, duration=duration,
                                        language=detected)
         # This is always a single unknown speaker unless independent
         # diarization is applied and manually verified.
@@ -186,6 +233,7 @@ class Qwen3ASRAdapter:
             "audio_seconds": round(duration, 3),
             "inference_seconds": round(time.perf_counter()-started, 2),
             "timed_segment_count": len(segments),
+            "punctuation_restored": matched,
             "human_verified": False, "qa_status": "UNAPPROVED",
             "speaker_diarization_executed": False,
             "speaker_validation_warning": (

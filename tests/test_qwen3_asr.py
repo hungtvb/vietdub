@@ -137,3 +137,43 @@ def test_qwen_zero_duration_utterance_alone_is_rejected_not_guessed():
     items=[SimpleNamespace(text="好",start_time=1.0,end_time=1.0)]
     with pytest.raises(QwenASRError,match="zero total utterance duration"):
         aligned_to_segments(items,duration=2.0,language="zh")
+
+
+
+def test_restore_qwen_transcript_questions_without_fabricating_tokens():
+    from types import SimpleNamespace
+    from asr.qwen3_adapter import restore_asr_punctuation
+    words=[
+        SimpleNamespace(text="你",start_time=0.2,end_time=0.4),
+        SimpleNamespace(text="好",start_time=0.4,end_time=0.8),
+        SimpleNamespace(text="我",start_time=1.0,end_time=1.4),
+        SimpleNamespace(text="好",start_time=1.4,end_time=1.8),
+    ]
+    corrected,matched=restore_asr_punctuation(words,"你好？我好。")
+    assert matched
+    assert [w.text for w in corrected]==["你","好？","我","好。"]
+    assert [w.end_time for w in corrected]==[0.4,0.8,1.4,1.8]
+    segs=aligned_to_segments(corrected,duration=2,language="zh")
+    assert [s.text_src for s in segs]==["你好？","我好。"]
+
+
+def test_restore_qwen_punctuation_fails_closed_on_asr_aligner_disagreement():
+    from types import SimpleNamespace
+    from asr.qwen3_adapter import restore_asr_punctuation
+    words=[SimpleNamespace(text="好",start_time=.3,end_time=.5)]
+    corrected,matched=restore_asr_punctuation(words,"坏了？")
+    assert not matched
+    assert corrected[0].text=="好"
+
+
+def test_restore_english_question_and_commas_from_same_qwen_source():
+    from types import SimpleNamespace
+    from asr.qwen3_adapter import restore_asr_punctuation
+    words=[
+        SimpleNamespace(text="Hello",start_time=0.1,end_time=.5),
+        SimpleNamespace(text="are",start_time=.5,end_time=.7),
+        SimpleNamespace(text="you",start_time=.7,end_time=1),
+        SimpleNamespace(text="ready",start_time=1,end_time=1.3)]
+    result,ok=restore_asr_punctuation(words,"Hello, are you ready?")
+    assert ok
+    assert [x.text for x in result]==["Hello,","are","you","ready?"]
