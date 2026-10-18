@@ -32,6 +32,8 @@ DEFAULTS = {
     "translate_provider": "9router",      # "9router" | "ollama"
     "llm_temperature": 0.2,
     "translate_batch": 20,
+    "translation_semantic_review": True,  # optional LLM semantic QA for any video
+    "translation_review_batch": 10,
     # --- ASR ---
     "asr_engine": "auto",  # auto: zh -> FunASR, others -> Whisper
     "language_detection_model": "tiny",  # light acoustic language probe

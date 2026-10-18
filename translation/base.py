@@ -25,7 +25,7 @@ from typing import Dict, List, Tuple
 
 from project.schema import Segment, Speaker
 from translation import prompts
-from translation.chinese_semantic_guard import source_semantic_issues
+from translation.quality import structural_issues
 
 log = logging.getLogger("vietdub.translate")
 
@@ -555,14 +555,14 @@ class BaseTranslator:
             log.warning("dịch xong vẫn có %d câu text_vi rỗng: %s",
                         len(empty), empty[:10])
         self._flag_missing_pronouns(segments, speakers)
-        # Apply source-grounded review warnings to ALL normal VietDub videos,
-        # not only the dedicated Chinese CI. Never auto-approve LLM output.
-        semantic_warnings = source_semantic_issues(segments)  # linear scan per film
+        # Language-independent structural warnings. The LLM semantic review
+        # runs separately with video-specific context (see translation.quality).
+        basic_warnings = structural_issues(segments)
         for seg in segments:
-            issues = semantic_warnings.get(seg.index, [])
+            issues = basic_warnings.get(seg.index, [])
             if issues:
                 seg.needs_review = True
-                log.warning("Chinese source meaning review: id=%d, %s",
+                log.warning("Translation structural review id=%d: %s",
                             seg.index, ",".join(issues))
         return segments
 

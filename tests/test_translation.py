@@ -446,42 +446,21 @@ def test_translate_user_marks_context_not_to_translate():
 
 
 
-def test_normal_translation_flags_mistranslated_chinese_team_for_review():
-    from project.schema import Segment
-    segs=[
-        Segment(index=0,start=0,end=4,speaker=0,
-                text_src="中国。"),
-        Segment(index=1,start=4.02,end=8,speaker=0,
-                text_src="女足拿了亚洲杯冠军"),
-    ]
-    canned=json.dumps({"translations":[
-        {"id":0,"text_vi":"Trung Quốc."},
-        {"id":1,"text_vi":"Đội bóng nữ Việt Nam vô địch Asian Cup."},
-    ]}, ensure_ascii=False)
-    t=FakeTranslator([canned])
-    res=t.translate(segs,make_speakers())
-    assert res[1].needs_review is True
-    assert res[0].needs_review is False
 
-
-def test_normal_translation_flags_lost_negation_even_if_tournament_mentioned():
+def test_normal_translation_flags_source_echo_for_review():
     from project.schema import Segment
-    segs=[Segment(index=0,start=0,end=6,speaker=0,
-                  text_src="拿了冠军不一定是世界顶级")]
-    canned=json.dumps({"translations":[{
-        "id":0,"text_vi":"Chúng tôi vô địch nên đang ở vị trí hàng đầu thế giới."}]},
-        ensure_ascii=False)
-    t=FakeTranslator([canned])
-    out=t.translate(segs,make_speakers())
+    segment=Segment(index=0,start=0,end=3,speaker=0,
+                    text_src="你好",source_lang="zh")
+    t=FakeTranslator([json.dumps({"translations":[{"id":0,"text_vi":"你好"}]},
+                                      ensure_ascii=False)])
+    out=t.translate([segment],make_speakers())
     assert out[0].needs_review is True
 
 
-def test_normal_translation_english_is_unaffected_by_chinese_semantic_guards():
+def test_normal_translation_does_not_impose_a_domain_glossary():
     from project.schema import Segment
-    segs=[Segment(index=0,start=0,end=6,speaker=0,
-                  source_lang="en",text_src="We might win the tournament")]
-    canned=json.dumps({"translations":[{"id":0,
-        "text_vi":"Chúng tôi có thể giành chức vô địch."}]},
-        ensure_ascii=False)
-    t=FakeTranslator([canned])
-    assert t.translate(segs,make_speakers())[0].needs_review is False
+    seg=Segment(index=0,start=0,end=3,speaker=0,
+                text_src="The contract lasts six months.",source_lang="en")
+    t=FakeTranslator([json.dumps({"translations":[{"id":0,
+               "text_vi":"Hợp đồng kéo dài sáu tháng."}]},ensure_ascii=False)])
+    assert t.translate([seg],make_speakers())[0].needs_review is False

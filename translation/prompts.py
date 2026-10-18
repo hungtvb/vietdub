@@ -125,9 +125,12 @@ def translate_system_with_names(proper_nouns: list[str] | None = None,
         "If code-switching or names are ambiguous, preserve evidence for review.\n"
     )
     chinese_guide = (
-        "\nCHINESE-SPECIFIC: handle both Simplified and Traditional forms, "
-        "Chinese kinship terms, idioms, honorifics, particles, and consistent "
-        "Han-Viet/culturally established character names. For 中国女足 say Chinese women's football team; 亚洲杯 is Asian Cup/Cúp châu Á, NEVER Southeast Asia or ASEAN; 追赶 means catch up with others. 不一定 means NOT NECESSARILY: winning a title does not itself prove top-level Asian or world ranking. 中国女足 is the Chinese women\u0027s team, not Vietnam. No untranslated Hanzi in Vietnamese.\n"
+        "\nCHINESE-SPECIFIC: handle Simplified and Traditional Chinese, "
+        "idioms, names, honorifics, particles, time expressions and "
+        "implicit subjects accurately. Ground entities and terminology in "
+        "THIS video's source transcript and context. Preserve negation, "
+        "causality, numbers, and roles. Never import names or assumptions "
+        "from an unrelated video. Translate Chinese text into Vietnamese.\n"
     ) if source == "zh" or mixed else ""
     return (TRANSLATE_SYSTEM + language_guide + chinese_guide
             + video_context_block(video_metadata)

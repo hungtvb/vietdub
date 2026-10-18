@@ -91,167 +91,97 @@ def analyze_and_translate(segments, provider):
         provider._chat = original_chat
 
 
-def chinese_translation_flags(segments):
-    """Cheap review warnings, not an independent semantic-accuracy score."""
-    terminology = (
-        ("亚洲杯", ("asian cup", "cúp châu á")),
-        ("中国女足", ("đội tuyển nữ trung quốc", "bóng đá nữ trung quốc",
-                  "đội tuyển bóng đá nữ trung quốc")),
-        ("冠军", ("vô địch", "quán quân")),
-        ("追赶", ("bắt kịp", "đuổi kịp", "theo kịp")),
-    )
-    flags = []
-    for seg in segments:
-        issues = []
-        lower = seg.text_vi.casefold()
-        if any("\u3400" <= ch <= "\u9fff" for ch in seg.text_vi):
-            issues.append("CJK_REMAINS_IN_VI")
-        for src, choices in terminology:
-            if src in seg.text_src and not any(t in lower for t in choices):
-                issues.append("MISSING_TRANSLATION_TERM:" + src)
-        if issues:
-            flags.append({"id": seg.index, "reasons": issues,
-                          "source_zh": seg.text_src,
-                          "draft_vi": seg.text_vi})
-    # Add cross-line entity facts and explicit polarity checks from source.
-    semantic = source_semantic_issues(segments)
-    by_id = {row["id"]: row for row in flags}
-    for seg in segments:
-        reasons = semantic.get(seg.index, [])
-        if not reasons:
-            continue
-        row = by_id.get(seg.index)
-        if row is None:
-            row = {"id": seg.index, "reasons": [],
-                   "source_zh": seg.text_src, "draft_vi": seg.text_vi}
-            by_id[seg.index] = row
-            flags.append(row)
-        row["reasons"] += [r for r in reasons if r not in row["reasons"]]
-    return {"review_required": True, "flagged_line_count": len(flags),
-            "issues": flags, "is_ground_truth_score": False}
+def translation_quality_flags(segments):
+    """Video-agnostic structural issues; not an accuracy score."""
+    from translation.quality import structural_issues
+    issues=structural_issues(segments)
+    return {"review_required":True,"flagged_line_count":len(issues),
+            "issues":[{"id":s.index,"reasons":issues[s.index],
+                       "source":s.text_src,"draft_vi":s.text_vi}
+                      for s in segments if s.index in issues],
+            "is_ground_truth_score":False}
 
 
-def revise_flagged_lines(segments, provider, max_attempts=4):
-    """Targeted, auditable same-LLM corrections, one source line per request.
+def revise_flagged_lines(segments,provider,max_attempts=2,flagged=None):
+    """Revise QA-flagged utterances using SAME configured LLM.
 
-    Small LLMs often fail batched JSON rewrites. Keep original source IDs and
-    reject malformed, untranslated, or glossary-incomplete revisions. These
-    checks are heuristics, not independent semantic or human approval.
+    Unlike the previous implementation, no video-specific words or facts are
+    embedded in the prompt. Review issues are derived from this video's
+    source/draft pair and surrounding context by the QA model.
     """
     from translation.base import _parse_json
-
+    from translation.quality import structural_issues
     if not 1 <= max_attempts <= 5:
-        raise ValueError("max_attempts must be between 1 and 5")
-    initial = chinese_translation_flags(segments)["issues"]
-    revised, attempts_log, calls = [], [], 0
-    guidance = {
-        "亚洲杯": "Asian Cup / Cúp châu Á, not a Southeast Asia tournament",
-        "中国女足": "đội tuyển bóng đá nữ Trung Quốc",
-        "冠军": "giành chức vô địch, chức vô địch",
-        "追赶": "bắt kịp, đuổi kịp, theo kịp đối thủ",
-        "中国女足": "đội tuyển nữ Trung Quốc, không phải Việt Nam",
-        "不一定": "không có nghĩa là / không nhất thiết / không đồng nghĩa",
-        "顶级": "đẳng cấp hàng đầu châu Á hoặc thế giới",
-    }
-    for issue in initial:
-        sid = issue["id"]
-        pos = next(i for i, seg in enumerate(segments) if seg.index == sid)
-        seg = segments[pos]
-        # Lock ALL key source meanings on EVERY repair, even those already
-        # translated correctly. Otherwise repairing a missing negation can
-        # silently drop the championship fact or the top-level comparison.
-        required = {zh: hint for zh, hint in guidance.items()
-                    if zh in (seg.text_src or "")}
-        if ("CHINA_TEAM_NAME_MISSING" in issue["reasons"] or
-                "COUNTRY_CONTRADICTION:中国女足" in issue["reasons"]):
-            required["中国女足"] = guidance["中国女足"]
-        conditional_claim = (
-            "Dù giành chức vô địch, điều đó không có nghĩa là đã đạt đẳng cấp hàng đầu."
-            if all(term in seg.text_src for term in ("冠军", "不一定", "顶级"))
-            else "")
-        rejection_reasons = []
-        for attempt in range(1, max_attempts + 1):
-            source = {
-                "id": sid,
-                "chinese_to_translate": seg.text_src,
-                "current_vietnamese_draft": seg.text_vi,
-                "errors_to_fix": issue["reasons"],
-                "required_meanings": required,
-                "preserve_all_of_these_meanings": True,
-                "source_grounded_conditional_example": conditional_claim,
-                "previous_rejection_reasons": rejection_reasons[-2:],
-                "translation_constraints": ["Keep the team nationality across neighboring lines.",
-                                            "Do NOT reverse 不一定 (not necessarily): champion does not imply world class."],
-                "neighboring_context_not_to_translate": [
-                    {"id": x.index, "zh": x.text_src, "vi_draft": x.text_vi}
-                    for x in segments[max(0, pos-2): min(len(segments), pos+3)]
-                    if x.index != sid
-                ],
-            }
-            system = (
-                "Bạn là biên dịch viên lồng tiếng Trung sang Việt. "
-                "Hãy sửa đúng MỘT câu bị lỗi. Nguồn tiếng Trung và nghĩa bắt "
-                "buộc nằm trong dữ liệu JSON; không bỏ sót thông tin, "
-                "đổi tên giải đấu hay chế thêm tình tiết. "
-                "Giữ đúng quốc tịch đội bóng giữa các câu liên tiếp: Trung Quốc không phải Việt Nam. "
-                "Nếu nguyên tác nói giành chức vô địch KHÔNG đồng nghĩa đẳng cấp hàng đầu, "
-                "phải giữ nghĩa phủ định; KHÔNG biến thành mục tiêu giành chức vô địch. "
-                "Phải viết toàn bộ bằng tiếng Việt, ngắn gọn và tự nhiên. "
-                "KHÔNG dịch riêng các câu neighboring_context. "
-                "Trả về đúng JSON object gồm id là số và text_vi là chuỗi, "
-                "ví dụ: {\"id\":7,\"text_vi\":\"Đội vẫn cần cố gắng hơn.\"}. "
-                "Hãy giữ TẤT CẢ các ý đã có trong required_meanings, "
-                "kể cả ý đã đúng ở bản dịch cũ; không được sửa được ý này "
-                "nhưng làm rơi ý khác. "
-                "Không dùng markdown hay trả thêm trường giải thích."
+        raise ValueError("Invalid revision count")
+    original=flagged if flagged is not None else translation_quality_flags(segments)["issues"]
+    revised,diagnostics,calls=[],[],0
+    ids={s.index for s in segments}
+    for item in original:
+        idx=item["id"]
+        if idx not in ids:
+            raise ValueError("Unknown review issue source ID")
+        pos=next(i for i,s in enumerate(segments) if s.index==idx)
+        seg=segments[pos]
+        problems=item.get("issues") or item.get("reasons") or []
+        rejections=[]
+        for attempt in range(1,max_attempts+1):
+            context=[
+                {"id":s.index,"source":s.text_src,"draft_vi":s.text_vi}
+                for s in segments[max(0,pos-2):min(len(segments),pos+3)]
+                if s.index != idx]
+            user=json.dumps({
+                "requested_id":idx,
+                "source_language":seg.source_lang,
+                "source":seg.text_src,
+                "previous_draft_vi":seg.text_vi,
+                "errors_to_correct":problems,
+                "context_only":context,
+                "prior_rejection_reasons":rejections[-2:],
+            },ensure_ascii=False)
+            system=(
+                "Bạn là biên dịch viên lồng tiếng Việt từ mọi ngôn ngữ. "
+                "Hãy sửa đúng MỘT câu theo bản gốc, ngữ cảnh và lỗi QA. "
+                "Giữ nguyên mọi thực thể, người nói, quan hệ nhân vật, "
+                "số liệu, phủ định, điều kiện, sự kiện và sắc thái gốc. "
+                "Không tự thêm thông tin hoặc thuật ngữ từ video khác. "
+                "Trả về đúng JSON {\"id\":0,\"text_vi\":\"...\"}. "
+                "ID phải đúng và nội dung tiếng Việt tự nhiên, dễ đọc."
             )
-            if attempt > 1:
-                system += " Lần trước không hợp lệ, phải sửa đầy đủ các lỗi được chỉ ra."
-            calls += 1
+            calls+=1
             try:
-                raw = provider._chat(system, json.dumps(source, ensure_ascii=False))
-                obj = _parse_json(raw)
-                # Accept BaseTranslator envelope with EXACTLY one translation,
-                # but do not allow missing IDs, extras, or unexpected returns.
-                if "translations" in obj:
-                    items = obj["translations"]
-                    if not isinstance(items, list) or len(items) != 1:
-                        raise ValueError("Need exactly one translated line")
-                    obj = items[0]
-                if (not isinstance(obj, dict)
-                        or type(obj.get("id")) is not int or obj["id"] != sid):
-                    raise ValueError("Invalid/mismatched source ID")
-                if not isinstance(obj.get("text_vi"), str):
-                    raise ValueError("Vietnamese string text_vi required")
-                proposal = " ".join(obj["text_vi"].split()).strip()
-                if not proposal or proposal == seg.text_src:
-                    raise ValueError("Empty or original Chinese text")
-                old = seg.text_vi
-                if proposal == old:
-                    raise ValueError("The LLM returned the unchanged draft")
-                seg.text_vi = proposal
-                flagged = [item for item in chinese_translation_flags(segments)["issues"]
-                           if item["id"] == sid]
-                if flagged:
-                    seg.text_vi = old
-                    raise ValueError("Still flagged: " + ",".join(flagged[0]["reasons"]))
-                revised.append({"id":sid, "before":old, "after":proposal,
+                data=_parse_json(provider._chat(system,user))
+                if "translations" in data:
+                    arr=data["translations"]
+                    if not isinstance(arr,list) or len(arr)!=1:
+                        raise ValueError("Exactly one revised line required")
+                    data=arr[0]
+                if not isinstance(data,dict) or type(data.get("id")) is not int or data["id"] != idx:
+                    raise ValueError("Mismatched ID")
+                val=data.get("text_vi")
+                if not isinstance(val,str) or not val.strip():
+                    raise ValueError("Empty revision")
+                proposed=" ".join(val.split())
+                old=seg.text_vi
+                if proposed==seg.text_src or proposed==old:
+                    raise ValueError("Unchanged or untranslated")
+                seg.text_vi=proposed
+                structural=structural_issues([seg])
+                if structural:
+                    seg.text_vi=old
+                    raise ValueError("Structural QA: "+str(structural[idx]))
+                revised.append({"id":idx,"before":old,"after":proposed,
                                 "human_verified":False})
-                attempts_log.append({"id":sid, "attempt":attempt,
-                                     "accepted":True, "reason":"HEURISTIC_QA_CLEAR"})
+                diagnostics.append({"id":idx,"attempt":attempt,
+                                    "accepted":True,
+                                    "reason":"STRUCTURAL_QA_ONLY"})
                 break
-            except Exception as err:
-                message = type(err).__name__+": "+str(err)[:200]
-                rejection_reasons.append(message)
-                attempts_log.append({"id":sid, "attempt":attempt,
-                                     "accepted":False, "reason":message})
-    remaining = chinese_translation_flags(segments)["issues"]
-    return {
-        "llm_revision_calls": calls,
-        "initial_flagged_count": len(initial),
-        "revised": revised,
-        "diagnostics": attempts_log,
-        "unresolved": remaining,
-        "method": "individual_source_line_revision",
-        "human_approved": False,
-    }
+            except Exception as exc:
+                reason=type(exc).__name__+": "+str(exc)[:200]
+                rejections.append(reason)
+                diagnostics.append({"id":idx,"attempt":attempt,
+                                    "accepted":False,"reason":reason})
+    return {"llm_revision_calls":calls,"initial_flagged_count":len(original),
+            "revised":revised,"diagnostics":diagnostics,
+            "unresolved":translation_quality_flags(segments)["issues"],
+            "method":"contextual_per_line_revision",
+            "human_approved":False}

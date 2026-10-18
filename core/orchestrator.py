@@ -547,6 +547,26 @@ class Orchestrator:
         segments, used = translate_with_fallback(
             providers, segments, speakers, skip_analyze=analyze_done,
             video_metadata=video_metadata)
+        # One generic semantic comparison pass via the same configured
+        # provider. Failed LLM QA is marked unresolved, never auto-approved.
+        if self.settings.get("translation_semantic_review", True):
+            from translation.quality import review_with_llm
+            import json
+            provider = next((p for p in providers if p.name == used), None)
+            if provider is not None:
+                qa=review_with_llm(
+                    segments,provider,video_metadata=video_metadata,
+                    batch_size=int(self.settings.get("translation_review_batch",10)))
+            else:
+                for seg in segments:
+                    seg.needs_review = True
+                qa={"status":"REVIEW_UNAVAILABLE",
+                    "reason":"Translation used provider without LLM reviewer",
+                    "human_approved":False}
+            (job.stages_dir/"translate_qa.json").write_text(
+                json.dumps(qa,ensure_ascii=False,indent=2),encoding="utf-8")
+            self.logger.info("semantic QA: %s, %s lines flagged",
+                             qa["status"],qa.get("flagged_lines","unknown"))
         pio.save_segments(job.job_dir, "translate", segments)
         self.logger.info("dịch xong bằng %s: %d câu", used, len(segments))
 

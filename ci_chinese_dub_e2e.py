@@ -16,8 +16,9 @@ import soundfile as sf
 from project.schema import Segment
 from asr.dub_grouping import group_for_vietnamese_dub
 from tts.edge_tts import EdgeTTS
-from translation.llm_e2e import (analyze_and_translate, chinese_translation_flags,
+from translation.llm_e2e import (analyze_and_translate, translation_quality_flags,
                                 revise_flagged_lines)
+from translation.quality import review_with_llm
 from media.subs import write_srt
 from media.mix import mix
 
@@ -185,22 +186,26 @@ def main():
                                       "original_id_mapping": source_mapping,
                                       "human_verified": False},
                         translation=analyze_and_translate(segments, llm_provider))
-        evidence["llm_revision"] = revise_flagged_lines(segments, llm_provider)
-        evidence["translation_quality_flags"] = chinese_translation_flags(segments)
+        pre_review=review_with_llm(segments,llm_provider,
+                                   video_metadata=evidence["translation"]["video_context"])
+        evidence["initial_llm_semantic_review"]=pre_review
+        evidence["llm_revision"]=revise_flagged_lines(
+            segments,llm_provider,flagged=pre_review["issues"])
+        evidence["translation_quality_flags"]=translation_quality_flags(segments)
+        evidence["final_llm_semantic_review"]=review_with_llm(
+            segments,llm_provider,
+            video_metadata=evidence["translation"]["video_context"])
         evidence["translation"]["llm_call_counts"]["revision"] = evidence["llm_revision"]["llm_revision_calls"]
         evidence["translation_review_status"] = ("FLAGGED_NEEDS_REVIEW"
             if evidence["translation_quality_flags"]["flagged_line_count"]
             else "HEURISTICS_CLEAR_HUMAN_REVIEW_REQUIRED")
         evidence["llm_analysis_executed"] = True
         evidence["llm_translation_executed"] = True
-        blocking = {"CJK_REMAINS_IN_VI", "COUNTRY_CONTRADICTION:中国女足",
-                    "CHINA_TEAM_NAME_MISSING", "NEGATION_SCOPE_LOST:不一定",
-                    "TOP_LEVEL_RANKING_MISSING:顶级"}
-        critical = [r for r in evidence["translation_quality_flags"]["issues"]
-                    if blocking.intersection(r["reasons"])]
-        if critical:
-            raise RuntimeError("Critical source meaning remains incorrect: " +
-                               json.dumps(critical, ensure_ascii=False)[:500])
+        # Only structural failures block a preview. LLM semantic checks are
+        # advisory: unresolved issues keep the output UNAPPROVED for review.
+        if any("EMPTY_OR_SOURCE_ECHO" in x["reasons"]
+               for x in evidence["translation_quality_flags"]["issues"]):
+            raise RuntimeError("Untranslated or empty Vietnamese line")
         EdgeTTS(voice_female=VI_VOICE, concurrency=2, retries=2).synthesize(
             segments, out / "tts")
         evidence["tts"] = fit_voices(segments, out)
@@ -217,7 +222,7 @@ def main():
             "speed_review": evidence["tts"]["speed_review_count"],
             "possible_chinese_untranslated": len(
                 evidence["translation_quality_flags"]["issues"]),
-            "llm_translation_flags": evidence["translation_quality_flags"]["flagged_line_count"]}
+            "llm_translation_flags": evidence["final_llm_semantic_review"]["flagged_lines"]}
         (out / "review_lines.json").write_text(json.dumps(
             [s.to_dict() for s in segments], ensure_ascii=False, indent=2),
             encoding="utf-8")
