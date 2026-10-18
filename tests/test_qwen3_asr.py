@@ -56,7 +56,7 @@ def test_qwen_rejects_invalid_timestamps_and_silent_output():
         aligned_to_segments(items,duration=6)
     with pytest.raises(QwenASRError,match="no aligned"):
         aligned_to_segments([],duration=3)
-    with pytest.raises(ValueError,match="aligner"):
+    with pytest.raises(ValueError,match="ForcedAligner"):
         Qwen3ASRAdapter(aligner="")
 
 
