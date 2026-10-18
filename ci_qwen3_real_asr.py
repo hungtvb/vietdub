@@ -45,6 +45,8 @@ def main():
             raise ValueError("Timestamp invalid or outside clip")
         if not any(s.text_src.strip() for s in segments):
             raise ValueError("Empty Qwen-ASR output")
+        from asr.coverage import audit_unaligned_audio
+        info["audio_coverage_review"]=audit_unaligned_audio(args.wav,segments)
         info["segments"]=len(segments)
         info["transcript"]="".join(s.text_src for s in segments)
         info["qa"]=runner.last_evidence

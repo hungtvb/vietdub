@@ -73,6 +73,7 @@ jobs:
           assert lines and len(lines)==qa["segments"]
           assert all(0<=s["start"]<s["end"]<=qa["source_seconds"]+0.2 for s in lines)
           assert all(s["needs_review"] and s["text_src"] for s in lines)
+          assert qa["audio_coverage_review"]["speech_accuracy_measured"] is False
           print("REAL_QWEN3_ASR_SOURCE_TIMESTAMP_QA_PASS",len(lines))
           PY
       - name: Upload real Qwen ASR evidence even if model fails

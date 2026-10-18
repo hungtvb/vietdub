@@ -177,3 +177,37 @@ def test_restore_english_question_and_commas_from_same_qwen_source():
     result,ok=restore_asr_punctuation(words,"Hello, are you ready?")
     assert ok
     assert [x.text for x in result]==["Hello,","are","you","ready?"]
+
+
+
+def test_asr_audio_coverage_warns_on_untranscribed_active_tail(tmp_path):
+    from asr.coverage import audit_unaligned_audio
+    import numpy as np
+    import soundfile as sf
+    from project.schema import Segment
+    sr=16000
+    samples=np.zeros(sr*5,dtype=np.float32)
+    t=np.arange(sr*2)/sr
+    samples[3*sr:5*sr]=.20*np.sin(2*np.pi*220*t)
+    source=tmp_path/"tail.wav"
+    sf.write(source,samples,sr)
+    segs=[Segment(index=0,start=.1,end=2.0,speaker=0,text_src="你好")]
+    report=audit_unaligned_audio(source,segs)
+    assert report["flagged_count"]>=1
+    assert report["speech_accuracy_measured"] is False
+    assert any(x["possible_missing_speech"] and x["start"]>=2.0
+               for x in report["uncovered"])
+
+
+def test_asr_coverage_does_not_confuse_silence_with_missing_speech(tmp_path):
+    from asr.coverage import audit_unaligned_audio
+    import numpy as np
+    import soundfile as sf
+    from project.schema import Segment
+    sr=16000
+    wav=tmp_path/"quiet.wav"
+    samples=np.zeros(sr*4,dtype=np.float32)
+    sf.write(wav,samples,sr)
+    segs=[Segment(index=0,start=.1,end=2.0,speaker=0,text_src="Hello")]
+    report=audit_unaligned_audio(wav,segs)
+    assert report["flagged_count"]==0
