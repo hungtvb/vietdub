@@ -63,7 +63,10 @@ def aligned_to_segments(items, *, duration, language="und", max_window=9.0):
         if not all(math.isfinite(x) for x in (start, end)):
             raise QwenASRError("Qwen timestamps are nonfinite")
         if start < -0.05 or start >= end or end > duration + .2:
-            raise QwenASRError("Qwen word timestamps escaped audio duration")
+            raise QwenASRError(
+                f"Qwen word timestamps escaped audio duration: "
+                f"word={token[:30]!r} start={start:.3f} "
+                f"end={end:.3f} audio_duration={duration:.3f}")
         if start < previous_end - .15:
             raise QwenASRError("Qwen word timestamps overlap/out of order")
         start = max(0.0, start)
@@ -143,7 +146,19 @@ class Qwen3ASRAdapter:
         if not isinstance(result, (list, tuple)) or len(result) != 1:
             raise QwenASRError("Qwen ASR expected one result per input WAV")
         entry = result[0]
+        self.last_evidence = {
+            "status": "ALIGNMENT_REVIEW_IN_PROGRESS",
+            "raw_transcript": str(getattr(entry,"text","") or "")[:2500],
+            "detected_language": str(getattr(entry,"language","") or ""),
+            "source_duration": round(duration,3)}
         spans = getattr(entry.time_stamps, "items", None) if entry.time_stamps else None
+        if isinstance(spans,(list,tuple)):
+            self.last_evidence["raw_aligned_count"]=len(spans)
+            self.last_evidence["raw_aligned_preview"]=[
+                {"word":str(getattr(w,"text",""))[:60],
+                 "start":getattr(w,"start_time",None),
+                 "end":getattr(w,"end_time",None)}
+                for w in (list(spans[:8])+list(spans[-8:]))]
         if not isinstance(spans, (list, tuple)) or not spans:
             raise QwenASRError(
                 "Qwen returned text without real aligned timestamps; "

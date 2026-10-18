@@ -57,6 +57,8 @@ def main():
         print("REAL_QWEN3_ASR_TIMESTAMPS_OK",len(segments),
               "segments, secs",duration,flush=True)
     except Exception as exc:
+        if "runner" in locals():
+            info["qa"]=runner.last_evidence
         info["status"]="FAILED"
         info["error"]=type(exc).__name__+": "+str(exc)[:500]
         raise
