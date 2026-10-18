@@ -9,7 +9,6 @@ import hashlib
 import json
 from collections import Counter
 from project.schema import Speaker
-from translation.chinese_semantic_guard import source_semantic_issues
 
 def _fingerprint(segments):
     payload = [{"id": s.index, "speaker": s.speaker, "start": s.start,
