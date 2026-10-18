@@ -231,7 +231,21 @@ class Orchestrator:
             "Định tuyến ASR: %s | ngôn ngữ=%s | lý do=%s",
             route.engine, route.language, route.reason)
 
-        if route.engine == "whisper_pyannote":
+        if route.engine == "qwen3_asr":
+            from asr.qwen3_adapter import Qwen3ASRAdapter
+            adapter = Qwen3ASRAdapter(
+                model=settings.get("qwen_asr_model", "Qwen/Qwen3-ASR-0.6B"),
+                aligner=settings.get("qwen_asr_aligner",
+                                     "Qwen/Qwen3-ForcedAligner-0.6B"),
+                device=settings.get("qwen_asr_device", "auto"),
+                language=requested_lang)
+            segments = adapter.transcribe(wav)
+            quality = dict(adapter.last_evidence)
+            language_evidence = language.to_dict()
+            job.project.detected_src_lang = quality.get("language_detected", "und")
+            job.project.language_review_required = True
+            self.logger.info("Qwen3-ASR: %d đoạn thoại (cần duyệt)",len(segments))
+        elif route.engine == "whisper_pyannote":
             from asr.whisper_pyannote_adapter import WhisperPyannoteAdapter
             adapter = WhisperPyannoteAdapter(
                 model=settings.get("whisper_model", "large-v3-turbo"),

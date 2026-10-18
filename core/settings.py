@@ -35,7 +35,10 @@ DEFAULTS = {
     "translation_semantic_review": True,  # optional LLM semantic QA for any video
     "translation_review_batch": 10,
     # --- ASR ---
-    "asr_engine": "auto",  # auto: zh -> FunASR, others -> Whisper
+    "asr_engine": "auto",  # auto: zh -> FunASR, others -> Whisper; Qwen is opt-in
+    "qwen_asr_model": "Qwen/Qwen3-ASR-0.6B",
+    "qwen_asr_aligner": "Qwen/Qwen3-ForcedAligner-0.6B",
+    "qwen_asr_device": "auto",  # auto | cpu | cuda
     "language_detection_model": "tiny",  # light acoustic language probe
     "chinese_asr_min_confidence": 0.70,  # below threshold use multilingual Whisper + QA
     "whisper_model": "large-v3-turbo",

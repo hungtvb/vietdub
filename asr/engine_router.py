@@ -24,7 +24,7 @@ def select_asr_engine(decision: LanguageDecision, requested_engine="auto",
                       *, chinese_min_confidence=.70):
     engine = (requested_engine or "auto").strip().lower()
     primary = normalize_language(decision.primary)
-    if engine not in {"auto", "funasr", "whisper_pyannote"}:
+    if engine not in {"auto", "funasr", "whisper_pyannote", "qwen3_asr"}:
         raise ValueError(f"Unknown ASR engine selection: {engine}")
     if engine == "funasr":
         if normalize_language(decision.requested) != "zh":
@@ -32,6 +32,10 @@ def select_asr_engine(decision: LanguageDecision, requested_engine="auto",
                              "video là 'zh' để ép FunASR, hoặc dùng ASR tự động.")
         return ASRRoute("funasr", "zh", "manual",
                         "User forced FunASR for Chinese", False, True, True)
+    if engine == "qwen3_asr":
+        return ASRRoute("qwen3_asr", primary, "manual",
+                        "User selected Qwen3-ASR local with forced alignment",
+                        True, True, False)
     if engine == "whisper_pyannote":
         return ASRRoute("whisper_pyannote", primary, "manual",
                         "User requested multilingual Whisper",

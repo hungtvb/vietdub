@@ -118,6 +118,8 @@ class SettingsDialog(QDialog):
         self.asr_engine.addItem("FunASR — chỉ dùng khi chọn tiếng Trung", "funasr")
         self.asr_engine.addItem(
             "Whisper + pyannote + WhisperX — đa ngôn ngữ", "whisper_pyannote")
+        self.asr_engine.addItem(
+            "Qwen3-ASR + ForcedAligner — đa ngôn ngữ (local)", "qwen3_asr")
         self.asr_engine.setCurrentIndex(max(0, self.asr_engine.findData(
             self.settings.get("asr_engine", "auto"))))
         f.addRow("Công nghệ nhận dạng:", self.asr_engine)
@@ -129,6 +131,25 @@ class SettingsDialog(QDialog):
             "các ngôn ngữ khác dùng Whisper."))
         self.whisper_model = QLineEdit(self.settings.get("whisper_model", "large-v3-turbo"))
         f.addRow("Whisper model:", self.whisper_model)
+        self.qwen_asr_model = QComboBox()
+        self.qwen_asr_model.setEditable(True)
+        self.qwen_asr_model.addItem("Qwen/Qwen3-ASR-0.6B")
+        self.qwen_asr_model.addItem("Qwen/Qwen3-ASR-1.7B")
+        self.qwen_asr_model.setCurrentText(
+            self.settings.get("qwen_asr_model", "Qwen/Qwen3-ASR-0.6B"))
+        f.addRow("Qwen ASR model:", self.qwen_asr_model)
+        self.qwen_asr_aligner = QLineEdit(
+            self.settings.get("qwen_asr_aligner", "Qwen/Qwen3-ForcedAligner-0.6B"))
+        f.addRow("Qwen aligner (timestamp):", self.qwen_asr_aligner)
+        self.qwen_asr_device = QComboBox()
+        for label, value in (("Tự động GPU/CPU", "auto"),
+                             ("CPU", "cpu"), ("CUDA", "cuda")):
+            self.qwen_asr_device.addItem(label, value)
+        self.qwen_asr_device.setCurrentIndex(max(0,
+            self.qwen_asr_device.findData(self.settings.get("qwen_asr_device", "auto"))))
+        f.addRow("Qwen ASR device:", self.qwen_asr_device)
+        f.addRow(QLabel("Qwen3-ASR cần cài requirements-asr-qwen.txt; "
+                        "ForcedAligner bắt buộc để giữ mốc thoại."))
         self.hf_token = QLineEdit(self.settings.get("hf_token", ""))
         self.hf_token.setEchoMode(QLineEdit.Password)
         self.hf_token.setPlaceholderText("Ưu tiên đặt biến môi trường HF_TOKEN")
@@ -318,6 +339,10 @@ class SettingsDialog(QDialog):
         self.language_probe_model.setText(
             str(DEFAULTS["language_detection_model"]))
         self.whisper_model.setText(str(DEFAULTS["whisper_model"]))
+        self.qwen_asr_model.setCurrentText(str(DEFAULTS["qwen_asr_model"]))
+        self.qwen_asr_aligner.setText(str(DEFAULTS["qwen_asr_aligner"]))
+        self.qwen_asr_device.setCurrentIndex(max(
+            0, self.qwen_asr_device.findData(DEFAULTS["qwen_asr_device"])))
         self.hf_token.setText(str(DEFAULTS["hf_token"]))
         self.whisper_align.setCurrentIndex(
             0 if DEFAULTS["whisper_forced_alignment"] else 1)
@@ -373,6 +398,9 @@ class SettingsDialog(QDialog):
             "language_detection_model":
                 self.language_probe_model.text().strip() or "tiny",
             "whisper_model": self.whisper_model.text().strip() or "large-v3-turbo",
+            "qwen_asr_model": self.qwen_asr_model.currentText().strip() or DEFAULTS["qwen_asr_model"],
+            "qwen_asr_aligner": self.qwen_asr_aligner.text().strip() or DEFAULTS["qwen_asr_aligner"],
+            "qwen_asr_device": self.qwen_asr_device.currentData(),
             "hf_token": self.hf_token.text().strip(),
             "whisper_forced_alignment": bool(self.whisper_align.currentData()),
             "voice_anchor_review": bool(self.voice_anchor_review.currentData()),
