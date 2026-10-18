@@ -57,7 +57,9 @@ def analyze_and_translate(segments, provider):
         if not any(sp.role.strip() and sp.relations for sp in speakers.values()):
             raise RuntimeError("LLM analyze returned no usable speaker relationship")
         meta = provider.last_video_metadata or {}
-        meta.update(source_language="zh", language_review_required=True)
+        languages={s.source_lang for s in segments if s.source_lang}
+        meta.update(source_language=(next(iter(languages)) if len(languages)==1 else "mixed"),
+                    language_review_required=True)
         # The translated dialogue shares the EXACT analyzed segments:
         # line audiences and locked speaker relationship table are preserved.
         translated = provider.translate(segments, speakers, video_metadata=meta)

@@ -23,6 +23,9 @@ from asr.source_language import detect_source_language
 def main():
     cli = argparse.ArgumentParser()
     cli.add_argument("--video", required=True)
+    cli.add_argument("--source-page", default="https://commons.wikimedia.org/wiki/File:【两会30秒】水庆霞：中国女足非世界顶级，但会不断追赶.webm")
+    cli.add_argument("--source-label", default="Chinese football interview")
+    cli.add_argument("--source-license", default="CC BY 3.0 (attribution: 中国新闻社)")
     cli.add_argument("--out", default="chinese_regression")
     cli.add_argument("--mode", choices=("smoke", "full", "benchmark", "boundary"), default="full")
     cli.add_argument("--backend", choices=("modelscope", "automodel"),
@@ -52,12 +55,10 @@ def main():
     del detector
     route = select_asr_engine(language)
     report = {
-        "source_video": "Wikimedia Commons: Chinese football interview",
+        "source_video": "Wikimedia Commons: " + opts.source_label,
         "source_video_sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
-        "source_page": (
-            "https://commons.wikimedia.org/wiki/File:"
-            "【两会30秒】水庆霞：中国女足非世界顶级，但会不断追赶.webm"),
-        "license": "CC BY 3.0 (attribution: 中国新闻社)",
+        "source_page": opts.source_page,
+        "license": opts.source_license,
         "language_detection": language.to_dict(),
         "automatic_route": route.to_dict(),
         "status": "LANGUAGE_PROBED" if opts.mode == "smoke" else "ASR_RUNNING",
