@@ -111,3 +111,29 @@ def test_qwen_adapter_fails_closed_without_aligner_spans(tmp_path,monkeypatch):
     fake_provider(monkeypatch,[entry])
     with pytest.raises(QwenASRError,match="aligned timestamps"):
         Qwen3ASRAdapter(device="cpu",language="zh").transcribe(audio)
+
+
+
+def test_qwen_point_aligned_hanzi_is_preserved_with_neighboring_timed_words():
+    from types import SimpleNamespace
+    def item(text, start, end):
+        return SimpleNamespace(text=text,start_time=start,end_time=end)
+    words=[
+        item("企",0.00,0.16),
+        item("业",0.16,0.24),
+        item("的",0.24,0.24),  # ACTUAL qwen forced aligner returned this shape.
+        item("出",0.24,0.50),
+        item("海。",0.50,1.10),
+    ]
+    result=aligned_to_segments(words,duration=1.5,language="zh")
+    assert len(result)==1
+    assert result[0].text_src=="企业的出海。"
+    assert result[0].start==0
+    assert result[0].end==1.1
+
+
+def test_qwen_zero_duration_utterance_alone_is_rejected_not_guessed():
+    from types import SimpleNamespace
+    items=[SimpleNamespace(text="好",start_time=1.0,end_time=1.0)]
+    with pytest.raises(QwenASRError,match="zero total utterance duration"):
+        aligned_to_segments(items,duration=2.0,language="zh")

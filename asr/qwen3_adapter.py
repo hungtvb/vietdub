@@ -38,6 +38,12 @@ def aligned_to_segments(items, *, duration, language="und", max_window=9.0):
     def flush():
         if not group:
             return
+        # A few Qwen aligned Hanzi are point-aligned (start == end).
+        # Keep those words attached to their surrounding TIMED utterance;
+        # never fabricate durations for individual characters.
+        if group[-1][1] <= group[0][0]:
+            raise QwenASRError(
+                "Qwen aligned tokens have zero total utterance duration")
         phrase = ("".join(w[2] for w in group)
                   if language in ("zh", "ja")
                   else " ".join(w[2] for w in group))
@@ -62,7 +68,7 @@ def aligned_to_segments(items, *, duration, language="und", max_window=9.0):
             raise QwenASRError("Qwen forced aligner emitted empty word")
         if not all(math.isfinite(x) for x in (start, end)):
             raise QwenASRError("Qwen timestamps are nonfinite")
-        if start < -0.05 or start >= end or end > duration + .2:
+        if start < -0.05 or start > end or end > duration + .2:
             raise QwenASRError(
                 f"Qwen word timestamps escaped audio duration: "
                 f"word={token[:30]!r} start={start:.3f} "
@@ -71,13 +77,14 @@ def aligned_to_segments(items, *, duration, language="und", max_window=9.0):
             raise QwenASRError("Qwen word timestamps overlap/out of order")
         start = max(0.0, start)
         end = min(float(duration), end)
-        if end <= start:
-            raise QwenASRError("Qwen word interval is zero length")
+        if end < start:
+            raise QwenASRError("Qwen word interval runs backward")
         if group and (start - group[-1][1] > 1.0
                       or end - group[0][0] > max_window):
             flush()
         group.append((start, end, token))
-        if token.endswith(("。", "！", "？", ".", "!", "?")):
+        if (token.endswith(("。", "！", "？", ".", "!", "?"))
+                and group[-1][1] > group[0][0]):
             flush()
         previous_end = end
     flush()
