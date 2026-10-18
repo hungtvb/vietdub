@@ -61,8 +61,12 @@ def test_qwen_rejects_invalid_timestamps_and_silent_output():
 
 
 def fake_provider(monkeypatch, sentences):
-    import torch
-    import soundfile as sf
+    # CLI CI does not install heavyweight torch or qwen-asr.
+    fake_torch=types.ModuleType("torch")
+    fake_torch.float16="float16"
+    fake_torch.float32="float32"
+    fake_torch.cuda=SimpleNamespace(is_available=lambda:False)
+    monkeypatch.setitem(sys.modules,"torch",fake_torch)
     class FakeQwen:
         @classmethod
         def from_pretrained(cls,model,**kwargs):
