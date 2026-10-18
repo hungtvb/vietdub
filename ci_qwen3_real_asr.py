@@ -17,6 +17,7 @@ from media.subs import write_srt
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--video",required=True)
+    p.add_argument("--wav",required=True,help="Actual mono PCM WAV for official Qwen audio decoder")
     p.add_argument("--out",required=True)
     p.add_argument("--model",default="Qwen/Qwen3-ASR-0.6B")
     p.add_argument("--aligner",default="Qwen/Qwen3-ForcedAligner-0.6B")
@@ -37,7 +38,7 @@ def main():
         info["source_streams"]=sorted(streams)
         runner=Qwen3ASRAdapter(model=args.model,aligner=args.aligner,
                                device=args.device,language=args.language)
-        segments=runner.transcribe(path)
+        segments=runner.transcribe(args.wav)
         if any(s.index!=i for i,s in enumerate(segments)):
             raise ValueError("Non-contiguous source indices")
         if any(not (0<=s.start<s.end<=duration+.1) for s in segments):
