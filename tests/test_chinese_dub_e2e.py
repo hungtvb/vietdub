@@ -383,3 +383,56 @@ def test_semantic_llm_flags_cannot_trigger_mass_rewrite():
     result=actionable_structural_repairs(segs,llm)
     assert [r["id"] for r in result]==[2]
     assert "EMPTY_OR_SOURCE_ECHO" in result[0]["reasons"]
+
+
+
+def test_long_chinese_clause_recovery_preserves_id_and_full_source():
+    import json
+    from translation.llm_e2e import revise_flagged_lines, _source_clauses_for_recovery
+    from translation.quality import structural_issues
+    original="我们希望继续发展教育事业。很多家长也会提出一些重要问题。"
+    parts=_source_clauses_for_recovery(original)
+    assert len(parts)==2
+    class Weak:
+        def __init__(self):
+            self.clauses=[]
+        def _chat(self,sys,user):
+            payload=json.loads(user)
+            if "source_clause_to_translate" not in payload:
+                return json.dumps({"id":13,"text_vi":"Chúng tôi 发展教育."},
+                                  ensure_ascii=False)
+            self.clauses.append(payload["source_clause_to_translate"])
+            vi=["Chúng tôi hy vọng tiếp tục phát triển giáo dục.",
+                "Nhiều phụ huynh cũng nêu ra những vấn đề quan trọng."]
+            return json.dumps({"id":13,"text_vi":vi[len(self.clauses)-1]},
+                              ensure_ascii=False)
+    seg=Segment(index=13,start=0,end=12,speaker=0,
+        source_lang="zh",text_src=original,text_vi="Chúng tôi 发展 giáo dục.")
+    provider=Weak()
+    q=revise_flagged_lines([seg],provider,max_attempts=1,flagged=[
+        {"id":13,"reasons":structural_issues([seg])[13]}])
+    assert provider.clauses==parts
+    assert len(q["revised"])==1
+    assert q["revised"][0]["method"]=="source_clause_rescue"
+    assert q["unresolved"]==[]
+    assert seg.text_vi.startswith("Chúng tôi hy vọng")
+    assert "phụ huynh" in seg.text_vi
+
+
+def test_chinese_clause_recovery_does_not_accept_partial_fragments():
+    import json
+    from translation.llm_e2e import revise_flagged_lines
+    source="我们希望继续发展教育事业。很多家长也会提出一些重要问题。"
+    class Weak:
+        def _chat(self,sys,user):
+            req=json.loads(user)
+            if "source_clause_to_translate" in req:
+                return json.dumps({"id":8,"text_vi":"..."})
+            return json.dumps({"id":8,"text_vi":"我们 继续发展"})
+    seg=Segment(index=8,start=0,end=12,speaker=0,source_lang="zh",
+        text_src=source,text_vi="Chúng tôi 发展.")
+    q=revise_flagged_lines([seg],Weak(),max_attempts=1,flagged=[
+        {"id":8,"reasons":["SOURCE_SCRIPT_REMAINS"]}])
+    assert not q["revised"]
+    assert "SOURCE_SCRIPT_REMAINS" in q["unresolved"][0]["reasons"]
+    assert seg.text_vi=="Chúng tôi 发展."

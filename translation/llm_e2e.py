@@ -205,8 +205,98 @@ def revise_flagged_lines(segments,provider,max_attempts=3,flagged=None):
                 rejections.append(reason)
                 diagnostics.append({"id":idx,"attempt":attempt,
                                     "accepted":False,"reason":reason})
+        # Some small models cannot translate a long, ASR-fragmented Chinese
+        # utterance in one response and keep leaking Hanzi after retries.
+        # One final bounded rescue translates its actual sentence clauses
+        # independently and rejoins them under the ORIGINAL ID and timing.
+        # Abort atomically if even one clause is missing or unspeakable.
+        if (needs_full_translation and seg.source_lang=="zh" and
+                "SOURCE_SCRIPT_REMAINS" in structural_issues([seg]).get(idx, [])):
+            clauses=_source_clauses_for_recovery(seg.text_src)
+            if clauses:
+                fragments=[]
+                errors=[]
+                for piece_idx,clause in enumerate(clauses):
+                    calls+=1
+                    question=("？" in clause or "?" in clause)
+                    repair_prompt=(
+                        "Translate ONLY the following Chinese speech clause "
+                        "into natural, concise Vietnamese for video dubbing. "
+                        "Translate every meaningful word; NO Hanzi, no source "
+                        "script, no explanations. Do not translate neighboring "
+                        "clauses. Keep question intent, negation, names, numbers. "
+                        "Never output ellipses, an empty string, or placeholder. "
+                        f'Return ONLY JSON {{"id":{idx},"text_vi":"Vietnamese words"}} '
+                        f"with id={idx} exactly."
+                    )
+                    payload=json.dumps({
+                        "source_clause_to_translate":clause,
+                        "source_language":"zh",
+                        "clause_number":piece_idx+1,
+                        "clause_count":len(clauses),
+                        "question":question,
+                        "response_id":idx,
+                    },ensure_ascii=False)
+                    try:
+                        data=_parse_json(provider._chat(repair_prompt,payload))
+                        if ("translations" in data and
+                                isinstance(data["translations"],list) and
+                                len(data["translations"])==1):
+                            data=data["translations"][0]
+                        translated=data.get("text_vi")
+                        if (type(data.get("id")) is not int or data["id"] != idx
+                                or not isinstance(translated,str) or
+                                not any(c.isalnum() for c in translated)):
+                            raise ValueError("Clause rescue missing ID or spoken translation")
+                        cleaned=" ".join(translated.split())
+                        if any("\u3400"<=c<="\u9fff" for c in cleaned):
+                            raise ValueError("Clause rescue left source-script Hanzi")
+                        fragments.append(cleaned)
+                    except Exception as exc:
+                        errors.append(str(exc)[:170])
+                        break
+                if not errors and len(fragments)==len(clauses):
+                    combined=" ".join(fragments)
+                    # QA conservatively requires interrogative form preserved.
+                    if ("?" in seg.text_src or "？" in seg.text_src) and "?" not in combined:
+                        combined=combined.rstrip(".。! ")+"?"
+                    word_limit=max(6,int((seg.end-seg.start)*4.2))
+                    if len(combined.split()) <= word_limit:
+                        before=seg.text_vi
+                        seg.text_vi=combined
+                        problems_after=structural_issues([seg]).get(idx,[])
+                        if not problems_after:
+                            revised.append({"id":idx,"before":before,"after":combined,
+                                            "method":"source_clause_rescue",
+                                            "human_verified":False})
+                            diagnostics.append({"id":idx,"attempt":"source_clause_rescue",
+                                                "accepted":True,"clauses":len(clauses),
+                                                "reason":"STRUCTURAL_QA_ONLY"})
+                        else:
+                            seg.text_vi=before
+                            errors.append("Post-rescue QA: "+repr(problems_after))
+                    else:
+                        errors.append("Clause rescue exceeds dubbing word budget")
+                if errors:
+                    diagnostics.append({"id":idx,"attempt":"source_clause_rescue",
+                                        "accepted":False,
+                                        "reason":"; ".join(errors)[:220]})
     return {"llm_revision_calls":calls,"initial_flagged_count":len(original),
             "revised":revised,"diagnostics":diagnostics,
             "unresolved":translation_quality_flags(segments)["issues"],
             "method":"contextual_per_line_revision",
             "human_approved":False}
+
+
+
+def _source_clauses_for_recovery(source):
+    """Only split a long Chinese source on REAL ASR sentence boundaries.
+
+    Keeps the same utterance ID; not a new segmentation of the audio timeline.
+    Very short or punctuation-free text should NOT be split on guessed chars.
+    """
+    import re
+    if sum("\u3400" <= c <= "\u9fff" for c in source) < 25:
+        return []
+    clauses=[s.strip() for s in re.split(r"(?<=[。！？])",source) if s.strip()]
+    return clauses if 2 <= len(clauses) <= 4 else []
