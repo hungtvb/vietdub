@@ -679,6 +679,10 @@ class BaseTranslator:
                 if not isinstance(items, list):
                     raise ValueError("thiếu mảng 'translations'")
                 got = {int(it["id"]): str(it["text_vi"]) for it in items}
+                if len(items) != len(want_ids):
+                    raise ValueError("Missing or duplicated translation IDs")
+                if any(not any(c.isalnum() for c in value) for value in got.values()):
+                    raise ValueError("Punctuation-only/unspeakable translation")
                 if sorted(got.keys()) != sorted(want_ids):
                     raise ValueError(
                         f"số câu/id không khớp (muốn {want_ids}, được "
@@ -715,8 +719,9 @@ class BaseTranslator:
                         or items[0]["id"] != seg.index):
                     raise ValueError(f"Single translation must use source ID {seg.index}")
                 text = items[0].get("text_vi")
-                if not isinstance(text,str) or not text.strip():
-                    raise ValueError("Empty single-line translation")
+                if (not isinstance(text,str) or not text.strip()
+                        or not any(c.isalnum() for c in text)):
+                    raise ValueError("Empty or unspeakable single-line translation")
                 return text.strip()
             except (ValueError, KeyError, TypeError) as exc:
                 log.warning("Individual translation line %d attempt %d failed: %s",

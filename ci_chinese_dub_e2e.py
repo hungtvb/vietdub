@@ -193,17 +193,13 @@ def main():
         # The LLM QA can collapse into copy/paste of the same alleged error.
         # Do not blindly rewrite every line. Structural question-loss warnings
         # are reviewable even if the semantic reviewer is unreliable.
-        eligible=set(pre_review["auto_repair_eligible_ids"])
-        repairable=[item for item in pre_review["issues"]
-                    if item["id"] in eligible]
-        seen_ids={item["id"] for item in repairable}
-        from translation.quality import structural_issues
-        basic_issues=structural_issues(segments)
-        for seg in segments:
-            reasons=basic_issues.get(seg.index,[])
-            if seg.index not in seen_ids and any(x in reasons for x in (
-                    "QUESTION_FORM_LOST","SOURCE_SCRIPT_REMAINS")):
-                repairable.append({"id":seg.index,"reasons":reasons})
+        from translation.quality import actionable_structural_repairs
+        # The semantic QA reviewer is ADVISORY, especially when a 3B model
+        # flags every line. Only objective source/target integrity errors
+        # may trigger automatic rewriting.
+        repairable=actionable_structural_repairs(segments,pre_review)
+        evidence["auto_repair_policy"]="deterministic_structural_only"
+        evidence["auto_repair_candidate_ids"]=[r["id"] for r in repairable]
         evidence["llm_revision"]=revise_flagged_lines(
             segments,llm_provider,flagged=repairable)
         evidence["translation_quality_flags"]=translation_quality_flags(segments)

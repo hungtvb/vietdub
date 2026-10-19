@@ -80,14 +80,10 @@ def main():
         first=review_with_llm(lines,provider,
                               video_metadata=qa["translation"]["video_context"])
         qa["initial_llm_semantic_review"]=first
-        eligible=set(first["auto_repair_eligible_ids"])
-        requested=[item for item in first["issues"] if item["id"] in eligible]
-        seen={item["id"] for item in requested}
-        basic=structural_issues(lines)
-        for seg in lines:
-            reasons=basic.get(seg.index,[])
-            if seg.index not in seen and ("QUESTION_FORM_LOST" in reasons):
-                requested.append({"id":seg.index,"reasons":reasons})
+        from translation.quality import actionable_structural_repairs
+        requested=actionable_structural_repairs(lines,first)
+        qa["auto_repair_policy"]="deterministic_structural_only"
+        qa["auto_repair_candidate_ids"]=[r["id"] for r in requested]
         qa["llm_revision"]=revise_flagged_lines(lines,provider,flagged=requested)
         qa["translation_quality_flags"]=translation_quality_flags(lines)
         qa["final_llm_semantic_review"]=review_with_llm(

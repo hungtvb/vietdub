@@ -554,3 +554,19 @@ def test_fallback_single_line_prompt_stays_short_and_preserves_json_contract():
     assert "Hanzi" in system
     assert "ACTUAL_ID" in system
     assert "negations" in system
+
+
+
+def test_batch_translation_rejects_punctuation_only_even_with_correct_ids():
+    from project.schema import Segment
+    srcs=[Segment(index=i,start=i*2,end=i*2+2,speaker=0,
+         source_lang="en",text_src=f"Real spoken sentence {i}.")
+         for i in range(2)]
+    broken=json.dumps({"translations":[{"id":0,"text_vi":"Xin chào"},
+            {"id":1,"text_vi":"..."}]},ensure_ascii=False)
+    fixed=json.dumps({"translations":[{"id":0,"text_vi":"Xin chào"},
+            {"id":1,"text_vi":"Tôi rất vui"}]},ensure_ascii=False)
+    trans=FakeTranslator([broken,fixed])
+    result=trans.translate(srcs,make_speakers())
+    assert [s.text_vi for s in result]==["Xin chào","Tôi rất vui"]
+    assert trans.calls==2

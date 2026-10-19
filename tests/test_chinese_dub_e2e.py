@@ -348,3 +348,38 @@ def test_failed_foreign_script_repair_retries_with_short_source_only_prompt():
     assert len(q["revised"])==1
     assert q["unresolved"]==[]
     assert s.text_vi=="Chúc các bạn năm mới vui vẻ."
+
+
+
+def test_punctuation_only_llm_rewrite_is_rejected_before_tts():
+    import json
+    from translation.llm_e2e import revise_flagged_lines
+    from translation.quality import structural_issues
+    class Bad:
+        def _chat(self,sys,user):
+            obj=json.loads(user)
+            return json.dumps({"id":obj["requested_id"],"text_vi":"..."})
+    line=Segment(index=4,start=0,end=3,speaker=0,source_lang="zh",
+        text_src="真的好吗？",text_vi="Thật sự tốt.")
+    report=revise_flagged_lines([line],Bad(),max_attempts=1,flagged=[
+        {"id":4,"reasons":["QUESTION_FORM_LOST"]}])
+    assert report["revised"]==[]
+    assert "Unspeakable placeholder" in report["diagnostics"][0]["reason"]
+    assert line.text_vi=="Thật sự tốt."
+    line.text_vi="..."
+    assert "EMPTY_OR_SOURCE_ECHO" in structural_issues([line])[4]
+
+
+def test_semantic_llm_flags_cannot_trigger_mass_rewrite():
+    from translation.quality import actionable_structural_repairs
+    segs=[Segment(index=i,start=i*2,end=i*2+2,speaker=0,source_lang="zh",
+        text_src="今天很好。",text_vi=f"Hôm nay rất tốt {i}.")
+        for i in range(6)]
+    llm={"issues":[{"id":i,"issues":[{"category":"omission",
+           "detail":"Contradiction"}]} for i in range(6)],
+         "auto_repair_eligible_ids":list(range(6))}
+    assert actionable_structural_repairs(segs,llm)==[]
+    segs[2].text_vi="..."
+    result=actionable_structural_repairs(segs,llm)
+    assert [r["id"] for r in result]==[2]
+    assert "EMPTY_OR_SOURCE_ECHO" in result[0]["reasons"]

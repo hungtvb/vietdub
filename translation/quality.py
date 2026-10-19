@@ -30,7 +30,10 @@ def structural_issues(segments):
         issues = []
         source = (s.text_src or "").strip()
         target = (s.text_vi or "").strip()
-        if not target or target == source:
+        # A string such as "..." or "—" is nonempty but UNSPEAKABLE;
+        # previously such LLM "repairs" passed QA, then Edge-TTS
+        # silently produced no audio and the E2E failed at voice fitting.
+        if not target or target == source or not any(c.isalnum() for c in target):
             issues.append("EMPTY_OR_SOURCE_ECHO")
         if s.index in collapse_ids:
             issues.append("REPEATED_TRANSLATION_DISTINCT_SOURCES")
@@ -188,3 +191,19 @@ def review_with_llm(segments, provider, video_metadata=None, batch_size=10):
         "independent_quality_verified":False,
         "human_approved":False,
     }
+
+
+
+def actionable_structural_repairs(segments, llm_review=None):
+    """Only deterministic integrity failures are eligible for automatic repair.
+
+    Small local QA LLMs have falsely flagged every line in otherwise usable
+    video clips and introduced omissions and punctuation-only output while
+    "repairing" valid translations. Their semantic opinions are advisory.
+    """
+    problems=structural_issues(segments)
+    ids={s.index for s in segments}
+    if len(ids)!=len(segments):
+        raise ValueError("Duplicate segment IDs in translation")
+    return [{"id":s.index,"reasons":problems[s.index]}
+            for s in segments if s.index in problems]

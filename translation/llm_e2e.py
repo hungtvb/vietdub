@@ -180,6 +180,8 @@ def revise_flagged_lines(segments,provider,max_attempts=3,flagged=None):
                 if not isinstance(val,str) or not val.strip():
                     raise ValueError("Empty revision")
                 proposed=" ".join(val.split())
+                if not any(c.isalnum() for c in proposed):
+                    raise ValueError("Unspeakable placeholder / punctuation-only output")
                 old=seg.text_vi
                 if proposed==seg.text_src or proposed==old:
                     raise ValueError("Unchanged or untranslated")
