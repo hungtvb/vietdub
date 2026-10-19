@@ -88,9 +88,10 @@ def main():
         qa["translation_quality_flags"]=translation_quality_flags(lines)
         qa["final_llm_semantic_review"]=review_with_llm(
             lines,provider,video_metadata=qa["translation"]["video_context"])
-        if any("EMPTY_OR_SOURCE_ECHO" in reasons
+        if any(("EMPTY_OR_SOURCE_ECHO" in reasons or
+                "SOURCE_SCRIPT_REMAINS" in reasons)
                for reasons in structural_issues(lines).values()):
-            raise ValueError("LLM produced untranslated English")
+            raise ValueError("LLM produced empty or foreign-script Vietnamese")
         qa["question_count_source"]=sum("?" in s.text_src for s in lines)
         qa["question_count_vi"]=sum("?" in s.text_vi for s in lines)
         qa["tts_provider"]="Edge-TTS"

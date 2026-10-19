@@ -436,3 +436,30 @@ def test_chinese_clause_recovery_does_not_accept_partial_fragments():
     assert not q["revised"]
     assert "SOURCE_SCRIPT_REMAINS" in q["unresolved"][0]["reasons"]
     assert seg.text_vi=="Chúng tôi 发展."
+
+
+
+def test_english_source_with_llm_hallucinated_hanzi_gets_full_retranslation():
+    import json
+    from translation.llm_e2e import revise_flagged_lines
+    from translation.quality import structural_issues
+    class Mock:
+        def _chat(self,sys,user):
+            data=json.loads(user)
+            assert data["source_language"]=="en"
+            assert data["full_retranslation_required"] is True
+            assert data["source_script_leaks_in_wrong_draft"]=="圣诞夜"
+            assert "FULL RETRANSLATION" in sys
+            return json.dumps({"id":2,
+                "text_vi":"Chúng tôi hỏi các em muốn gì cho Giáng sinh."},
+                ensure_ascii=False)
+    line=Segment(index=2,start=0,end=6,speaker=0,source_lang="en",
+        text_src="We find out what they would like for Christmas.",
+        text_vi="Chúng tôi hỏi các em muốn gì vào 圣诞夜.")
+    reasons=structural_issues([line])[2]
+    assert "SOURCE_SCRIPT_REMAINS" in reasons
+    result=revise_flagged_lines([line],Mock(),flagged=[{
+        "id":2,"reasons":reasons}])
+    assert result["llm_revision_calls"]==1
+    assert not result["unresolved"]
+    assert "Giáng sinh" in line.text_vi

@@ -113,7 +113,7 @@ def revise_flagged_lines(segments,provider,max_attempts=3,flagged=None):
     source/draft pair and surrounding context by the QA model.
     """
     from translation.base import _parse_json
-    from translation.quality import structural_issues
+    from translation.quality import structural_issues, foreign_script_chars
     from translation import prompts
     if not 1 <= max_attempts <= 5:
         raise ValueError("Invalid revision count")
@@ -144,12 +144,7 @@ def revise_flagged_lines(segments,provider,max_attempts=3,flagged=None):
             # The source is the authority; drafts are supplied only to help
             # diagnose errors, never as a translation template. On foreign-
             # script leakage the request explicitly demands FULL retranslation.
-            leftover_script = [
-                ch for ch in (seg.text_vi or "")
-                if "\u3400" <= ch <= "\u9fff"
-                or "\u3040" <= ch <= "\u30ff"
-                or "\uac00" <= ch <= "\ud7af"
-            ]
+            leftover_script = foreign_script_chars(seg.text_vi)
             user=json.dumps({
                 "requested_id":idx,
                 "source_language":seg.source_lang,

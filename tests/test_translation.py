@@ -570,3 +570,21 @@ def test_batch_translation_rejects_punctuation_only_even_with_correct_ids():
     result=trans.translate(srcs,make_speakers())
     assert [s.text_vi for s in result]==["Xin chào","Tôi rất vui"]
     assert trans.calls==2
+
+
+
+def test_target_script_integrity_is_independent_of_source_language():
+    from project.schema import Segment
+    from translation.quality import foreign_script_chars,structural_issues
+    zh=Segment(index=0,start=0,end=3,speaker=0,source_lang="en",
+         text_src="We celebrate Christmas.",text_vi="Chúng tôi mừng 圣诞夜.")
+    ko=Segment(index=1,start=3,end=6,speaker=0,source_lang="en",
+         text_src="I am at home.",text_vi="Tôi đang 집.")
+    jp=Segment(index=2,start=6,end=9,speaker=0,source_lang="ja",
+         text_src="新年おめでとう。",text_vi="Chúc mừng năm mới.")
+    issues=structural_issues([zh,ko,jp])
+    assert 0 in issues and "SOURCE_SCRIPT_REMAINS" in issues[0]
+    assert 1 in issues and "SOURCE_SCRIPT_REMAINS" in issues[1]
+    assert 2 not in issues
+    assert foreign_script_chars("Chúng tôi rất vui — số 2026!") == []
+    assert foreign_script_chars("圣诞夜") != []

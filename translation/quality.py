@@ -5,7 +5,20 @@ Model judgments are advisory and not independent human verification.
 """
 from __future__ import annotations
 import json
+import unicodedata
 from project.schema import Segment
+
+
+def foreign_script_chars(text):
+    """Return alphabetic characters not usable as written Vietnamese.
+
+    English source videos can also cause a small LLM to hallucinate Hanzi
+    into its Vietnamese response. Vietnamese diacritics are LATIN characters.
+    Semantic correctness remains a separate human-review requirement.
+    """
+    return [ch for ch in (text or "")
+            if ch.isalpha() and "LATIN" not in unicodedata.name(ch, "")]
+
 
 def structural_issues(segments):
     """Deterministic source/translation integrity checks, no glossary."""
@@ -41,8 +54,8 @@ def structural_issues(segments):
         # a direct / rhetorical question can legitimately be indirect speech.
         if ("?" in source or "？" in source) and "?" not in target:
             issues.append("QUESTION_FORM_LOST")
-        # Only a warning: proper nouns may legitimately retain source script.
-        if s.source_lang == "zh" and any("\u3400" <= c <= "\u9fff" for c in target):
+        # Target-language writing system: applies even if source is English.
+        if foreign_script_chars(target):
             issues.append("SOURCE_SCRIPT_REMAINS")
         if issues:
             result[s.index] = issues

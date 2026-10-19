@@ -65,6 +65,7 @@ MANDATORY TRANSLATION RULES (in priority order):
 2. OUTPUT LANGUAGE: The text_vi field MUST be fluent Vietnamese, not a mix of
    Vietnamese and the original script. Never copy Hanzi, Chinese/Japanese kana,
    Korean Hangul or other non-Vietnamese source-script fragments into text_vi.
+   Never invent non-Latin characters even when the source is entirely English.
    Translate the meaning of each such fragment. For names, use a known Vietnamese
    rendering or a Latin-letter transliteration, NOT source-script characters.
    Preserve exact Latin-script proper names when appropriate.
