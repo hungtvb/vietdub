@@ -112,6 +112,97 @@ class SettingsDialog(QDialog):
     def _build_asr_tab(self) -> None:
         tab = QWidget()
         f = QFormLayout(tab)
+        self.asr_engine = QComboBox()
+        self.asr_engine.addItem(
+            "Tự động theo ngôn ngữ (Trung → FunASR; khác → Whisper)", "auto")
+        self.asr_engine.addItem("FunASR — chỉ dùng khi chọn tiếng Trung", "funasr")
+        self.asr_engine.addItem(
+            "Whisper + pyannote + WhisperX — đa ngôn ngữ", "whisper_pyannote")
+        self.asr_engine.addItem(
+            "Qwen3-ASR + ForcedAligner — đa ngôn ngữ (local)", "qwen3_asr")
+        self.asr_engine.setCurrentIndex(max(0, self.asr_engine.findData(
+            self.settings.get("asr_engine", "auto"))))
+        f.addRow("Công nghệ nhận dạng:", self.asr_engine)
+        self.language_probe_model = QLineEdit(
+            self.settings.get("language_detection_model", "tiny"))
+        f.addRow("Whisper dò ngôn ngữ:", self.language_probe_model)
+        f.addRow(QLabel(
+            "Tự động nghe 3 vị trí video; tiếng Trung chắc chắn dùng FunASR, "
+            "các ngôn ngữ khác dùng Whisper."))
+        self.whisper_model = QLineEdit(self.settings.get("whisper_model", "large-v3-turbo"))
+        f.addRow("Whisper model:", self.whisper_model)
+        self.qwen_asr_model = QComboBox()
+        self.qwen_asr_model.setEditable(True)
+        self.qwen_asr_model.addItem("Qwen/Qwen3-ASR-0.6B")
+        self.qwen_asr_model.addItem("Qwen/Qwen3-ASR-1.7B")
+        self.qwen_asr_model.setCurrentText(
+            self.settings.get("qwen_asr_model", "Qwen/Qwen3-ASR-0.6B"))
+        f.addRow("Qwen ASR model:", self.qwen_asr_model)
+        self.qwen_asr_aligner = QLineEdit(
+            self.settings.get("qwen_asr_aligner", "Qwen/Qwen3-ForcedAligner-0.6B"))
+        f.addRow("Qwen aligner (timestamp):", self.qwen_asr_aligner)
+        self.qwen_asr_device = QComboBox()
+        for label, value in (("Tự động GPU/CPU", "auto"),
+                             ("CPU", "cpu"), ("CUDA", "cuda")):
+            self.qwen_asr_device.addItem(label, value)
+        self.qwen_asr_device.setCurrentIndex(max(0,
+            self.qwen_asr_device.findData(self.settings.get("qwen_asr_device", "auto"))))
+        f.addRow("Qwen ASR device:", self.qwen_asr_device)
+        f.addRow(QLabel("Qwen3-ASR cần cài requirements-asr-qwen.txt; "
+                        "ForcedAligner bắt buộc để giữ mốc thoại."))
+        self.hf_token = QLineEdit(self.settings.get("hf_token", ""))
+        self.hf_token.setEchoMode(QLineEdit.Password)
+        self.hf_token.setPlaceholderText("Ưu tiên đặt biến môi trường HF_TOKEN")
+        f.addRow("Hugging Face token:", self.hf_token)
+        self.whisper_align = QComboBox()
+        self.whisper_align.addItem("Bật (khuyến nghị)", True)
+        self.whisper_align.addItem("Tắt", False)
+        self.whisper_align.setCurrentIndex(
+            0 if self.settings.get("whisper_forced_alignment", True) else 1)
+        f.addRow("WhisperX forced alignment:", self.whisper_align)
+        self.voice_anchor_review = QComboBox()
+        self.voice_anchor_review.addItem("Xuất mẫu giọng để duyệt", True)
+        self.voice_anchor_review.addItem("Không xuất mẫu giọng", False)
+        self.voice_anchor_review.setCurrentIndex(
+            0 if self.settings.get("voice_anchor_review", True) else 1)
+        f.addRow("Kiểm tra người nói:", self.voice_anchor_review)
+        f.addRow(QLabel("Community-1 cần quyền truy cập model Hugging Face."))
+        self.funasr_backend = QComboBox()
+        self.funasr_backend.addItem("ModelScope — ổn định", "modelscope")
+        self.funasr_backend.addItem("AutoModel — VAD/batching tối ưu", "automodel")
+        self.funasr_backend.setCurrentIndex(max(
+            0, self.funasr_backend.findData(
+                self.settings.get("funasr_backend", "modelscope"))))
+        f.addRow("FunASR backend:", self.funasr_backend)
+        self.funasr_threads = QSpinBox()
+        self.funasr_threads.setRange(1, 32)
+        self.funasr_threads.setValue(int(
+            self.settings.get("funasr_cpu_threads", 4)))
+        f.addRow("FunASR CPU threads:", self.funasr_threads)
+        self.funasr_keep_loaded = QComboBox()
+        self.funasr_keep_loaded.addItem("Giữ 1 model trong RAM (nhanh hơn)", True)
+        self.funasr_keep_loaded.addItem("Giải phóng sau video (ít RAM)", False)
+        self.funasr_keep_loaded.setCurrentIndex(
+            0 if self.settings.get("funasr_keep_loaded", True) else 1)
+        f.addRow("Tái sử dụng model:", self.funasr_keep_loaded)
+        self.funasr_batch = QSpinBox()
+        self.funasr_batch.setRange(5, 600)
+        self.funasr_batch.setValue(int(
+            self.settings.get("funasr_batch_size_s", 60)))
+        f.addRow("FunASR batch (giây):", self.funasr_batch)
+        self.funasr_vad = QSpinBox()
+        self.funasr_vad.setRange(1000, 60000)
+        self.funasr_vad.setSingleStep(1000)
+        self.funasr_vad.setValue(int(
+            self.settings.get("funasr_max_vad_segment_ms", 15000)))
+        f.addRow("FunASR max VAD (ms):", self.funasr_vad)
+        self.funasr_overlap = QDoubleSpinBox()
+        self.funasr_overlap.setRange(0.0, 15.0)
+        self.funasr_overlap.setDecimals(1)
+        self.funasr_overlap.setSingleStep(0.5)
+        self.funasr_overlap.setValue(float(
+            self.settings.get("funasr_chunk_overlap_sec", 1.5)))
+        f.addRow("Gối tiếng tại ranh giới chunk (giây):", self.funasr_overlap)
         self.asr_model = QComboBox()
         self.asr_model.setEditable(True)
         self.asr_model.addItem(str(self.settings.get("asr_model")))
@@ -175,8 +266,9 @@ class SettingsDialog(QDialog):
         self.sub_mode = QComboBox()
         self.sub_mode.addItem("Gắn cứng vào video", "burn")
         self.sub_mode.addItem("Xuất file .srt rời", "srt")
+        self.sub_mode.addItem("Không có phụ đề", "none")
         cur = self.settings.get("sub_mode", "burn")
-        self.sub_mode.setCurrentIndex(0 if cur == "burn" else 1)
+        self.sub_mode.setCurrentIndex(max(0, self.sub_mode.findData(cur)))
         f.addRow("Chế độ phụ đề:", self.sub_mode)
         row_font = QHBoxLayout()
         self.sub_font = QLineEdit(self.settings.get("sub_font", "") or "")
@@ -242,6 +334,28 @@ class SettingsDialog(QDialog):
         self.ol_model.setText(str(DEFAULTS["ollama_model"]))
         self.llm_temp.setValue(float(DEFAULTS["llm_temperature"]))
         self.tr_batch.setValue(int(DEFAULTS["translate_batch"]))
+        self.asr_engine.setCurrentIndex(max(
+            0, self.asr_engine.findData(DEFAULTS["asr_engine"])))
+        self.language_probe_model.setText(
+            str(DEFAULTS["language_detection_model"]))
+        self.whisper_model.setText(str(DEFAULTS["whisper_model"]))
+        self.qwen_asr_model.setCurrentText(str(DEFAULTS["qwen_asr_model"]))
+        self.qwen_asr_aligner.setText(str(DEFAULTS["qwen_asr_aligner"]))
+        self.qwen_asr_device.setCurrentIndex(max(
+            0, self.qwen_asr_device.findData(DEFAULTS["qwen_asr_device"])))
+        self.hf_token.setText(str(DEFAULTS["hf_token"]))
+        self.whisper_align.setCurrentIndex(
+            0 if DEFAULTS["whisper_forced_alignment"] else 1)
+        self.voice_anchor_review.setCurrentIndex(
+            0 if DEFAULTS["voice_anchor_review"] else 1)
+        self.funasr_backend.setCurrentIndex(max(
+            0, self.funasr_backend.findData(DEFAULTS["funasr_backend"])))
+        self.funasr_threads.setValue(int(DEFAULTS["funasr_cpu_threads"]))
+        self.funasr_keep_loaded.setCurrentIndex(
+            0 if DEFAULTS["funasr_keep_loaded"] else 1)
+        self.funasr_batch.setValue(int(DEFAULTS["funasr_batch_size_s"]))
+        self.funasr_vad.setValue(int(DEFAULTS["funasr_max_vad_segment_ms"]))
+        self.funasr_overlap.setValue(float(DEFAULTS["funasr_chunk_overlap_sec"]))
         self.asr_model.setCurrentText(str(DEFAULTS["asr_model"]))
         self.vad_model.setText(str(DEFAULTS["vad_model"]))
         self.punc_model.setText(str(DEFAULTS["punc_model"]))
@@ -254,7 +368,7 @@ class SettingsDialog(QDialog):
         self.tts_rate.setText(str(DEFAULTS["tts_rate"]))
         self.tts_pitch.setText(str(DEFAULTS["tts_pitch"]))
         self.tts_conc.setValue(int(DEFAULTS["tts_concurrency"]))
-        self.sub_mode.setCurrentIndex(0 if DEFAULTS["sub_mode"] == "burn" else 1)
+        self.sub_mode.setCurrentIndex(max(0, self.sub_mode.findData(DEFAULTS["sub_mode"])))
         self.sub_font.setText(str(DEFAULTS["sub_font"]))
         self.sub_font_size.setValue(int(DEFAULTS["sub_font_size"]))
         self.sub_font_color.setText(str(DEFAULTS["sub_font_color"]))
@@ -280,6 +394,22 @@ class SettingsDialog(QDialog):
             "ollama_model": self.ol_model.text().strip(),
             "llm_temperature": self.llm_temp.value(),
             "translate_batch": self.tr_batch.value(),
+            "asr_engine": self.asr_engine.currentData(),
+            "language_detection_model":
+                self.language_probe_model.text().strip() or "tiny",
+            "whisper_model": self.whisper_model.text().strip() or "large-v3-turbo",
+            "qwen_asr_model": self.qwen_asr_model.currentText().strip() or DEFAULTS["qwen_asr_model"],
+            "qwen_asr_aligner": self.qwen_asr_aligner.text().strip() or DEFAULTS["qwen_asr_aligner"],
+            "qwen_asr_device": self.qwen_asr_device.currentData(),
+            "hf_token": self.hf_token.text().strip(),
+            "whisper_forced_alignment": bool(self.whisper_align.currentData()),
+            "voice_anchor_review": bool(self.voice_anchor_review.currentData()),
+            "funasr_backend": self.funasr_backend.currentData(),
+            "funasr_cpu_threads": self.funasr_threads.value(),
+            "funasr_keep_loaded": bool(self.funasr_keep_loaded.currentData()),
+            "funasr_batch_size_s": self.funasr_batch.value(),
+            "funasr_max_vad_segment_ms": self.funasr_vad.value(),
+            "funasr_chunk_overlap_sec": self.funasr_overlap.value(),
             "asr_model": self.asr_model.currentText().strip(),
             "vad_model": self.vad_model.text().strip(),
             "punc_model": self.punc_model.text().strip(),

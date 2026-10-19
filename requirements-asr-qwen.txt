@@ -1,0 +1,7 @@
+# Optional Qwen3-ASR local engine (distinct from Qwen LLM used to translate)
+# Official: https://github.com/QwenLM/Qwen3-ASR
+# GPU recommended. Native CPU inference may be slow; weights download at first run.
+# Use an isolated environment if versions conflict with FunASR.
+qwen-asr
+torch
+soundfile

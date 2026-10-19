@@ -1,0 +1,7 @@
+# Optional advanced ASR engine: Whisper large-v3-turbo + pyannote Community-1
+# Install together with base requirements (may download model weights on first use).
+# torch/torchaudio should use compatible CPU/CUDA builds for your machine.
+faster-whisper>=1.1,<2
+pyannote.audio>=4,<5
+whisperx>=3,<4
+huggingface-hub>=0.23

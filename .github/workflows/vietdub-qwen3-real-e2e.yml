@@ -1,0 +1,184 @@
+name: VietDub Qwen3-ASR Real Audio and Dubbing E2E
+on:
+  push:
+    branches: [ci/run-vietdub-20261016]
+    paths:
+      - '.github/workflows/vietdub-qwen3-real-e2e.yml'
+      - 'ci_qwen3_real_asr.py'
+      - 'ci_qwen3_dub_e2e.py'
+      - 'asr/qwen3_adapter.py'
+      - 'requirements-asr-qwen.txt'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  qwen-real-asr:
+    name: Qwen3-ASR 0.6B + ForcedAligner 0.6B / real audio
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      HF_HUB_ENABLE_HF_TRANSFER: '0'
+      OMP_NUM_THREADS: '4'
+      MKL_NUM_THREADS: '4'
+      PYTHONUNBUFFERED: '1'
+      HF_HUB_DOWNLOAD_TIMEOUT: '180'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install FFmpeg / CPU Torch / official Qwen3-ASR
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg libsndfile1
+          python -m pip install -U pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install 'qwen-asr==0.0.6' numpy soundfile scipy requests
+          python -m pip show qwen-asr | head -n 12
+          free -h
+      - name: Download independent real Mandarin economic interview sample
+        run: |
+          mkdir -p sample qwen_asr
+          curl -fL --retry 4 --connect-timeout 30 --max-time 240 \
+            --user-agent 'VietDub-ASR-Qwen3-Benchmark/1.0' \
+            'https://upload.wikimedia.org/wikipedia/commons/d/d7/2026%E5%B9%B410%E6%9C%8814%E6%97%A5_%E4%B8%93%E8%AE%BF%E9%99%88%E8%8C%82%E6%B3%A2%EF%BC%9A%E9%BC%93%E5%8A%B1%E5%86%85%E5%9C%B0%E5%8F%8A%E9%A6%99%E6%B8%AF%E4%BC%81%E4%B8%9A%E2%80%9C%E5%B9%B6%E8%88%B9%E5%87%BA%E6%B5%B7%E2%80%9D.webm' \
+            -o sample/original.webm
+          ffmpeg -nostdin -y -v error -ss 0 -t 24 \
+            -i sample/original.webm -vf scale=640:-2 -c:v libx264 -preset ultrafast \
+            -crf 32 -pix_fmt yuv420p             -af 'aresample=async=1:first_pts=0'             -c:a aac -b:a 96k sample/source.mp4
+          ffmpeg -nostdin -y -v error -i sample/source.mp4 -vn             -af 'aresample=async=1:first_pts=0'             -ar 16000 -ac 1 sample/mono16k.wav
+          python - <<'PY'
+          import subprocess,json,soundfile as sf
+          data=json.loads(subprocess.check_output(
+             ['ffprobe','-v','error','-show_entries',
+              'stream=codec_type,start_time,duration:format=duration',
+              '-of','json','sample/source.mp4'],text=True))
+          audio=next(s for s in data['streams'] if s['codec_type']=='audio')
+          assert abs(float(audio.get('start_time',0))) < 0.12, audio
+          wav=sf.info('sample/mono16k.wav')
+          assert wav.duration>23.5 and wav.duration<24.5, wav
+          print('VIDEO_AUDIO_PTS_ZERO_PRESERVED',audio['start_time'],wav.duration)
+          PY
+          test -s sample/mono16k.wav
+          cat > sample/attribution.txt <<'TXT'
+          Video: Paul Chan economic interview, China News Service (Wikimedia Commons)
+          Source: https://commons.wikimedia.org/wiki/File:2026年10月14日_专访陈茂波：鼓励内地及香港企业“并船出海”.webm
+          Sample length: 24 seconds. Educational/internal engineering QA only.
+          TXT
+      - name: Run ACTUAL Qwen3-ASR and official forced alignment on CPU
+        run: |
+          python ci_qwen3_real_asr.py \
+            --video sample/source.mp4 --wav sample/mono16k.wav --out qwen_asr \
+            --device cpu --language zh --model Qwen/Qwen3-ASR-0.6B \
+            --aligner Qwen/Qwen3-ForcedAligner-0.6B
+      - name: Check real ASR evidence and segment coverage
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          qa=json.loads(Path("qwen_asr/qa.json").read_text())
+          lines=json.loads(Path("qwen_asr/segments.json").read_text())
+          assert qa["status"]=="QWEN3_ASR_REAL_TIMESTAMPS_PASS_UNAPPROVED"
+          assert qa["qa"]["source"]=="qwen3_asr"
+          assert qa["qa"]["forced_alignment_executed"] is True
+          assert qa["qa"]["speaker_diarization_executed"] is False
+          assert lines and len(lines)==qa["segments"]
+          assert all(0<=s["start"]<s["end"]<=qa["source_seconds"]+0.2 for s in lines)
+          assert all(s["needs_review"] and s["text_src"] for s in lines)
+          assert qa["audio_coverage_review"]["speech_accuracy_measured"] is False
+          print("REAL_QWEN3_ASR_SOURCE_TIMESTAMP_QA_PASS",len(lines))
+          PY
+      - name: Upload real Qwen ASR evidence even if model fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen3-real-mandarin-asr-evidence
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            sample/attribution.txt
+            qwen_asr/qa.json
+            qwen_asr/segments.json
+            qwen_asr/qwen_chinese_source.srt
+      - name: Upload source + timed transcript for next separate LLM runner
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen3-real-mandarin-dub-input
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            sample/source.mp4
+            qwen_asr/segments.json
+  qwen-to-vietnamese-dub:
+    name: Qwen3 transcript -> Ollama LLM -> Edge-TTS -> real MP4
+    needs: qwen-real-asr
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      OMP_NUM_THREADS: '4'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: qwen3-real-mandarin-dub-input
+      - name: Install FFmpeg and VietDub dubbing dependencies
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libsndfile1
+          python -m pip install -q numpy scipy soundfile requests openai edge-tts
+      - name: Start Ollama Qwen2.5 3B translation model locally
+        run: |
+          curl -fsSL https://ollama.com/install.sh -o /tmp/ollama-install.sh
+          sh /tmp/ollama-install.sh
+          ollama serve > /tmp/vietdub-qwen-ollama.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:11434/api/tags >/dev/null
+          ollama pull qwen2.5:3b
+      - name: Real Qwen ASR -> Vietnamese LLM translation -> TTS -> MP4
+        run: |
+          python ci_qwen3_dub_e2e.py --source sample/source.mp4 \
+            --transcript qwen_asr/segments.json --out dubbed \
+            --llm-provider ollama --llm-model qwen2.5:3b
+      - name: Verify actual dubbed video and speech count
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          q=json.loads(Path("dubbed/qa.json").read_text())
+          assert q["technical_pass"] is True
+          assert q["human_approved"] is False
+          assert q["asr_engine"]=="qwen3_asr"
+          lines=json.loads(Path("dubbed/review_lines.json").read_text())
+          assert len(lines)==q["timed_source_lines"]
+          assert q["tts"]["real_audio_files"]==len(lines)
+          assert q["video"]["size_bytes"]>10000
+          assert Path("dubbed/chinese_vidub_UNAPPROVED.mp4").is_file()
+          PY
+      - name: Upload Qwen-to-Vietnamese QA even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen3-real-mandarin-dub-qa
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            dubbed/qa.json
+            dubbed/review_lines.json
+      - name: Upload video and SRT for user review
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen3-real-mandarin-dub-video-UNAPPROVED
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            dubbed/chinese_vidub_UNAPPROVED.mp4
+            dubbed/chinese_source.srt
+            dubbed/vietnamese_review.srt

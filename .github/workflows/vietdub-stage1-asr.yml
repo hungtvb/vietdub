@@ -1,0 +1,47 @@
+name: VietDub 1 - Whisper ASR
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/run-vietdub-20261016]
+    paths: ['.github/workflows/vietdub-stage1-asr.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  asr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install real ASR dependencies
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install gdown
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install 'faster-whisper>=1.1,<2'
+      - name: Restore speaker diarization from real prior run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p prior_asr
+          gh run download 38853004135 -R "${{ github.repository }}" -n vietdub-asr-handoff -D prior_asr
+          test -s prior_asr/asr-handoff.json
+      - name: Download original video
+        run: |
+          mkdir -p private_input output
+          gdown '1hIdUbh_DAjlUdu1g39GTWJnfLOK-ZL7G' -O private_input/input.mp4
+          test -s private_input/input.mp4
+      - name: Run actual ASR
+        run: python ci_stage1_asr.py --model large-v3-turbo
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vietdub-whisper-asr-handoff
+          path: |
+            output/asr-handoff.json
+            output/whisper-raw-and-qa.json
+          if-no-files-found: warn
+          retention-days: 7

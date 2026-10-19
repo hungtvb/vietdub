@@ -20,7 +20,7 @@ Return ONLY a valid JSON object, no other text:
 {
   "speakers": [
     { "id": 0,
-      "role": "the person's role (e.g. young reporter)",
+      "role": "a concrete inferred role, such as football interviewee",
       "tone": "formal | friendly | neutral",
       "relations": [
         { "audience": "audience | all | <speaker id as string>",
@@ -44,34 +44,83 @@ Rules for audience per line:
 
 Rules for relations (one entry per distinct audience of that speaker; mark the most frequent audience as is_default):
 - News anchor / reporter / narrator -> audience: "tôi" / "quý vị".
-- Interviewee / guest / attendee -> reporter: "tôi" / "anh". This is the conventional Vietnamese dubbing default for Chinese news programs; the user can correct it at review.
+- Interviewee / guest / attendee -> reporter: "tôi" / "anh". This is a conventional Vietnamese dubbing default for news programs; the user can correct it at review.
 - Young reporter interviewing an older official in a NON-news chat setting -> reporter says "em", calls them "anh"/"chị".
 - Married couple -> "anh"/"em". Close friends, classmates, peers chatting informally -> "tớ"/"cậu" or "tôi"/"bạn".
 - Do NOT use "tôi"/"bạn" as a lazy default in news, interview, or formal settings. Only use it when the speakers are clearly informal peers.
 - If truly nothing can be determined -> "tôi" / "bạn"."""
 
-TRANSLATE_SYSTEM = """You are a professional dubbing translator translating video dialogue from
-Chinese to Vietnamese.
+TRANSLATE_SYSTEM = """You are a professional audiovisual translator. Translate the ORIGINAL
+source-language speech into natural spoken VIETNAMESE for dubbing.
 
-You receive: (1) VIDEO CONTEXT (genre/style, may be absent), (2) a speaker-relationship table with locked pronouns per (speaker, audience) pair - a speaker may have SEVERAL pairs, (3) previous lines for CONTEXT ONLY, (4) a list of lines to translate: id, speaker -> audience, start/end time, Chinese text.
+Input contains VIDEO CONTEXT (only a hint), a locked speaker/audience pronoun
+table, CONTEXT ONLY previous lines, and lines with exact source IDs to translate.
+The transcript may be noisy, disfluent, cut across segments, or multilingual.
 
-Requirements:
-- For EACH line, look up its (speaker, audience) pair in the relationship table and use EXACTLY those pronouns for that line. Different lines of the same speaker may need different pronouns.
-- If a line's (speaker, audience) pair is not in the table, use the pair marked [default] for that speaker.
-- The "previous lines" are CONTEXT ONLY: never translate them, never include their ids in your JSON output.
-- Translate naturally, as spoken Vietnamese - short, fluent lines easy to read aloud.
-- Keep the exact number of lines and their ids - do NOT merge, split, or drop lines.
-- No commentary, no explanations.
+MANDATORY TRANSLATION RULES (in priority order):
+1. The original source utterance is the authority. Translate EVERY meaningful
+   clause into Vietnamese. Do not omit qualifiers, actions, subjects, negation,
+   modality, comparisons, dates, numbers, identities, or cause and effect.
+   Do not reverse who did what to whom. Do not invent missing words or facts.
+2. OUTPUT LANGUAGE: The text_vi field MUST be fluent Vietnamese, not a mix of
+   Vietnamese and the original script. Never copy Hanzi, Chinese/Japanese kana,
+   Korean Hangul or other non-Vietnamese source-script fragments into text_vi.
+   Never invent non-Latin characters even when the source is entirely English.
+   Translate the meaning of each such fragment. For names, use a known Vietnamese
+   rendering or a Latin-letter transliteration, NOT source-script characters.
+   Preserve exact Latin-script proper names when appropriate.
+3. Every requested source ID maps to ONE Vietnamese string with that SAME ID.
+   Never merge/split/drop an utterance, duplicate the previous translation, use
+   contextual lines as translated output, or invent an answer to a question.
+4. Preserve the original communicative intent: question stays a question,
+   answer stays an answer, request stays a request, and rhetorical or indirect
+   questions keep their meaning. ASR punctuation may be unreliable; prioritize
+   the spoken wording and surrounding dialogue over punctuation alone.
+5. Use exactly the locked (speaker, audience) pronoun pair for each source line.
+   If absent, use that speaker's default pair. Avoid adding extra pronouns or
+   dialogue the source did not contain.
+6. Be concise and natural enough to speak within each line's start/end times.
+   Condense filler and repetitions, NOT important source facts. Do not truncate
+   sentences simply to shorten dubbing. An interrupted utterance should remain
+   a natural, faithful fragment without invented completion.
+7. Before returning JSON, check EACH line for leftover source script, omitted
+   source meaning, wrong identities, changed negation, changed question/answer
+   intent, duplicated target text for unrelated sources, and incorrect IDs.
 
-Return ONLY valid JSON: { "translations": [ { "id": 0, "text_vi": "..." } ] }"""
+Return ONLY a valid JSON object, without markdown or commentary:
+{"translations":[{"id":0,"text_vi":"Bản dịch hoàn toàn bằng tiếng Việt."}]}
+Replace the example ID 0 with each ACTUAL requested source ID; include all and
+only those IDs exactly once."""
+
+# Small local LLMs may fail or loop when a large video-level translation
+# prompt is reused for ONE failed/repeated line. This is a dedicated fallback
+# that still preserves the source-ID and locked speaker-pronoun contract.
+SINGLE_LINE_TRANSLATE_SYSTEM = """Translate EXACTLY ONE source-language
+video dialogue utterance into natural spoken Vietnamese.
+Use the original utterance in 'Lines to translate' as the authority.
+Use the locked speaker/audience pronouns from the input. Other lines are
+context only, not output. Do not invent, drop or repeat speech.
+Preserve questions, negations, people, numbers, names, actions and intent.
+text_vi MUST be entirely Vietnamese: translate Chinese Hanzi, Japanese kana
+and Korean Hangul into Vietnamese; proper names can use Latin letters.
+Keep the phrase concise for its subtitle/dubbing interval.
+Return ONLY JSON {"translations":[{"id":ACTUAL_ID,"text_vi":"..."}]}.
+Replace ACTUAL_ID with the exact requested ID. No notes, extra lines or markdown.
+"""
+
 
 # Edge case 9: proper names must be kept / transliterated, never translated
 # by meaning. Appended to the translate system prompt.
 PROPER_NOUN_RULE = """
-Proper-name rule: keep Chinese proper names of people and places as-is or
-transliterate them into Han-Viet reading (e.g. 乌兰察布 -> O Lan Sat Bo /
-Ô Lan Sát Bố). NEVER translate a proper name by its literal meaning.
+Proper-name rule: NEVER translate a proper name by its literal meaning.
+Keep consistent character and location name spellings across scenes.
+For Chinese source: interpret Simplified and Traditional Chinese and choose a
+consistent customary Vietnamese name or Latin-letter transliteration.
+Never leave Hanzi inside the Vietnamese target field even for proper names.
+For English/other sources: preserve established names and avoid invented
+translations of names or cultural references.
 {custom_names}"""
+
 
 CUSTOM_NAMES_TMPL = ("Additionally, the user provided these known names - always "
                      "render them exactly like this: {names}.")
@@ -96,8 +145,10 @@ def build_translate_user(rel_table: list[str], lines: list[str],
     return ("Speaker relationship table (LOCKED pronouns):\n"
             + "\n".join(rel_table)
             + "\n\n" + ctx
-            + "Lines to translate (return exactly these ids):\n"
+            + "SOURCE UTTERANCES (return exactly these ids): translate all and ONLY these IDs into "
+              "fluent Vietnamese, with NO untranslated source-script words:\n"
             + "\n".join(lines)
+            + "\nReturn JSON translations with these exact IDs and no others."
             + custom)
 
 
@@ -106,7 +157,30 @@ def translate_system_with_names(proper_nouns: list[str] | None = None,
     custom = ""
     if proper_nouns:
         custom = CUSTOM_NAMES_TMPL.format(names=", ".join(proper_nouns))
-    return (TRANSLATE_SYSTEM + video_context_block(video_metadata)
+    from asr.source_language import LANGUAGE_NAMES, normalize_language
+    source = normalize_language((video_metadata or {}).get("source_language", "und"))
+    label = LANGUAGE_NAMES.get(source, source)
+    mixed = bool((video_metadata or {}).get("language_review_required", False))
+    language_guide = (
+        "\nSOURCE LANGUAGE: " + label + " (" + source + "). "
+        "Use the [lang=...] marker on each dialogue line when present. "
+        "Never assume the source language is Chinese or English. "
+        "Translate idioms, titles, kinship terms and local context accurately. "
+        "If code-switching or names are ambiguous, preserve evidence for review.\n"
+    )
+    chinese_guide = (
+        "\nCHINESE-SPECIFIC: handle Simplified and Traditional Chinese, "
+        "idioms, names, honorifics, particles, time expressions and "
+        "implicit subjects accurately. Ground entities and terminology in "
+        "THIS video's source transcript and context. Preserve negation, "
+        "causality, numbers, and roles. Never import names or assumptions "
+        "from an unrelated video. Translate every Chinese phrase into natural "
+        "Vietnamese, including proper nouns using Latin/Vietnamese writing. "
+        "Never copy Hanzi as-is into text_vi, even when the input sentence is "
+        "fragmented or the earlier Vietnamese draft contains Hanzi.\n"
+    ) if source == "zh" or mixed else ""
+    return (TRANSLATE_SYSTEM + language_guide + chinese_guide
+            + video_context_block(video_metadata)
             + PROPER_NOUN_RULE.format(custom_names=custom))
 
 
@@ -136,7 +210,7 @@ Return ONLY a valid JSON object, no other text:
   "tone_notes": "1-2 sentences describing the tone, in English"
 }
 
-Base your judgment on vocabulary, topics, speaker roles, and how people address each other. Speaker roles like "news anchor" or "cartoon narrator" are strong genre signals."""
+Base your judgment on vocabulary, topics, speaker roles, and how people address each other. Speaker roles like "news anchor" or "cartoon narrator" are strong genre signals. A football interview talking about school education is an interview FORMAT, not a classroom education video. Never output template placeholders as actual roles."""
 
 
 def build_video_meta_user(sample_lines: list[str], rel_lines: list[str],
@@ -155,7 +229,7 @@ ARBITER_SYSTEM = """You are an arbiter deciding the final speaker relationship t
 
 You receive a SUMMARY table: each speaker was analyzed independently in several batches (different parts of the video). For each speaker you see per batch: their relations list (audience -> pronouns), line counts, and role. A speaker may address different audiences; conflicts between batches are highlighted.
 
-You also receive the video's overall metadata (genre/style/setting/tone) and a few controversial sample lines (original Chinese text) from speakers whose batches disagreed. Use them as evidence to resolve conflicts; mention in "note" which evidence tipped your choice.
+You also receive the video's overall metadata (genre/style/setting/tone) and a few controversial sample lines (original-language text) from speakers whose batches disagreed. Use them as evidence to resolve conflicts; mention in "note" which evidence tipped your choice.
 
 Task: produce ONE locked relationship table for the whole video. Each speaker gets ONE relations list = the union of audiences seen across batches.
 
@@ -200,7 +274,67 @@ def build_arbiter_user(summary_lines: list[str],
                 parts.append(f"- {k}: {v}")
     if controversial_lines:
         parts.append("")
-        parts.append("CONTROVERSIAL SAMPLE LINES (original Chinese text, "
+        parts.append("CONTROVERSIAL SAMPLE LINES (original-language text, "
                      "from speakers whose batches disagreed):")
         parts.extend(controversial_lines)
     return "\n".join(parts)
+
+
+# --- Video-independent repair prompts for small multilingual LLMs ----------
+
+def repair_system_prompt(line_id: int, *, source_script_remains: bool = False,
+                         concise_retry: bool = False) -> str:
+    """Focused one-line revision instructions; no video/topic-specific terms."""
+    # The second attempt reduces instruction overhead for Qwen2.5 3B.
+    # A concise source-only retry is less likely to copy a broken draft or
+    # trigger Ollama's token repetition limit. Never reduce ID/QA guards.
+    if concise_retry:
+        task = ("FULL RETRANSLATION " if source_script_remains else
+                "SOURCE-GROUNDED CORRECTION ")
+        return (
+            task + "of ONE original speech utterance into spoken Vietnamese. "
+            "Translate the WHOLE original sentence, not the failed draft. "
+            "Output ONLY Vietnamese words and Latin-script proper names; "
+            "no Hanzi, kana, Hangul, or original-language phrases. "
+            "Do not drop question intent, negation, names, numbers or events. "
+            "Do not invent a reply or context. Short, natural dubbing text. "
+            f'Return ONLY JSON {{"id":{line_id},"text_vi":"..."}} with id exactly '
+            f'{line_id}. No extra lines or explanation.'
+        )
+    common = (
+        "You are correcting ONE Vietnamese dubbing translation. "
+        "The original source-language utterance is the ground truth; "
+        "neighboring utterances provide context ONLY, not output text. "
+        "Retain all source facts, speaker, entities, negation, questions, "
+        "actions and relations. Do not add answers, explanations or dialogue. "
+        "If the transcript is noisy, do not invent unsupported content. "
+        "Translate naturally and concisely for spoken Vietnamese. "
+        "Return ONLY a valid JSON object with EXACTLY two keys: "
+        '"id" (integer) and "text_vi" (Vietnamese string). '
+        f'The id MUST be {line_id}, not 0 or a neighboring id. '
+        f'Exact response shape: {{"id":{line_id},"text_vi":"..."}}. '
+        "No markdown, source quotations or any other text."
+    )
+    if source_script_remains:
+        return (
+            "TASK: FULL RETRANSLATION FROM THE ORIGINAL SOURCE, not a partial "
+            "word replacement or a continuation of the previous draft. "
+            "The previous Vietnamese draft contains untranslated foreign-script "
+            "words. It is WRONG; use the original utterance, not the draft, "
+            "to translate the COMPLETE meaningful line. "
+            "Write 100% natural Vietnamese in text_vi. Zero Hanzi/Chinese "
+            "characters, Japanese kana or Hangul are allowed in text_vi. "
+            "Translate foreign phrases, including the highlighted leftovers, "
+            "into Vietnamese words. For proper names, use conventional "
+            "Vietnamese forms or Latin-letter transliteration, never Hanzi. "
+            "Preserve the sentence's question or statement meaning, all "
+            "negation, numbers and relationships. "
+            + common
+        )
+    return (
+        "TASK: Correct the exact semantic or structural mistakes listed "
+        "by QA against the ORIGINAL utterance. Translate any foreign-script "
+        "fragments into Vietnamese, preserve question intent and all "
+        "source facts. Keep the resulting sentence short enough to dub. "
+        + common
+    )

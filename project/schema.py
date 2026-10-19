@@ -27,6 +27,11 @@ class Segment:
     # who this line is addressed to: speaker id as str, "audience"
     # (viewers in general), "all" (everyone present), or "" (unknown)
     audience: str = ""
+    source_lang: str = ""   # ISO 639-1 code for this utterance, if known
+    detected_speaker: Optional[int] = None  # source cluster before manual identity remap
+    character_id: str = ""
+    character_name: str = ""
+    identity_status: str = "UNVERIFIED"  # human-verified identity != ASR QA
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -85,6 +90,8 @@ class Speaker:
     confidence: float = 0.0
     median_hz: float = 0.0
     role: str = ""
+    character_name: str = ""
+    identity_verified: bool = False
     speaking_to: str = ""     # legacy: default relation's audience
     pronoun_i: str = "tôi"    # default pair (kept in sync with relations)
     pronoun_you: str = "bạn"  # default pair (kept in sync with relations)
@@ -137,7 +144,9 @@ class Project:
     video_url: str = ""          # set when video_source == "url"
     video_in: str = ""           # local input path (or resolved path after fetch)
     video_out: str = ""
-    src_lang: str = "zh"
+    src_lang: str = "auto"  # user selection: auto | en | zh | ja | ...
+    detected_src_lang: str = "und"  # acoustic result; never overwrites user selection
+    language_review_required: bool = False
     dst_lang: str = "vi"
     audio_track: int = 0       # edge 12: which audio track to extract (Wave 2: dropdown)
     voice_male: str = "vi-VN-NamMinhNeural"

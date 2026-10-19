@@ -56,7 +56,14 @@ def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
         if not f.exists():
             raise RenderError(f"Không tìm thấy {name}: {f}")
 
-    if sub_mode == "srt":
+    if sub_mode == "none":
+        # Dub-only: stream-copy original video and mux Vietnamese audio.
+        # No overlay, subtitles stream, or sidecar subtitle is produced.
+        cmd = [_bin.ffmpeg_cmd(), "-y", "-i", str(video_in), "-i", str(mixed_wav),
+               "-map", "0:v:0", "-map", "1:a:0",
+               "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+               "-sn", "-shortest", str(out_mp4)]
+    elif sub_mode == "srt":
         sidecar = out_mp4.with_suffix(".srt")
         sidecar.write_bytes(srt_path.read_bytes())
         cmd = [_bin.ffmpeg_cmd(), "-y", "-i", str(video_in), "-i", str(mixed_wav),
@@ -87,7 +94,7 @@ def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
                "-c:a", "aac", "-b:a", "192k",
                "-shortest", str(out_mp4)]
     else:
-        raise RenderError(f"sub_mode không hợp lệ: {sub_mode} (chọn 'burn' hoặc 'srt')")
+        raise RenderError(f"sub_mode không hợp lệ: {sub_mode} (chọn 'none', 'burn' hoặc 'srt')")
 
     log.debug("render cmd: %s", " ".join(cmd[:6]) + " ...")
     p = subprocess.run(cmd, capture_output=True, text=True)

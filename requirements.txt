@@ -10,6 +10,7 @@ addict                      # modelscope dep (not declared upstream)
 datasets                    # modelscope dep (not declared upstream)
 pillow                      # modelscope dep (not declared upstream)
 simplejson                  # modelscope dep (not declared upstream)
+sortedcontainers            # modelscope config JSON dependency
 kaldi-native-fbank          # funasr fbank backend (or: pip install torchaudio)
 librosa                     # pitch (pyin) for speaker gender
 soundfile                   # wav read/write

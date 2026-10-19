@@ -1,0 +1,80 @@
+name: VietDub Mandarin ASR comparison
+
+on:
+  workflow_dispatch:
+    inputs:
+      whisper_model:
+        description: "Whisper model (small recommended for free CPU runner)"
+        required: true
+        type: choice
+        options:
+          - small
+          - medium
+        default: small
+  push:
+    branches: [ci/run-vietdub-20261016]
+    paths:
+      - '.github/workflows/vietdub-chinese-compare.yml'
+      - 'ci_chinese_compare.py'
+      - 'asr/chinese_comparison.py'
+      - 'tests/test_chinese_comparison.py'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  compare-mandarin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      WHISPER_MODEL: ${{ inputs.whisper_model || 'small' }}
+      HF_HOME: ${{ github.workspace }}/.hf_models
+      OMP_NUM_THREADS: "4"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install audio decoder and Whisper
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          pip install 'faster-whisper>=1.1,<2' opencc-python-reimplemented numpy pytest
+      - name: Restore Whisper model cache
+        uses: actions/cache@v4
+        with:
+          path: .hf_models
+          key: ${{ runner.os }}-vietdub-whisper-${{ env.WHISPER_MODEL }}-v1
+      - name: Restore actual FunASR transcript from previous successful run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p comparison/prior
+          gh run download 38889560826 -R "${{ github.repository }}" \
+            -n vietdub-mandarin-real-asr-full -D comparison/prior
+          test -s comparison/prior/report.json
+      - name: Download identical Mandarin interview audio
+        run: |
+          curl --fail --location --retry 4 \
+            --user-agent 'VietDubRegression/1.0 (open-source ASR QA)' \
+            'https://upload.wikimedia.org/wikipedia/commons/c/c3/%E3%80%90%E4%B8%A4%E4%BC%9A30%E7%A7%92%E3%80%91%E6%B0%B4%E5%BA%86%E9%9C%9E%EF%BC%9A%E4%B8%AD%E5%9B%BD%E5%A5%B3%E8%B6%B3%E9%9D%9E%E4%B8%96%E7%95%8C%E9%A1%B6%E7%BA%A7%EF%BC%8C%E4%BD%86%E4%BC%9A%E4%B8%8D%E6%96%AD%E8%BF%BD%E8%B5%B6.webm' \
+            -o comparison/mandarin.webm
+          test -s comparison/mandarin.webm
+      - name: Compare actual Chinese transcript against Whisper
+        run: |
+          python ci_chinese_compare.py \
+            --video comparison/mandarin.webm \
+            --funasr-report comparison/prior/report.json \
+            --out comparison/report.json \
+            --seconds 30 \
+            --model "$WHISPER_MODEL"
+      - name: Upload original comparison evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vietdub-chinese-funasr-vs-whisper
+          path: comparison/report.json
+          if-no-files-found: warn
+          retention-days: 14

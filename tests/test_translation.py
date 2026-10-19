@@ -443,3 +443,148 @@ def test_translate_user_marks_context_not_to_translate():
     # không context -> không có section context
     u2 = prompts.build_translate_user(["SPEAKER_0: ..."], ["[2] X: y"])
     assert "CONTEXT ONLY" not in u2
+
+
+
+
+def test_normal_translation_flags_source_echo_for_review():
+    from project.schema import Segment
+    segment=Segment(index=0,start=0,end=3,speaker=0,
+                    text_src="你好",source_lang="zh")
+    t=FakeTranslator([json.dumps({"translations":[{"id":0,"text_vi":"你好"}]},
+                                      ensure_ascii=False)])
+    out=t.translate([segment],make_speakers())
+    assert out[0].needs_review is True
+
+
+def test_normal_translation_does_not_impose_a_domain_glossary():
+    from project.schema import Segment
+    seg=Segment(index=0,start=0,end=3,speaker=0,
+                text_src="The contract lasts six months.",source_lang="en")
+    t=FakeTranslator([json.dumps({"translations":[{"id":0,
+               "text_vi":"Hợp đồng kéo dài sáu tháng."}]},ensure_ascii=False)])
+    assert t.translate([seg],make_speakers())[0].needs_review is False
+
+
+def test_distinct_source_lines_do_not_silently_share_batch_translation():
+    import json
+    from project.schema import Segment
+    sources=["The post office closes at noon.",
+             "We will deliver the parcel on Tuesday.",
+             "Please sign the receipt before leaving.",
+             "Thank you for the update."]
+    lines=[Segment(index=i,start=i*3,end=i*3+2,speaker=0,
+                   text_src=source,source_lang="en")
+           for i,source in enumerate(sources)]
+    collapsed=json.dumps({"translations":[{"id":i,"text_vi":
+        ("Đến lấy bưu kiện tại quầy." if i<3 else "Cảm ơn.")
+        } for i in range(4)]},ensure_ascii=False)
+    replacements=[
+        "Bưu điện đóng cửa lúc trưa.",
+        "Chúng tôi giao hàng vào thứ Ba.",
+        "Vui lòng ký vào biên nhận trước khi đi."]
+    replies=[collapsed]+[
+        json.dumps({"translations":[{"id":i,"text_vi":vi}]},
+                   ensure_ascii=False) for i,vi in enumerate(replacements)]
+    t=FakeTranslator(replies)
+    result=t.translate(lines,make_speakers())
+    assert [s.text_vi for s in result][:3]==replacements
+    assert result[3].text_vi=="Cảm ơn."
+    assert t.last_translation_collapse["suspicious_ids"]==[0,1,2]
+    assert t.last_translation_collapse["repaired_ids"]==[0,1,2]
+    assert all(s.needs_review for s in result[:3])
+
+
+def test_individual_translation_rejects_wrong_id_even_if_text_is_present():
+    from project.schema import Segment
+    line=Segment(index=7,start=0,end=2,speaker=0,text_src="Where are you?",
+                 source_lang="en")
+    wrong=json.dumps({"translations":[{"id":0,
+         "text_vi":"Bạn đang ở đâu?"}]},ensure_ascii=False)
+    correct=json.dumps({"translations":[{"id":7,
+         "text_vi":"Bạn đang ở đâu?"}]},ensure_ascii=False)
+    t=FakeTranslator([wrong,correct])
+    assert t._translate_single("Translate",[],line)=="Bạn đang ở đâu?"
+    assert t.calls==2
+
+
+def test_multiple_identical_translations_for_unrelated_sources_trigger_qa():
+    from project.schema import Segment
+    from translation.quality import structural_issues
+    sources=["Where is the train?","The doctor opened the window.",
+             "Please call the school."]
+    lines=[Segment(index=i,start=i*2,end=i*2+1.5,speaker=0,
+           source_lang="en",text_src=src,text_vi="Tàu đã đến.")
+           for i,src in enumerate(sources)]
+    assert all("REPEATED_TRANSLATION_DISTINCT_SOURCES" in
+               structural_issues(lines)[i] for i in range(3))
+
+
+
+def test_translation_prompt_is_vietnamese_only_and_video_agnostic():
+    from translation import prompts
+    p=prompts.translate_system_with_names([],{"source_language":"zh"})
+    assert "text_vi" in p
+    assert "Hanzi" in p
+    assert "question stays a question" in p
+    assert "all and" not in p.lower() or "all" in p.lower()
+    assert "Asian Cup" not in p
+    assert "football" not in p.lower()
+    assert "preserve" in p.lower()
+
+
+def test_repair_prompt_uses_correct_actual_id_and_full_retranslation():
+    from translation import prompts
+    text=prompts.repair_system_prompt(9,source_script_remains=True)
+    assert '"id":9' in text
+    assert "not 0" in text
+    assert "FULL RETRANSLATION" in text
+    assert "Zero Hanzi" in text
+    assert "draft" in text
+    other=prompts.repair_system_prompt(3,source_script_remains=False)
+    assert '"id":3' in other
+    assert "semantic" in other.lower()
+
+
+
+def test_fallback_single_line_prompt_stays_short_and_preserves_json_contract():
+    from translation.prompts import SINGLE_LINE_TRANSLATE_SYSTEM as system
+    assert len(system) < 1300
+    assert "Vietnamese" in system
+    assert "Hanzi" in system
+    assert "ACTUAL_ID" in system
+    assert "negations" in system
+
+
+
+def test_batch_translation_rejects_punctuation_only_even_with_correct_ids():
+    from project.schema import Segment
+    srcs=[Segment(index=i,start=i*2,end=i*2+2,speaker=0,
+         source_lang="en",text_src=f"Real spoken sentence {i}.")
+         for i in range(2)]
+    broken=json.dumps({"translations":[{"id":0,"text_vi":"Xin chào"},
+            {"id":1,"text_vi":"..."}]},ensure_ascii=False)
+    fixed=json.dumps({"translations":[{"id":0,"text_vi":"Xin chào"},
+            {"id":1,"text_vi":"Tôi rất vui"}]},ensure_ascii=False)
+    trans=FakeTranslator([broken,fixed])
+    result=trans.translate(srcs,make_speakers())
+    assert [s.text_vi for s in result]==["Xin chào","Tôi rất vui"]
+    assert trans.calls==2
+
+
+
+def test_target_script_integrity_is_independent_of_source_language():
+    from project.schema import Segment
+    from translation.quality import foreign_script_chars,structural_issues
+    zh=Segment(index=0,start=0,end=3,speaker=0,source_lang="en",
+         text_src="We celebrate Christmas.",text_vi="Chúng tôi mừng 圣诞夜.")
+    ko=Segment(index=1,start=3,end=6,speaker=0,source_lang="en",
+         text_src="I am at home.",text_vi="Tôi đang 집.")
+    jp=Segment(index=2,start=6,end=9,speaker=0,source_lang="ja",
+         text_src="新年おめでとう。",text_vi="Chúc mừng năm mới.")
+    issues=structural_issues([zh,ko,jp])
+    assert 0 in issues and "SOURCE_SCRIPT_REMAINS" in issues[0]
+    assert 1 in issues and "SOURCE_SCRIPT_REMAINS" in issues[1]
+    assert 2 not in issues
+    assert foreign_script_chars("Chúng tôi rất vui — số 2026!") == []
+    assert foreign_script_chars("圣诞夜") != []
