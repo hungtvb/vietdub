@@ -291,7 +291,17 @@ def _source_clauses_for_recovery(source):
     Very short or punctuation-free text should NOT be split on guessed chars.
     """
     import re
-    if sum("\u3400" <= c <= "\u9fff" for c in source) < 25:
+    if sum("\u3400" <= c <= "\u9fff" for c in source) < 12:
         return []
+    # First use full-sentence boundaries; for a single compound sentence,
+    # fall back to REAL comma-delimited clauses (never arbitrary char slices).
     clauses=[s.strip() for s in re.split(r"(?<=[。！？])",source) if s.strip()]
-    return clauses if 2 <= len(clauses) <= 4 else []
+    if len(clauses) < 2:
+        clauses=[s.strip() for s in re.split(r"(?<=[，；])",source) if s.strip()]
+    if not 2 <= len(clauses) <= 4:
+        return []
+    # Do not split off a meaningless one-character filler into a standalone
+    # LLM call. It should stay with the following phrase for context.
+    if any(sum("\u3400" <= c <= "\u9fff" for c in s) < 3 for s in clauses):
+        return []
+    return clauses

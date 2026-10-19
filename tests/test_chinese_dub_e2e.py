@@ -463,3 +463,33 @@ def test_english_source_with_llm_hallucinated_hanzi_gets_full_retranslation():
     assert result["llm_revision_calls"]==1
     assert not result["unresolved"]
     assert "Giáng sinh" in line.text_vi
+
+
+
+def test_chinese_source_with_two_comma_clauses_can_recover():
+    import json
+    from translation.llm_e2e import _source_clauses_for_recovery, revise_flagged_lines
+    source="战胜疫情，祝全球华侨华人新春快乐。"
+    parts=_source_clauses_for_recovery(source)
+    assert len(parts)==2
+    class Fake:
+        def __init__(self):self.calls=0
+        def _chat(self,system,user):
+            data=json.loads(user)
+            self.calls+=1
+            if "source_clause_to_translate" not in data:
+                return json.dumps({"id":1,"text_vi":"Vượt qua 疫情."},
+                                  ensure_ascii=False)
+            translation=("Chiến thắng dịch bệnh." if len(data["source_clause_to_translate"])<6
+                         else "Chúc cộng đồng người Hoa khắp thế giới đón xuân vui vẻ.")
+            return json.dumps({"id":1,"text_vi":translation},ensure_ascii=False)
+    seg=Segment(index=1,start=0,end=15,speaker=0,source_lang="zh",
+        text_src=source,text_vi="Triệt tiêu 疫情, chúc toàn cầu 华人.")
+    p=Fake()
+    report=revise_flagged_lines([seg],p,max_attempts=1,flagged=[
+        {"id":1,"reasons":["SOURCE_SCRIPT_REMAINS"]}])
+    assert len(report["revised"])==1
+    assert p.calls==3
+    assert not report["unresolved"]
+    assert "dịch bệnh" in seg.text_vi
+    assert "người Hoa" in seg.text_vi
