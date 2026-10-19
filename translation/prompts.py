@@ -127,7 +127,7 @@ def build_translate_user(rel_table: list[str], lines: list[str],
     return ("Speaker relationship table (LOCKED pronouns):\n"
             + "\n".join(rel_table)
             + "\n\n" + ctx
-            + "SOURCE UTTERANCES — translate all and ONLY these IDs into "
+            + "SOURCE UTTERANCES (return exactly these ids): translate all and ONLY these IDs into "
               "fluent Vietnamese, with NO untranslated source-script words:\n"
             + "\n".join(lines)
             + "\nReturn JSON translations with these exact IDs and no others."
