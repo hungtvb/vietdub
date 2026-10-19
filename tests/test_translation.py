@@ -518,3 +518,29 @@ def test_multiple_identical_translations_for_unrelated_sources_trigger_qa():
            for i,src in enumerate(sources)]
     assert all("REPEATED_TRANSLATION_DISTINCT_SOURCES" in
                structural_issues(lines)[i] for i in range(3))
+
+
+
+def test_translation_prompt_is_vietnamese_only_and_video_agnostic():
+    from translation import prompts
+    p=prompts.translate_system_with_names([],{"source_language":"zh"})
+    assert "text_vi" in p
+    assert "Hanzi" in p
+    assert "question stays a question" in p
+    assert "all and" not in p.lower() or "all" in p.lower()
+    assert "Asian Cup" not in p
+    assert "football" not in p.lower()
+    assert "preserve" in p.lower()
+
+
+def test_repair_prompt_uses_correct_actual_id_and_full_retranslation():
+    from translation import prompts
+    text=prompts.repair_system_prompt(9,source_script_remains=True)
+    assert '"id":9' in text
+    assert "not 0" in text
+    assert "FULL RETRANSLATION" in text
+    assert "Zero Hanzi" in text
+    assert "draft" in text
+    other=prompts.repair_system_prompt(3,source_script_remains=False)
+    assert '"id":3' in other
+    assert "semantic" in other.lower()

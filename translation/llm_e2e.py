@@ -114,6 +114,7 @@ def revise_flagged_lines(segments,provider,max_attempts=3,flagged=None):
     """
     from translation.base import _parse_json
     from translation.quality import structural_issues
+    from translation import prompts
     if not 1 <= max_attempts <= 5:
         raise ValueError("Invalid revision count")
     original=flagged if flagged is not None else translation_quality_flags(segments)["issues"]
@@ -129,38 +130,41 @@ def revise_flagged_lines(segments,provider,max_attempts=3,flagged=None):
         pos=next(i for i,s in enumerate(segments) if s.index==idx)
         seg=segments[pos]
         problems=item.get("issues") or item.get("reasons") or []
+        problem_names={
+            p.get("category","") if isinstance(p,dict) else str(p)
+            for p in problems
+        }
+        needs_full_translation="SOURCE_SCRIPT_REMAINS" in problem_names
         rejections=[]
         for attempt in range(1,max_attempts+1):
             context=[
-                {"id":s.index,"source":s.text_src,"draft_vi":s.text_vi}
+                {"id":s.index,"source":s.text_src}
                 for s in segments[max(0,pos-2):min(len(segments),pos+3)]
                 if s.index != idx]
+            # The source is the authority; drafts are supplied only to help
+            # diagnose errors, never as a translation template. On foreign-
+            # script leakage the request explicitly demands FULL retranslation.
+            leftover_script = [
+                ch for ch in (seg.text_vi or "")
+                if "\u3400" <= ch <= "\u9fff"
+                or "\u3040" <= ch <= "\u30ff"
+                or "\uac00" <= ch <= "\ud7af"
+            ]
             user=json.dumps({
                 "requested_id":idx,
-                "required_response_id":idx,
                 "source_language":seg.source_lang,
-                "source":seg.text_src,
-                "previous_draft_vi":seg.text_vi,
+                "ORIGINAL_SOURCE_TO_TRANSLATE":seg.text_src,
+                "wrong_draft_for_diagnosis_only":seg.text_vi,
+                "source_script_leaks_in_wrong_draft":"".join(leftover_script)[:120],
+                "full_retranslation_required":needs_full_translation,
                 "errors_to_correct":problems,
-                "context_only":context,
-                "prior_rejection_reasons":rejections[-2:],
-                "max_spoken_words":max(6,int((seg.end-seg.start)*4.2)),
-                "preserve_question":("?" in seg.text_src or "？" in seg.text_src),
+                "neighboring_source_CONTEXT_ONLY":context,
+                "last_rejected_attempt_reasons":rejections[-2:],
+                "suggested_max_spoken_words":max(6,int((seg.end-seg.start)*4.2)),
+                "source_may_be_interrogative":("?" in seg.text_src or "？" in seg.text_src),
             },ensure_ascii=False)
-            system=(
-                "Bạn là biên dịch viên lồng tiếng Việt từ mọi ngôn ngữ. "
-                "Hãy sửa đúng MỘT câu theo bản gốc, ngữ cảnh và lỗi QA. "
-                "Giữ nguyên mọi thực thể, người nói, quan hệ nhân vật, "
-                "số liệu, phủ định, điều kiện, sự kiện và sắc thái gốc. "
-                "Không tự thêm thông tin hoặc thuật ngữ từ video khác. "
-                "Không lặp bản dịch của câu trước hoặc câu sau. "
-                "Nếu câu nguồn là câu hỏi, giữ ý hỏi (bao gồm câu hỏi tu từ). "
-                "Ưu tiên ngắn gọn đủ đọc theo mốc thời gian, không lặp câu. "
-                f"Trả về đúng JSON {{\"id\":{idx},\"text_vi\":\"...\"}}. "
-                f"ID BẮT BUỘC bằng {idx}, không phải id=0 nếu câu đang sửa không phải 0. "
-                "Nội dung tiếng Việt tự nhiên, dễ đọc, không tự thêm câu trả lời "
-                "vào một câu nguồn chỉ đang đặt câu hỏi."
-            )
+            system=prompts.repair_system_prompt(
+                idx,source_script_remains=needs_full_translation)
             calls+=1
             try:
                 data=_parse_json(provider._chat(system,user))

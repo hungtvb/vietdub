@@ -282,3 +282,38 @@ def test_all_lines_flagged_by_small_reviewer_prevents_mass_rewrite():
     assert qa["auto_repair_eligible_ids"]==[]
     assert qa["flagged_lines"]==10
     assert qa["human_approved"] is False
+
+
+
+def test_repair_hanzi_leak_uses_original_and_target_only_vietnamese():
+    import json
+    from project.schema import Segment
+    from translation.llm_e2e import revise_flagged_lines
+    from translation.quality import structural_issues
+
+    class Recorder:
+        def __init__(self):
+            self.prompts=[]
+        def _chat(self, system, user):
+            data=json.loads(user)
+            self.prompts.append((system,data))
+            assert data["full_retranslation_required"]
+            assert "ORIGINAL_SOURCE_TO_TRANSLATE" in data
+            assert data["source_script_leaks_in_wrong_draft"] == "发展"
+            assert "FULL RETRANSLATION" in system
+            assert '"id":7' in system
+            if len(self.prompts)==1:
+                return json.dumps({"id":7,"text_vi":"Chúng ta sẽ 发展."},
+                                  ensure_ascii=False)
+            return json.dumps({"id":7,
+                "text_vi":"Chúng ta sẽ tiếp tục phát triển."},ensure_ascii=False)
+    seg=Segment(index=7,start=0,end=5,speaker=0,source_lang="zh",
+                text_src="我们还要继续发展。",text_vi="Chúng ta sẽ 发展.")
+    r=Recorder()
+    result=revise_flagged_lines([seg],r,max_attempts=2,flagged=[{
+        "id":7,"reasons":structural_issues([seg])[7]}])
+    assert result["llm_revision_calls"]==2
+    assert len(result["revised"])==1
+    assert result["unresolved"]==[]
+    assert seg.text_vi=="Chúng ta sẽ tiếp tục phát triển."
+    assert r.prompts[1][1]["last_rejected_attempt_reasons"]
