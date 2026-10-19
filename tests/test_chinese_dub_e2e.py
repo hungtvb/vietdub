@@ -317,3 +317,34 @@ def test_repair_hanzi_leak_uses_original_and_target_only_vietnamese():
     assert result["unresolved"]==[]
     assert seg.text_vi=="Chúng ta sẽ tiếp tục phát triển."
     assert r.prompts[1][1]["last_rejected_attempt_reasons"]
+
+
+
+def test_failed_foreign_script_repair_retries_with_short_source_only_prompt():
+    import json
+    from project.schema import Segment
+    from translation.llm_e2e import revise_flagged_lines
+    class Model:
+        def __init__(self):
+            self.calls=[]
+        def _chat(self,system,user):
+            d=json.loads(user)
+            self.calls.append((system,d))
+            if len(self.calls)==1:
+                return json.dumps({"id":8,"text_vi":"Câu nói 朋友。" },
+                                  ensure_ascii=False)
+            assert "FULL RETRANSLATION" in system
+            assert len(system)<850
+            assert d["wrong_draft_for_diagnosis_only"]==""
+            assert d["ORIGINAL_SOURCE_TO_TRANSLATE"]=="祝朋友们新年快乐。"
+            return json.dumps({"id":8,"text_vi":"Chúc các bạn năm mới vui vẻ."},
+                              ensure_ascii=False)
+    s=Segment(index=8,start=0,end=5,speaker=0,source_lang="zh",
+              text_src="祝朋友们新年快乐。",
+              text_vi="Chúc 朋友 năm mới vui vẻ.")
+    p=Model()
+    q=revise_flagged_lines([s],p,max_attempts=2,flagged=[{
+      "id":8,"reasons":["SOURCE_SCRIPT_REMAINS"]}])
+    assert len(q["revised"])==1
+    assert q["unresolved"]==[]
+    assert s.text_vi=="Chúc các bạn năm mới vui vẻ."

@@ -544,7 +544,8 @@ class BaseTranslator:
             for s in segments:
                 if s.index in out:
                     continue
-                out[s.index] = self._translate_single(system, rel_table, s)
+                out[s.index] = self._translate_single(
+                    prompts.SINGLE_LINE_TRANSLATE_SYSTEM, rel_table, s)
 
         # A small batched LLM can repeat the exact SAME Vietnamese sentence
         # for many DIFFERENT source turns while keeping every JSON id valid.
@@ -572,8 +573,9 @@ class BaseTranslator:
             line = segments[pos]
             old = out.get(line.index, "")
             context = segments[max(0,pos-2):pos]
-            candidate = self._translate_single(system,rel_table,line,
-                                               context=context)
+            candidate = self._translate_single(
+                prompts.SINGLE_LINE_TRANSLATE_SYSTEM,rel_table,line,
+                context=context)
             if (candidate.strip() and candidate.strip() != line.text_src.strip()
                     and candidate.strip().casefold() != old.strip().casefold()):
                 out[line.index] = candidate

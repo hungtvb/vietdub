@@ -91,6 +91,23 @@ Return ONLY a valid JSON object, without markdown or commentary:
 Replace the example ID 0 with each ACTUAL requested source ID; include all and
 only those IDs exactly once."""
 
+# Small local LLMs may fail or loop when a large video-level translation
+# prompt is reused for ONE failed/repeated line. This is a dedicated fallback
+# that still preserves the source-ID and locked speaker-pronoun contract.
+SINGLE_LINE_TRANSLATE_SYSTEM = """Translate EXACTLY ONE source-language
+video dialogue utterance into natural spoken Vietnamese.
+Use the original utterance in 'Lines to translate' as the authority.
+Use the locked speaker/audience pronouns from the input. Other lines are
+context only, not output. Do not invent, drop or repeat speech.
+Preserve questions, negations, people, numbers, names, actions and intent.
+text_vi MUST be entirely Vietnamese: translate Chinese Hanzi, Japanese kana
+and Korean Hangul into Vietnamese; proper names can use Latin letters.
+Keep the phrase concise for its subtitle/dubbing interval.
+Return ONLY JSON {"translations":[{"id":ACTUAL_ID,"text_vi":"..."}]}.
+Replace ACTUAL_ID with the exact requested ID. No notes, extra lines or markdown.
+"""
+
+
 # Edge case 9: proper names must be kept / transliterated, never translated
 # by meaning. Appended to the translate system prompt.
 PROPER_NOUN_RULE = """
@@ -264,8 +281,25 @@ def build_arbiter_user(summary_lines: list[str],
 
 # --- Video-independent repair prompts for small multilingual LLMs ----------
 
-def repair_system_prompt(line_id: int, *, source_script_remains: bool = False) -> str:
+def repair_system_prompt(line_id: int, *, source_script_remains: bool = False,
+                         concise_retry: bool = False) -> str:
     """Focused one-line revision instructions; no video/topic-specific terms."""
+    # The second attempt reduces instruction overhead for Qwen2.5 3B.
+    # A concise source-only retry is less likely to copy a broken draft or
+    # trigger Ollama's token repetition limit. Never reduce ID/QA guards.
+    if concise_retry:
+        task = ("FULL RETRANSLATION " if source_script_remains else
+                "SOURCE-GROUNDED CORRECTION ")
+        return (
+            task + "of ONE original speech utterance into spoken Vietnamese. "
+            "Translate the WHOLE original sentence, not the failed draft. "
+            "Output ONLY Vietnamese words and Latin-script proper names; "
+            "no Hanzi, kana, Hangul, or original-language phrases. "
+            "Do not drop question intent, negation, names, numbers or events. "
+            "Do not invent a reply or context. Short, natural dubbing text. "
+            f'Return ONLY JSON {{"id":{line_id},"text_vi":"..."}} with id exactly '
+            f'{line_id}. No extra lines or explanation.'
+        )
     common = (
         "You are correcting ONE Vietnamese dubbing translation. "
         "The original source-language utterance is the ground truth; "

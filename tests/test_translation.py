@@ -544,3 +544,13 @@ def test_repair_prompt_uses_correct_actual_id_and_full_retranslation():
     other=prompts.repair_system_prompt(3,source_script_remains=False)
     assert '"id":3' in other
     assert "semantic" in other.lower()
+
+
+
+def test_fallback_single_line_prompt_stays_short_and_preserves_json_contract():
+    from translation.prompts import SINGLE_LINE_TRANSLATE_SYSTEM as system
+    assert len(system) < 1300
+    assert "Vietnamese" in system
+    assert "Hanzi" in system
+    assert "ACTUAL_ID" in system
+    assert "negations" in system

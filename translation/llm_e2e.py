@@ -154,17 +154,18 @@ def revise_flagged_lines(segments,provider,max_attempts=3,flagged=None):
                 "requested_id":idx,
                 "source_language":seg.source_lang,
                 "ORIGINAL_SOURCE_TO_TRANSLATE":seg.text_src,
-                "wrong_draft_for_diagnosis_only":seg.text_vi,
+                "wrong_draft_for_diagnosis_only":(seg.text_vi if attempt==1 else ""),
                 "source_script_leaks_in_wrong_draft":"".join(leftover_script)[:120],
                 "full_retranslation_required":needs_full_translation,
                 "errors_to_correct":problems,
-                "neighboring_source_CONTEXT_ONLY":context,
+                "neighboring_source_CONTEXT_ONLY":(context if attempt==1 else []),
                 "last_rejected_attempt_reasons":rejections[-2:],
                 "suggested_max_spoken_words":max(6,int((seg.end-seg.start)*4.2)),
                 "source_may_be_interrogative":("?" in seg.text_src or "？" in seg.text_src),
             },ensure_ascii=False)
             system=prompts.repair_system_prompt(
-                idx,source_script_remains=needs_full_translation)
+                idx,source_script_remains=needs_full_translation,
+                concise_retry=attempt>1)
             calls+=1
             try:
                 data=_parse_json(provider._chat(system,user))
