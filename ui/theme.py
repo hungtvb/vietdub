@@ -5,13 +5,16 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
 
+APP_BACKGROUND = "#f5f5f7"
+
+
 APPLE_STYLESHEET = """
 QMainWindow, QDialog, QWidget {
     color: #1d1d1f;
     font-size: 13px;
 }
 QMainWindow, QDialog {
-    background: #f5f5f7;
+    background: @app-background@;
 }
 QLabel {
     background: transparent;
@@ -25,7 +28,7 @@ QLabel#appSubtitle, QLabel[role="secondary"] {
     color: #6e6e73;
 }
 QWidget#mainShell {
-    background: #f3f5f9;
+    background: @app-background@;
 }
 QFrame#mainHeader, QFrame#mainCard, QFrame#mainFooter {
     background: #ffffff;
@@ -45,23 +48,22 @@ QLabel#mainMark {
     font-weight: 800;
 }
 QFrame#mainHero {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                                stop:0 #173968, stop:1 #0c2243);
-    border: 1px solid #214b83;
+    background: #ffffff;
+    border: 1px solid #e1e6ee;
     border-radius: 16px;
 }
 QLabel#mainHeroKicker {
-    color: #8dc8ff;
+    color: #007aff;
     font-size: 10px;
     font-weight: 700;
 }
 QLabel#mainHeroTitle {
-    color: #ffffff;
+    color: #1d1d1f;
     font-size: 21px;
     font-weight: 700;
 }
 QLabel#mainHeroNote {
-    color: #c0d3ec;
+    color: #6e6e73;
     font-size: 12px;
 }
 QLabel#sectionTitle {
@@ -119,14 +121,15 @@ QLabel#workflowEyebrow, QLabel#workflowSection {
     font-weight: 700;
 }
 QPlainTextEdit#runLog {
-    color: #c8d8eb;
-    background: #101a2a;
-    border: 1px solid #283c56;
+    color: #1d1d1f;
+    background: #ffffff;
+    border: 1px solid #e1e6ee;
     border-radius: 9px;
     font-family: monospace;
     font-size: 12px;
     padding: 10px;
-    selection-background-color: #2763a6;
+    selection-background-color: #e8f2ff;
+    selection-color: #1d1d1f;
 }
 QLabel#pageTitle {
     color: #1d1d1f;
@@ -326,9 +329,9 @@ QToolTip {
     padding: 5px 8px;
 }
 QMessageBox {
-    background: #f5f5f7;
+    background: @app-background@;
 }
-"""
+""".replace("@app-background@", APP_BACKGROUND)
 
 
 def apply_apple_theme(app: QApplication) -> None:
@@ -341,7 +344,7 @@ def apply_apple_theme(app: QApplication) -> None:
     app.setFont(font)
 
     palette = app.palette()
-    palette.setColor(QPalette.ColorRole.Window, QColor("#f5f5f7"))
+    palette.setColor(QPalette.ColorRole.Window, QColor(APP_BACKGROUND))
     palette.setColor(QPalette.ColorRole.WindowText, QColor("#1d1d1f"))
     palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
     palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#fafafd"))

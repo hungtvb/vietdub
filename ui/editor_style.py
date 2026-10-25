@@ -1,76 +1,78 @@
-"""Visual language for the focused video editing workspace."""
+"""Editor controls using the same light surfaces as the rest of the app."""
+
+from ui.theme import APP_BACKGROUND
 
 EDITOR_STYLESHEET = """
 QWidget#editorRoot {
-    background: #0b0e14;
-    color: #eef2f8;
+    background: @app-background@;
+    color: #1d1d1f;
 }
 QWidget#editorRoot QWidget {
-    color: #eef2f8;
+    color: #1d1d1f;
     font-size: 13px;
 }
 QWidget#editorRoot QLabel {
     background: transparent;
 }
 QWidget#editorRoot QLabel#editorEyebrow {
-    color: #7f8ca2;
+    color: #6e6e73;
     font-size: 10px;
     font-weight: 700;
 }
 QWidget#editorRoot QLabel#editorTitle {
-    color: #f7f9fc;
+    color: #1d1d1f;
     font-size: 23px;
     font-weight: 700;
 }
 QWidget#editorRoot QLabel#editorProject {
-    color: #9daabe;
+    color: #6e6e73;
     font-size: 12px;
 }
 QWidget#editorRoot QLabel#editorSection {
-    color: #e8eef8;
+    color: #223047;
     font-size: 13px;
     font-weight: 700;
 }
 QWidget#editorRoot QLabel#editorHint,
 QWidget#editorRoot QLabel[role="secondary"] {
-    color: #91a0b6;
+    color: #6e6e73;
     font-size: 11px;
 }
 QWidget#editorRoot QLabel#editorTime {
-    color: #dfe9fa;
+    color: #1d1d1f;
     font-size: 12px;
     font-weight: 600;
 }
 QWidget#editorRoot QLabel#editorBadge {
-    color: #93c5fd;
-    background: #17304f;
-    border: 1px solid #265078;
+    color: #1258a6;
+    background: #e8f2ff;
+    border: 1px solid #c8e0ff;
     border-radius: 10px;
     padding: 4px 10px;
     font-size: 11px;
     font-weight: 600;
 }
 QWidget#editorRoot QLabel#editorMark {
-    color: #071628;
-    background: #8cc3ff;
+    color: #1258a6;
+    background: #dcecff;
     border-radius: 10px;
     font-size: 13px;
     font-weight: 800;
 }
 QWidget#editorRoot QFrame#editorCard,
 QWidget#editorRoot QWidget#editorCard {
-    background: #141a25;
-    border: 1px solid #273142;
+    background: #ffffff;
+    border: 1px solid #e1e6ee;
     border-radius: 15px;
 }
 QWidget#editorRoot QFrame#editorToolbar {
-    background: #111722;
-    border: 1px solid #273142;
+    background: #ffffff;
+    border: 1px solid #e1e6ee;
     border-radius: 12px;
 }
 QWidget#editorRoot QGraphicsView {
-    background: #070a0f;
-    border: 1px solid #303c50;
+    background: #10141c;
+    border: 1px solid #e1e6ee;
     border-radius: 10px;
 }
 QWidget#editorRoot QScrollArea {
@@ -81,69 +83,74 @@ QWidget#editorRoot QScrollArea > QWidget > QWidget {
     background: transparent;
 }
 QWidget#editorRoot QSplitter::handle {
-    background: #0b0e14;
+    background: @app-background@;
     width: 10px;
     height: 10px;
 }
 QWidget#editorRoot QPushButton {
-    color: #e4eaf4;
-    background: #202938;
-    border: 1px solid #344257;
+    color: #1d1d1f;
+    background: #ffffff;
+    border: 1px solid #d2d2d7;
     border-radius: 9px;
     padding: 7px 12px;
     min-height: 22px;
     font-weight: 600;
 }
 QWidget#editorRoot QPushButton:hover {
-    background: #2a3850;
-    border-color: #5276a6;
+    background: #f9f9fb;
+    border-color: #b8b8be;
 }
 QWidget#editorRoot QPushButton:pressed {
-    background: #1a3458;
+    background: #e9e9ee;
 }
 QWidget#editorRoot QPushButton:disabled {
-    color: #687588;
-    background: #1a2230;
-    border-color: #293444;
+    color: #8e8e93;
+    background: #e5e5ea;
+    border-color: #e5e5ea;
 }
 QWidget#editorRoot QPushButton[role="primary"] {
-    color: #081421;
-    background: #83bcff;
-    border-color: #83bcff;
-    font-weight: 700;
+    color: #ffffff;
+    background: #007aff;
+    border-color: #007aff;
+    font-weight: 600;
 }
 QWidget#editorRoot QPushButton[role="primary"]:hover {
-    background: #a8d1ff;
-    border-color: #a8d1ff;
+    background: #147ce5;
+    border-color: #147ce5;
+}
+QWidget#editorRoot QPushButton[role="primary"]:disabled {
+    color: #8e8e93;
+    background: #d1d1d6;
+    border-color: #d1d1d6;
 }
 QWidget#editorRoot QPushButton[role="quiet"] {
-    background: transparent;
-    border-color: #344257;
+    background: #ffffff;
+    border-color: #d2d2d7;
 }
 QWidget#editorRoot QPushButton[role="danger"] {
-    color: #ffb9b6;
-    background: #382329;
-    border-color: #5c333c;
+    color: #c73229;
+    background: #fff2f1;
+    border-color: #ffd3d0;
 }
 QWidget#editorRoot QLineEdit,
 QWidget#editorRoot QPlainTextEdit,
 QWidget#editorRoot QDoubleSpinBox,
 QWidget#editorRoot QComboBox,
 QWidget#editorRoot QListWidget {
-    color: #e8edf7;
-    background: #0f1520;
-    border: 1px solid #354257;
+    color: #1d1d1f;
+    background: #ffffff;
+    border: 1px solid #d2d2d7;
     border-radius: 8px;
     padding: 7px 9px;
-    selection-background-color: #2c5f9a;
-    selection-color: #ffffff;
+    selection-background-color: #e8f2ff;
+    selection-color: #1d1d1f;
 }
 QWidget#editorRoot QLineEdit:focus,
 QWidget#editorRoot QPlainTextEdit:focus,
 QWidget#editorRoot QDoubleSpinBox:focus,
 QWidget#editorRoot QComboBox:focus,
 QWidget#editorRoot QListWidget:focus {
-    border-color: #7cb6ff;
+    border-color: #007aff;
 }
 QWidget#editorRoot QListWidget::item {
     border-radius: 6px;
@@ -151,15 +158,15 @@ QWidget#editorRoot QListWidget::item {
     padding: 7px 5px;
 }
 QWidget#editorRoot QListWidget::item:selected {
-    background: #244a79;
-    color: #ffffff;
+    background: #e8f2ff;
+    color: #1d1d1f;
 }
 QWidget#editorRoot QTabWidget::pane {
     border: none;
     background: transparent;
 }
 QWidget#editorRoot QTabBar::tab {
-    color: #96a5b9;
+    color: #6e6e73;
     background: transparent;
     border: none;
     border-bottom: 2px solid transparent;
@@ -167,34 +174,34 @@ QWidget#editorRoot QTabBar::tab {
     min-width: 68px;
 }
 QWidget#editorRoot QTabBar::tab:selected {
-    color: #b8d9ff;
-    border-bottom-color: #83bcff;
+    color: #007aff;
+    border-bottom-color: #007aff;
 }
 QWidget#editorRoot QSlider::groove:horizontal {
     height: 4px;
-    background: #354257;
+    background: #d1d1d6;
     border-radius: 2px;
 }
 QWidget#editorRoot QSlider::sub-page:horizontal {
-    background: #83bcff;
+    background: #007aff;
     border-radius: 2px;
 }
 QWidget#editorRoot QSlider::handle:horizontal {
-    background: #d6e8ff;
-    border: 2px solid #4672a5;
+    background: #ffffff;
+    border: 2px solid #007aff;
     width: 13px;
     margin: -6px 0;
     border-radius: 8px;
 }
 QWidget#editorRoot QScrollBar:vertical,
 QWidget#editorRoot QScrollBar:horizontal {
-    background: #111722;
+    background: transparent;
     width: 10px;
     height: 10px;
 }
 QWidget#editorRoot QScrollBar::handle:vertical,
 QWidget#editorRoot QScrollBar::handle:horizontal {
-    background: #3b4b63;
+    background: #c7c7cc;
     border-radius: 5px;
     min-height: 30px;
     min-width: 30px;
@@ -207,8 +214,8 @@ QWidget#editorRoot QScrollBar::sub-page {
     border: none;
 }
 QWidget#editorRoot QToolTip {
-    background: #182231;
-    color: #eef2f8;
-    border: 1px solid #3b4b63;
+    background: #ffffff;
+    color: #1d1d1f;
+    border: 1px solid #d2d2d7;
 }
-"""
+""".replace("@app-background@", APP_BACKGROUND)
