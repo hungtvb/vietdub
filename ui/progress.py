@@ -63,7 +63,8 @@ class ProgressWindow(QWidget):
         self.settings = settings
         self.on_close = on_close
         self.setWindowTitle(f"VietDub — Đang xử lý: {job.project.name}")
-        self.resize(680, 620)
+        self.resize(900, 760)
+        self.setMinimumSize(760, 640)
 
         self._thread: QThread | None = None
         self._runner: JobRunner | None = None
@@ -72,11 +73,14 @@ class ProgressWindow(QWidget):
         self._finish_win = None
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(22, 20, 22, 20)
+        root.setSpacing(12)
         self.lbl_title = QLabel(f"Đang xử lý: {job.project.name}")
-        self.lbl_title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        self.lbl_title.setObjectName("pageTitle")
         root.addWidget(self.lbl_title)
 
         self.lbl_step = QLabel("Chuẩn bị…")
+        self.lbl_step.setObjectName("statusText")
         root.addWidget(self.lbl_step)
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
@@ -87,6 +91,7 @@ class ProgressWindow(QWidget):
         self.tbl.verticalHeader().setVisible(False)
         self.tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tbl.setSelectionMode(QTableWidget.NoSelection)
+        self.tbl.setAlternatingRowColors(True)
         for i, step in enumerate(STEPS):
             self.tbl.setItem(i, 0, QTableWidgetItem(STEP_LABEL[step]))
             self.tbl.setItem(i, 1, QTableWidgetItem("Chờ"))
@@ -105,11 +110,14 @@ class ProgressWindow(QWidget):
         self.btn_pause = QPushButton("Tạm dừng")
         self.btn_pause.clicked.connect(self.pause)
         self.btn_resume = QPushButton("Tiếp tục")
+        self.btn_resume.setProperty("role", "primary")
         self.btn_resume.clicked.connect(lambda: self.begin())
         self.btn_resume.setEnabled(False)
         self.btn_cancel = QPushButton("Hủy")
+        self.btn_cancel.setProperty("role", "danger")
         self.btn_cancel.clicked.connect(self.cancel)
         self.btn_settings = QPushButton("Cài đặt")
+        self.btn_settings.setProperty("role", "secondary")
         self.btn_settings.clicked.connect(self.open_settings)
         row.addWidget(self.btn_pause)
         row.addWidget(self.btn_resume)

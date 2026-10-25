@@ -42,11 +42,7 @@ class DropLabel(QLabel):
         self.setAcceptDrops(True)
         self.setAlignment(Qt.AlignCenter)
         self.setWordWrap(True)
-        self.setMinimumHeight(110)
-        self.setStyleSheet(
-            "QLabel { border: 2px dashed #7f8c8d; border-radius: 8px;"
-            " background: #f4f6f7; color: #2c3e50; font-size: 13px;"
-            " padding: 18px; }")
+        self.setMinimumHeight(120)
 
     def dragEnterEvent(self, e: QDragEnterEvent) -> None:  # noqa: N802
         if e.mimeData().hasUrls():
@@ -117,7 +113,8 @@ class MainWindow(QMainWindow):
         self.settings = settings or Settings()
         mbin.configure(self.settings.get("ffmpeg_path"))
         self.setWindowTitle("VietDub — Lồng tiếng video Trung sang Việt")
-        self.resize(640, 720)
+        self.resize(800, 790)
+        self.setMinimumSize(700, 700)
 
         self.job: Job | None = None          # tạo khi cần (tải link / bắt đầu)
         self.video_path: str = ""            # file local sẵn sàng xử lý
@@ -135,20 +132,31 @@ class MainWindow(QMainWindow):
         self._audio_out: QAudioOutput | None = None
 
         central = QWidget()
+        central.setObjectName("appRoot")
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
+        root.setContentsMargins(24, 20, 24, 22)
+        root.setSpacing(14)
 
         head = QHBoxLayout()
+        title_stack = QVBoxLayout()
+        title_stack.setSpacing(2)
         title = QLabel("VietDub")
-        title.setStyleSheet("font-size: 20px; font-weight: bold;")
-        head.addWidget(title)
+        title.setObjectName("appTitle")
+        subtitle = QLabel("Lồng tiếng video, gọn trong một quy trình.")
+        subtitle.setObjectName("appSubtitle")
+        title_stack.addWidget(title)
+        title_stack.addWidget(subtitle)
+        head.addLayout(title_stack)
         head.addStretch(1)
         self.btn_settings = QPushButton("Cài đặt")
+        self.btn_settings.setProperty("role", "secondary")
         self.btn_settings.clicked.connect(self.open_settings)
         head.addWidget(self.btn_settings)
         root.addLayout(head)
 
         self.tabs = QTabWidget()
+        self.tabs.setMaximumHeight(300)
         root.addWidget(self.tabs)
         self._build_file_tab()
         self._build_link_tab()
@@ -156,11 +164,8 @@ class MainWindow(QMainWindow):
         root.addWidget(self._build_options_group())
 
         self.btn_start = QPushButton("Bắt đầu lồng tiếng")
-        self.btn_start.setMinimumHeight(44)
-        self.btn_start.setStyleSheet(
-            "QPushButton { font-size: 15px; font-weight: bold;"
-            " background: #27ae60; color: white; border-radius: 6px; }"
-            "QPushButton:disabled { background: #bdc3c7; }")
+        self.btn_start.setMinimumHeight(48)
+        self.btn_start.setProperty("role", "primary")
         self.btn_start.setEnabled(False)
         self.btn_start.clicked.connect(self.start_job)
         root.addWidget(self.btn_start)
@@ -169,27 +174,34 @@ class MainWindow(QMainWindow):
     def _build_file_tab(self) -> None:
         tab = QWidget()
         lay = QVBoxLayout(tab)
+        lay.setContentsMargins(4, 10, 4, 8)
+        lay.setSpacing(12)
         self.drop = DropLabel("Kéo-thả file video vào đây\n"
                               "hoặc bấm nút bên dưới để chọn file")
+        self.drop.setObjectName("dropZone")
         self.drop.file_dropped.connect(self.pick_video_file)
         lay.addWidget(self.drop)
         btn = QPushButton("Chọn video…")
+        btn.setProperty("role", "secondary")
         btn.clicked.connect(lambda: self.pick_video_file(""))
         lay.addWidget(btn)
         self.file_info = self._info_group()
         lay.addWidget(self.file_info["box"])
         lay.addStretch(1)
-        self.tabs.addTab(tab, "File")
+        self.tabs.addTab(tab, "Tệp video")
 
     def _build_link_tab(self) -> None:
         tab = QWidget()
         lay = QVBoxLayout(tab)
+        lay.setContentsMargins(4, 10, 4, 8)
+        lay.setSpacing(12)
         lay.addWidget(QLabel("Dán link video (Douyin / TikTok / YouTube / …):"))
         row = QHBoxLayout()
         self.link_edit = QLineEdit()
         self.link_edit.setPlaceholderText("https://…")
         row.addWidget(self.link_edit, 1)
         self.btn_download = QPushButton("Tải về")
+        self.btn_download.setProperty("role", "primary")
         self.btn_download.clicked.connect(self.download_link)
         row.addWidget(self.btn_download)
         lay.addLayout(row)
@@ -204,7 +216,7 @@ class MainWindow(QMainWindow):
         self.link_info = self._info_group()
         lay.addWidget(self.link_info["box"])
         lay.addStretch(1)
-        self.tabs.addTab(tab, "Link")
+        self.tabs.addTab(tab, "Liên kết")
 
     def _info_group(self) -> dict:
         """Cụm hiện info video dùng chung cho 2 tab."""
@@ -257,6 +269,7 @@ class MainWindow(QMainWindow):
         info["track_row"].setVisible(len(streams) > 1)
         combo.setCurrentIndex(0)
         info["box"].setVisible(True)
+        self.tabs.setMaximumHeight(370)
         self.btn_start.setEnabled(True)
 
     @staticmethod
@@ -577,6 +590,7 @@ class MainWindow(QMainWindow):
         self.video_path = ""
         self.video_url = ""
         self.btn_start.setEnabled(False)
+        self.tabs.setMaximumHeight(300)
         self.file_info["box"].setVisible(False)
         self.link_info["box"].setVisible(False)
         self.dl_bar.setValue(0)

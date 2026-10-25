@@ -24,8 +24,10 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings
         self.setWindowTitle("Cài đặt VietDub")
-        self.resize(620, 680)
+        self.resize(820, 760)
         root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(14)
 
         self.tabs = QTabWidget()
         root.addWidget(self.tabs)
@@ -44,6 +46,7 @@ class SettingsDialog(QDialog):
             QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         self.buttons.button(QDialogButtonBox.Save).setText("Lưu")
         self.buttons.button(QDialogButtonBox.Cancel).setText("Hủy")
+        self.buttons.button(QDialogButtonBox.Save).setProperty("role", "primary")
         self.buttons.accepted.connect(self.save)
         self.buttons.rejected.connect(self.reject)
         row.addWidget(self.buttons)
@@ -53,6 +56,9 @@ class SettingsDialog(QDialog):
     def _build_translate_tab(self) -> None:
         tab = QWidget()
         f = QFormLayout(tab)
+        f.setContentsMargins(16, 16, 16, 16)
+        f.setHorizontalSpacing(16)
+        f.setVerticalSpacing(11)
         self.oa_key = QLineEdit()
         self.oa_key.setEchoMode(QLineEdit.Password)
         self.oa_key.setText(self.settings.get("openai_api_key", ""))
@@ -95,8 +101,11 @@ class SettingsDialog(QDialog):
         self.tr_batch.setRange(1, 100)
         self.tr_batch.setValue(int(self.settings.get("translate_batch", 20)))
         f.addRow("Số câu / request dịch:", self.tr_batch)
-        f.addRow(QLabel("OpenAI API tính phí riêng, không dùng chung gói ChatGPT. "
-                        "Có thể chọn 9Router hoặc Ollama nếu không có API key."))
+        note = QLabel("OpenAI API tính phí riêng, không dùng chung gói ChatGPT. "
+                      "Có thể chọn 9Router hoặc Ollama nếu không có API key.")
+        note.setWordWrap(True)
+        note.setProperty("role", "secondary")
+        f.addRow(note)
         self.tabs.addTab(tab, "Dịch thuật")
 
     def check_ollama(self) -> None:
@@ -124,6 +133,9 @@ class SettingsDialog(QDialog):
     def _build_asr_tab(self) -> None:
         tab = QWidget()
         f = QFormLayout(tab)
+        f.setContentsMargins(16, 16, 16, 16)
+        f.setHorizontalSpacing(16)
+        f.setVerticalSpacing(11)
         self.asr_backend = QComboBox()
         self.asr_backend.addItem("Whisper + CAM++ tách loa", "whisper")
         self.asr_backend.addItem("FunASR trực tiếp", "funasr")
@@ -152,19 +164,29 @@ class SettingsDialog(QDialog):
         self.asr_conf.setSingleStep(0.05)
         self.asr_conf.setValue(float(self.settings.get("asr_confidence_low", 0.5)))
         f.addRow("Ngưỡng confidence thấp:", self.asr_conf)
-        f.addRow(QLabel("Câu nào ASR nghe dưới ngưỡng này sẽ được đánh dấu "
-                       "để bạn kiểm tra kỹ ở màn duyệt."))
-        f.addRow(QLabel(
+        confidence_note = QLabel(
+            "Câu nào ASR nghe dưới ngưỡng này sẽ được đánh dấu "
+            "để bạn kiểm tra kỹ ở màn duyệt.")
+        confidence_note.setWordWrap(True)
+        confidence_note.setProperty("role", "secondary")
+        f.addRow(confidence_note)
+        qwen_note = QLabel(
             "Qwen dùng ForcedAligner để tạo timestamp và CAM++ để gán loa. "
             "Model chạy lần lượt để giảm RAM; lần đầu cần tải khoảng 6 GB "
             "và xử lý chậm hơn Whisper nhiều; khuyến nghị máy có ít nhất "
-            "16 GB RAM."))
-        self.tabs.addTab(tab, "Nhận dạng (ASR)")
+            "16 GB RAM.")
+        qwen_note.setWordWrap(True)
+        qwen_note.setProperty("role", "secondary")
+        f.addRow(qwen_note)
+        self.tabs.addTab(tab, "Nhận dạng")
 
     # ------------------------------------------------------------ tab giọng
     def _build_voice_tab(self) -> None:
         tab = QWidget()
         f = QFormLayout(tab)
+        f.setContentsMargins(16, 16, 16, 16)
+        f.setHorizontalSpacing(16)
+        f.setVerticalSpacing(11)
         self.pitch_male = QDoubleSpinBox()
         self.pitch_male.setRange(50, 400)
         self.pitch_male.setValue(float(self.settings.get("pitch_male_max_hz", 160)))
@@ -195,12 +217,15 @@ class SettingsDialog(QDialog):
         self.tts_conc.setRange(1, 20)
         self.tts_conc.setValue(int(self.settings.get("tts_concurrency", 10)))
         f.addRow("Số câu TTS song song:", self.tts_conc)
-        self.tabs.addTab(tab, "Giọng đọc & Lồng tiếng")
+        self.tabs.addTab(tab, "Giọng lồng tiếng")
 
     # ------------------------------------------------------------ tab video
     def _build_video_tab(self) -> None:
         tab = QWidget()
         f = QFormLayout(tab)
+        f.setContentsMargins(16, 16, 16, 16)
+        f.setHorizontalSpacing(16)
+        f.setVerticalSpacing(11)
         self.sub_mode = QComboBox()
         self.sub_mode.addItem("Gắn cứng vào video", "burn")
         self.sub_mode.addItem("Xuất file .srt rời", "srt")
@@ -235,7 +260,7 @@ class SettingsDialog(QDialog):
         btn_browse.clicked.connect(self.browse_ffmpeg)
         row.addWidget(btn_browse)
         f.addRow("Đường dẫn FFmpeg:", row)
-        self.tabs.addTab(tab, "Video & Phụ đề")
+        self.tabs.addTab(tab, "Video và phụ đề")
 
     def browse_font(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -253,9 +278,14 @@ class SettingsDialog(QDialog):
     def _build_names_tab(self) -> None:
         tab = QWidget()
         lay = QVBoxLayout(tab)
-        lay.addWidget(QLabel(
+        lay.setContentsMargins(16, 16, 16, 16)
+        lay.setSpacing(12)
+        note = QLabel(
             "Danh sách tên riêng (mỗi dòng một tên) — prompt dịch sẽ giữ "
-            "nguyên/phiên âm Hán-Việt các tên này, không dịch nghĩa:"))
+            "nguyên/phiên âm Hán-Việt các tên này, không dịch nghĩa:")
+        note.setWordWrap(True)
+        note.setProperty("role", "secondary")
+        lay.addWidget(note)
         self.names_edit = QPlainTextEdit()
         self.names_edit.setPlainText(
             "\n".join(self.settings.get("proper_nouns", [])))

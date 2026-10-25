@@ -123,7 +123,7 @@ vietdub/
     └── vietdub.spec        # PyInstaller
 ```
 
-Nguyên tắc: `core/` không biết gì về UI — UI chỉ gọi orchestrator và nhận signal. Sau này đổi UI (web) không phải sửa lõi.
+Nguyên tắc: `core/` không phụ thuộc giao diện — app desktop gọi orchestrator và nhận signal; luồng xử lý nghiệp vụ nằm trong lõi.
 
 ## 4. Data model
 

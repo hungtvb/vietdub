@@ -97,29 +97,34 @@ class ReviewSourceWindow(QWidget):
         self.on_continue = on_continue
         self.on_back = on_back
         self.setWindowTitle(f"VietDub — Duyệt sub gốc: {job.project.name}")
-        self.resize(860, 560)
+        self.resize(1180, 760)
+        self.setMinimumSize(920, 620)
 
         self.segments: List[Segment] = pio.load_segments(job.job_dir, "asr") or []
         self.speakers: Dict[int, Speaker] = \
             pio.load_speakers(job.job_dir, "gender") or {}
 
-        self._player = QMediaPlayer(self)
-        self._audio_out = QAudioOutput(self)
-        self._player.setAudioOutput(self._audio_out)
+        self._player: QMediaPlayer | None = None
+        self._audio_out: QAudioOutput | None = None
         self._stop_timer = QTimer(self)
         self._stop_timer.setSingleShot(True)
         self._stop_timer.timeout.connect(self._stop_playback)
         self._playing_row = -1
         self._pending_seek: int | None = None
-        self._player.mediaStatusChanged.connect(self._on_media_status)
         # True khi window bị đóng bởi chính nút [Quay lại]/[Tiếp tục] ->
         # closeEvent không schedule on_back lần nữa.
         self._close_via_button = False
 
         root = QVBoxLayout(self)
-        root.addWidget(QLabel(
-            "Duyệt phụ đề gốc (tiếng Trung) — sửa trực tiếp trong bảng, "
-            "Enter để xuống dòng tiếp theo."))
+        root.setContentsMargins(22, 20, 22, 18)
+        root.setSpacing(12)
+        title = QLabel("Duyệt phụ đề gốc")
+        title.setObjectName("pageTitle")
+        root.addWidget(title)
+        instruction = QLabel(
+            "Sửa nội dung trực tiếp trong bảng. Enter để xuống dòng tiếp theo.")
+        instruction.setProperty("role", "secondary")
+        root.addWidget(instruction)
         n_review = sum(1 for s in self.segments if s.needs_review)
         # Điểm dừng #1 chạy TRƯỚC bước gender -> checkpoint "gender" chưa có;
         # đếm loa distinct từ chính các segment (không đếm self.speakers).
@@ -128,6 +133,7 @@ class ReviewSourceWindow(QWidget):
             f"Tổng {len(self.segments)} câu, {n_speakers} loa"
             + (f" — {n_review} câu tô vàng cần kiểm tra kỹ (ASR nghe không "
                "chắc)." if n_review else "."))
+        self.lbl_note.setProperty("role", "secondary")
         root.addWidget(self.lbl_note)
 
         self.tbl = QTableWidget(len(self.segments), len(COLS))
@@ -146,6 +152,8 @@ class ReviewSourceWindow(QWidget):
         self.tbl.horizontalHeader().setStretchLastSection(True)
         self.tbl.setSelectionBehavior(QTableWidget.SelectRows)
         self.tbl.setSelectionMode(QTableWidget.SingleSelection)
+        self.tbl.setAlternatingRowColors(True)
+        self.tbl.verticalHeader().setDefaultSectionSize(38)
         root.addWidget(self.tbl, 1)
 
         row = QHBoxLayout()
@@ -160,9 +168,10 @@ class ReviewSourceWindow(QWidget):
         btn_settings = QPushButton("Cài đặt")
         btn_settings.clicked.connect(self.open_settings)
         btn_back = QPushButton("Quay lại")
+        btn_back.setProperty("role", "secondary")
         btn_back.clicked.connect(self._back_clicked)
         btn_next = QPushButton("Tiếp tục dịch →")
-        btn_next.setStyleSheet("font-weight: bold;")
+        btn_next.setProperty("role", "primary")
         btn_next.clicked.connect(self.save_and_continue)
         row.addWidget(self.btn_play)
         row.addWidget(self.btn_split)
@@ -209,12 +218,20 @@ class ReviewSourceWindow(QWidget):
         self.tbl.setItem(r, 6, QTableWidgetItem(seg.text_src or ""))
         if seg.needs_review:
             for c in range(len(COLS)):
-                self.tbl.item(r, c).setBackground(QColor("#fff3b0"))
+                self.tbl.item(r, c).setBackground(QColor("#fff4ce"))
 
     # ------------------------------------------------------------ nghe lại
     def _wav_path(self) -> str:
         data = cp.load_step(self.job.job_dir, "extract") or {}
         return data.get("wav_path", "")
+
+    def _ensure_player(self) -> QMediaPlayer:
+        if self._player is None:
+            self._player = QMediaPlayer(self)
+            self._audio_out = QAudioOutput(self)
+            self._player.setAudioOutput(self._audio_out)
+            self._player.mediaStatusChanged.connect(self._on_media_status)
+        return self._player
 
     def play_selected(self) -> None:
         if self._playing_row >= 0:
@@ -234,8 +251,9 @@ class ReviewSourceWindow(QWidget):
                       "Cách khắc phục: chạy lại từ bước [1] Tách audio.")
             return
         self._pending_seek = int(seg.start * 1000)
-        self._player.setSource(QUrl.fromLocalFile(wav))
-        self._player.play()
+        player = self._ensure_player()
+        player.setSource(QUrl.fromLocalFile(wav))
+        player.play()
         ms = max(300, int((seg.end - seg.start) * 1000))
         self._stop_timer.start(ms)
         self._playing_row = r
@@ -247,12 +265,14 @@ class ReviewSourceWindow(QWidget):
         # seek bị bỏ qua (phát từ đầu file thay vì đúng câu).
         if self._pending_seek is not None and status in (
                 QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia):
-            self._player.setPosition(self._pending_seek)
+            if self._player is not None:
+                self._player.setPosition(self._pending_seek)
             self._pending_seek = None
 
     def _stop_playback(self) -> None:
         self._stop_timer.stop()
-        self._player.stop()
+        if self._player is not None:
+            self._player.stop()
         self._playing_row = -1
         self.btn_play.setText("Nghe lại câu")
 
