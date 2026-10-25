@@ -24,19 +24,27 @@ log = logging.getLogger("vietdub.settings")
 
 DEFAULTS = {
     # --- translation ---
+    "openai_api_key": "",
+    "openai_model": "gpt-4.1",
+    "openai_url": "https://api.openai.com/v1",
     "nine_router_key": "",
     "nine_router_model": "mimo-v2.6-flash-free",
     "nine_router_url": "https://opencode.ai/zen/v1",
     "ollama_url": "http://localhost:11434",
     "ollama_model": "",
-    "translate_provider": "9router",      # "9router" | "ollama"
+    "translate_provider": "openai",       # "openai" | "9router" | "ollama"
     "llm_temperature": 0.2,
     "translate_batch": 20,
     # --- ASR ---
-    "asr_model": "damo/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+    "asr_backend": "whisper",              # "whisper" | "funasr" | "qwen"
+    "whisper_model": "large-v3-turbo",
+    "whisper_compute_type": "int8",
+    "asr_model": "iic/SenseVoiceSmall",
     "vad_model": "damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
     "punc_model": "damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",  # 290M, light
     "spk_model": "damo/speech_campplus_sv_zh-cn_16k-common",
+    "qwen_model": "Qwen/Qwen3-ASR-1.7B",
+    "qwen_aligner_model": "Qwen/Qwen3-ForcedAligner-0.6B",
     # --- ASR quality ---
     "asr_confidence_low": 0.5,   # below this -> needs_review (edge case 5)
     # --- speaker gender ---

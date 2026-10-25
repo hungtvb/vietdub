@@ -79,11 +79,8 @@ def main():
 
     # [2] ASR + speaker labels
     def step_asr():
-        from asr.funasr_adapter import FunASRAdapter
-        ad = FunASRAdapter(asr_model=settings.get("asr_model"),
-                           vad_model=settings.get("vad_model"),
-                           punc_model=settings.get("punc_model"),
-                           spk_model=settings.get("spk_model"))
+        from asr.factory import build_adapter
+        ad = build_adapter(settings)
         segs = ad.transcribe(str(wav))
         (JOB_DIR / "stages" / "asr.json").write_text(
             json.dumps({"segments": [s.to_dict() for s in segs]},

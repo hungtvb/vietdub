@@ -737,5 +737,5 @@ def translate_with_fallback(providers: List[BaseTranslator],
         return segments, "google_free"
     raise TranslateError(
         "Tất cả nguồn dịch đều lỗi (kể cả Google Translate free).\n"
-        "Cách khắc phục: kiểm tra mạng / API key 9Router / Ollama đang chạy, "
-        "rồi chạy lại.") from last_err
+        "Cách khắc phục: kiểm tra mạng, API key OpenAI/9Router hoặc "
+        "Ollama đang chạy rồi chạy lại.") from last_err

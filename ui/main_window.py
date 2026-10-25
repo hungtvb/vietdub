@@ -129,10 +129,10 @@ class MainWindow(QMainWindow):
         self._pv_tmps: list = []          # thư mục tạm của [Nghe thử]
         self._progress_win = None
 
-        # audio phát giọng mẫu
-        self._player = QMediaPlayer(self)
-        self._audio_out = QAudioOutput(self)
-        self._player.setAudioOutput(self._audio_out)
+        # Khởi tạo audio engine khi người dùng nghe thử, không phải lúc mở app.
+        # Một số máy không có audio backend khả dụng; điều đó không nên chặn UI.
+        self._player: QMediaPlayer | None = None
+        self._audio_out: QAudioOutput | None = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -374,10 +374,11 @@ class MainWindow(QMainWindow):
         lay.addLayout(vg)
 
         self.provider = QComboBox()
-        self.provider.addItem("9Router (mặc định)", "9router")
+        self.provider.addItem("OpenAI GPT (khuyên dùng)", "openai")
+        self.provider.addItem("9Router", "9router")
         self.provider.addItem("Ollama (chạy local)", "ollama")
-        cur = self.settings.get("translate_provider", "9router")
-        self.provider.setCurrentIndex(0 if cur == "9router" else 1)
+        cur = self.settings.get("translate_provider", "openai")
+        self.provider.setCurrentIndex(max(0, self.provider.findData(cur)))
         pf = QFormLayout()
         pf.addRow("Nguồn dịch:", self.provider)
         lay.addLayout(pf)
@@ -459,6 +460,10 @@ class MainWindow(QMainWindow):
     def _on_preview_done(self, wav: str, btn: QPushButton) -> None:
         btn.setEnabled(True)
         btn.setText("Nghe thử")
+        if self._player is None:
+            self._player = QMediaPlayer(self)
+            self._audio_out = QAudioOutput(self)
+            self._player.setAudioOutput(self._audio_out)
         self._player.setSource(QUrl.fromLocalFile(wav))
         self._player.play()
 
@@ -476,8 +481,8 @@ class MainWindow(QMainWindow):
             # settings đã được lưu trong dialog; áp lại vào UI chính
             self.voice_male.setCurrentText(self.settings.get("voice_male"))
             self.voice_female.setCurrentText(self.settings.get("voice_female"))
-            cur = self.settings.get("translate_provider", "9router")
-            self.provider.setCurrentIndex(0 if cur == "9router" else 1)
+            cur = self.settings.get("translate_provider", "openai")
+            self.provider.setCurrentIndex(max(0, self.provider.findData(cur)))
             self.chk_review.setChecked(bool(self.settings.get("review_stops", True)))
             self.chk_overnight.setChecked(bool(self.settings.get("overnight", False)))
 
@@ -504,6 +509,11 @@ class MainWindow(QMainWindow):
                       "(tab Link) trước khi bắt đầu.")
             return
         provider = self.provider.currentData()
+        if provider == "openai" and not self.settings.get("openai_api_key"):
+            error_box(self, "Chưa nhập OpenAI API key",
+                      "Mở Cài đặt → tab Dịch thuật để nhập OpenAI API key. "
+                      "API tính phí riêng, không dùng chung gói ChatGPT.")
+            return
         if provider == "9router" and not self.settings.get("nine_router_key"):
             if not confirm_box(
                     self, "Chưa nhập API key 9Router",

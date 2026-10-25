@@ -184,16 +184,12 @@ def test_fit_gives_up_after_max_rounds(tmp_path, monkeypatch):
     assert "3 lần" in str(e.value)
 
 
-def test_tts_falls_back_to_gtts(tmp_path, monkeypatch):
-    # Edge-TTS total failure -> gTTS (single voice), logged
+def test_tts_propagates_edge_failure(tmp_path, monkeypatch):
+    # The configured Edge-TTS provider is the only TTS backend.
     from tts import edge_tts as metts
-    from tts import gtts as mgtts
     orch = _fit_job(tmp_path, monkeypatch)
     bad_tts = mock.Mock()
     bad_tts.synthesize.side_effect = metts.TTSError("websocket down")
-    fake_g = mock.Mock()
-    fake_g.synthesize.side_effect = lambda segs, d: segs
-    monkeypatch.setattr(mgtts, "GTTS", lambda: fake_g)
-    out = orch._synthesize_tts(bad_tts, [_long_seg()], tmp_path)
-    assert fake_g.synthesize.called
-    assert out[0].text_vi
+    with pytest.raises(metts.TTSError, match="websocket down"):
+        orch._synthesize_tts(bad_tts, [_long_seg()], tmp_path)
+    bad_tts.synthesize.assert_called_once()

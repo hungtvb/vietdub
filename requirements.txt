@@ -4,7 +4,9 @@
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 torch                       # CPU build is enough (no GPU needed)
-funasr==1.4.16              # ASR + speaker diarization (SeacoParaformer)
+funasr==1.4.16              # ASR + speaker diarization (SenseVoiceSmall)
+faster-whisper==1.2.1       # Whisper large-v3-turbo; text + timestamps
+av==16.1.0                  # tested PyAV version for faster-whisper
 modelscope                  # model download / pipeline for FunASR
 addict                      # modelscope dep (not declared upstream)
 datasets                    # modelscope dep (not declared upstream)
@@ -14,14 +16,16 @@ kaldi-native-fbank          # funasr fbank backend (or: pip install torchaudio)
 librosa                     # pitch (pyin) for speaker gender
 soundfile                   # wav read/write
 edge-tts                    # Vietnamese dubbing voices
-gtts                        # TTS fallback when Edge-TTS fails (single voice)
-openai                      # OpenAI-compatible client (9Router, Ollama)
+openai                      # OpenAI-compatible API client
 requests                    # HTTP (Ollama health check, Google fallback)
 yt-dlp                      # step [0]: download video from link
 numpy
 
 # dev / test
 pytest
+
+# Optional Qwen backend and forced aligner:
+#   pip install -r requirements-qwen.txt
 
 # Wave 2 (UI)
 PySide6                       # desktop UI (màn hình chính, duyệt, cài đặt)

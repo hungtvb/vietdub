@@ -2,8 +2,9 @@
 
 Desktop app lồng tiếng video tiếng Trung sang tiếng Việt (PySide6).
 Pipeline 9 bước: lấy video (file/link) → tách audio → nghe + tách loa
-(FunASR) → đoán giới tính bằng pitch → LLM phân tích quan hệ → dịch
-(9Router/mimo-v2.6-flash-free hoặc Ollama) → lồng tiếng Edge-TTS
+(Whisper large-v3-turbo + FunASR/CAM++; tùy chọn Qwen3-ASR + ForcedAligner + CAM++)
+→ đoán giới tính bằng pitch → LLM phân tích quan hệ → dịch
+(OpenAI GPT, 9Router hoặc Ollama) → lồng tiếng Edge-TTS
 → trộn audio → ghép video + phụ đề.
 
 License: GPL-3.0 (xem `LICENSE`). Một số module adapt từ
@@ -23,6 +24,8 @@ source .venv/bin/activate
 # Windows CPU: cài torch bản CPU trước
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
+# Tùy chọn nếu muốn bật backend Qwen:
+pip install -r requirements-qwen.txt
 ```
 
 Cần thêm: **ffmpeg** có trong PATH
@@ -51,6 +54,8 @@ Có 2 cách chạy — chọn 1:
    .venv\Scripts\activate
    pip install torch --index-url https://download.pytorch.org/whl/cpu
    pip install -r requirements.txt
+   # Tùy chọn để chọn backend Qwen trong Cài đặt -> ASR:
+   pip install -r requirements-qwen.txt
    python main.py
    ```
 
@@ -61,6 +66,8 @@ Có 2 cách chạy — chọn 1:
    .venv\Scripts\activate
    pip install torch --index-url https://download.pytorch.org/whl/cpu
    pip install -r requirements.txt
+   # Tùy chọn nếu muốn đóng gói backend Qwen:
+   pip install -r requirements-qwen.txt
    pip install pyinstaller
    ```
 2. Tải ffmpeg bản Windows `release essentials`
@@ -78,15 +85,28 @@ Có 2 cách chạy — chọn 1:
 
 ### Lần chạy đầu tiên (cả 2 cách)
 
-- App tự tải model ASR (~1.3GB) về `%APPDATA%\VietDub\models\` — cần mạng,
-  chỉ tải 1 lần duy nhất. Các lần sau chạy offline được (trừ TTS/dịch).
+- Mở app không tải model. Trọng số chỉ được tải ở lần đầu chạy bước Nhận dạng
+  (ASR), rồi lưu cache để các lần sau dùng lại. Whisper tải từ Hugging Face;
+  FunASR, VAD, dấu câu và CAM++ tải từ ModelScope. Model Whisper lưu trong
+  `%APPDATA%\VietDub\models\huggingface`, FunASR trong
+  `%APPDATA%\VietDub\models`. Cần mạng ở lần tải đầu; ASR chạy offline sau đó.
+- Muốn chọn backend Qwen, cài thêm `pip install -r requirements-qwen.txt`.
+  Khi chạy ASR bằng Qwen, app mới tải model ASR 1.7B và ForcedAligner
+  (khoảng 6 GB tổng), tuần tự với FunASR/CAM++ để giảm RAM; trên CPU chậm hơn
+  Whisper nhiều.
+- OpenAI/9Router chỉ gọi API ở bước phân tích/dịch; Edge-TTS kết nối dịch vụ
+  Microsoft khi tổng hợp giọng. Nếu chọn Ollama, model phải được cài riêng bằng
+  `ollama pull <tên-model>`; app chỉ kết nối tới model đó khi cần phân tích/dịch.
 - **Edge-TTS cần mạng** mới lồng được tiếng (giọng Microsoft online).
-  Mất mạng giữa chừng → app tự đổi sang gTTS dự phòng (giọng đơn),
-  ghi rõ trong log.
-- **9Router dùng free-tier** (`mimo-v2.6-flash-free`): cần API key của anh,
-  nhập 1 lần ở màn **Cài đặt** → app nhớ mãi. Muốn offline hoàn toàn thì
-  dùng Ollama local thay thế (kéo model về trước bằng
-  `ollama pull <tên-model>`).
+  Nếu Edge-TTS lỗi toàn bộ, bước lồng tiếng báo lỗi để chạy lại; không tự
+  đổi sang dịch vụ TTS khác.
+- ASR mặc định dùng **Whisper large-v3-turbo** cho transcript và timestamps;
+  **CAM++** gán nhãn loa từ lượt thoại FunASR. Có thể chọn FunASR trực tiếp ở
+  **Cài đặt → ASR** nếu muốn ưu tiên tốc độ hoặc giảm bộ nhớ. Backend **Qwen
+  1.7B + ForcedAligner + CAM++** bổ sung timestamp và nhãn loa cho Qwen.
+- Dịch mặc định qua **OpenAI API** (`gpt-4.1`). Nhập OpenAI API key ở
+  **Cài đặt → Dịch thuật**. API tính phí riêng, không dùng chung gói
+  ChatGPT. Có thể chọn 9Router hoặc Ollama thay thế.
 
 ### Dùng app
 
@@ -98,12 +118,17 @@ Có 2 cách chạy — chọn 1:
 
 ## Cấu trúc
 
+So sánh ASR trên video thật và các giới hạn của đánh giá nằm trong
+[báo cáo benchmark ASR](docs/ASR_BENCHMARK_2026-10-25.md).
+
 ```
 core/         orchestrator.py (chạy 9 bước), job.py, checkpoint.py,
               settings.py (JSON trong %APPDATA%/VietDub), logger.py
-asr/          funasr_adapter.py (SeacoParaformer + cam++ tách loa)
+asr/          whisper_adapter.py (Whisper transcript + CAM++ nhãn loa),
+              qwen_adapter.py (Qwen + ForcedAligner + CAM++),
+              funasr_adapter.py (SenseVoiceSmall/VAD/punc/CAM++)
 speaker/      gender.py (pitch -> nam/nữ)
-translation/  base.py, nine_router.py, ollama.py, prompts.py
+translation/  base.py, openai_api.py, nine_router.py, ollama.py, prompts.py
 tts/          edge_tts.py, duration_fit.py (khớp thời lượng)
 media/        fetch.py (yt-dlp), extract.py, mix.py, render.py, subs.py
 project/      schema.py, io.py

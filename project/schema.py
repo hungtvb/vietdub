@@ -147,7 +147,7 @@ class Project:
     dub_volume: float = 1.0
     orig_volume: float = 0.15
     sub_mode: str = "burn"       # "burn" | "srt"
-    translate_provider: str = "9router"  # "9router" | "ollama"
+    translate_provider: str = "openai"  # "openai" | "9router" | "ollama"
     review_stops: bool = True
     overnight: bool = False
     stages_done: List[str] = field(default_factory=list)

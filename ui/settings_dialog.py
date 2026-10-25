@@ -24,7 +24,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings
         self.setWindowTitle("Cài đặt VietDub")
-        self.resize(560, 520)
+        self.resize(620, 680)
         root = QVBoxLayout(self)
 
         self.tabs = QTabWidget()
@@ -53,6 +53,17 @@ class SettingsDialog(QDialog):
     def _build_translate_tab(self) -> None:
         tab = QWidget()
         f = QFormLayout(tab)
+        self.oa_key = QLineEdit()
+        self.oa_key.setEchoMode(QLineEdit.Password)
+        self.oa_key.setText(self.settings.get("openai_api_key", ""))
+        f.addRow("OpenAI API key:", self.oa_key)
+        self.oa_model = QLineEdit()
+        self.oa_model.setText(self.settings.get("openai_model", "gpt-4.1"))
+        f.addRow("Model OpenAI:", self.oa_model)
+        self.oa_url = QLineEdit()
+        self.oa_url.setText(self.settings.get(
+            "openai_url", "https://api.openai.com/v1"))
+        f.addRow("Endpoint OpenAI:", self.oa_url)
         self.nr_key = QLineEdit()
         self.nr_key.setEchoMode(QLineEdit.Password)
         self.nr_key.setText(self.settings.get("nine_router_key", ""))
@@ -84,7 +95,8 @@ class SettingsDialog(QDialog):
         self.tr_batch.setRange(1, 100)
         self.tr_batch.setValue(int(self.settings.get("translate_batch", 20)))
         f.addRow("Số câu / request dịch:", self.tr_batch)
-        f.addRow(QLabel("Để trống API key 9Router nếu chỉ dùng Ollama local."))
+        f.addRow(QLabel("OpenAI API tính phí riêng, không dùng chung gói ChatGPT. "
+                        "Có thể chọn 9Router hoặc Ollama nếu không có API key."))
         self.tabs.addTab(tab, "Dịch thuật")
 
     def check_ollama(self) -> None:
@@ -112,11 +124,23 @@ class SettingsDialog(QDialog):
     def _build_asr_tab(self) -> None:
         tab = QWidget()
         f = QFormLayout(tab)
+        self.asr_backend = QComboBox()
+        self.asr_backend.addItem("Whisper + CAM++ tách loa", "whisper")
+        self.asr_backend.addItem("FunASR trực tiếp", "funasr")
+        self.asr_backend.addItem(
+            "Qwen 1.7B + timestamp + CAM++ (chậm)", "qwen")
+        backend = self.settings.get("asr_backend", "whisper")
+        idx = self.asr_backend.findData(backend)
+        self.asr_backend.setCurrentIndex(max(0, idx))
+        f.addRow("Engine STT:", self.asr_backend)
+        self.whisper_model = QLineEdit(
+            self.settings.get("whisper_model", "large-v3-turbo"))
+        f.addRow("Model Whisper:", self.whisper_model)
         self.asr_model = QComboBox()
         self.asr_model.setEditable(True)
         self.asr_model.addItem(str(self.settings.get("asr_model")))
         self.asr_model.setCurrentText(str(self.settings.get("asr_model")))
-        f.addRow("Model ASR:", self.asr_model)
+        f.addRow("Model FunASR (VAD/loa):", self.asr_model)
         self.vad_model = QLineEdit(self.settings.get("vad_model", ""))
         f.addRow("Model VAD:", self.vad_model)
         self.punc_model = QLineEdit(self.settings.get("punc_model", ""))
@@ -130,6 +154,11 @@ class SettingsDialog(QDialog):
         f.addRow("Ngưỡng confidence thấp:", self.asr_conf)
         f.addRow(QLabel("Câu nào ASR nghe dưới ngưỡng này sẽ được đánh dấu "
                        "để bạn kiểm tra kỹ ở màn duyệt."))
+        f.addRow(QLabel(
+            "Qwen dùng ForcedAligner để tạo timestamp và CAM++ để gán loa. "
+            "Model chạy lần lượt để giảm RAM; lần đầu cần tải khoảng 6 GB "
+            "và xử lý chậm hơn Whisper nhiều; khuyến nghị máy có ít nhất "
+            "16 GB RAM."))
         self.tabs.addTab(tab, "Nhận dạng (ASR)")
 
     # ------------------------------------------------------------ tab giọng
@@ -235,6 +264,9 @@ class SettingsDialog(QDialog):
 
     # ------------------------------------------------------------------ lưu
     def restore_defaults(self) -> None:
+        self.oa_key.setText(str(DEFAULTS["openai_api_key"]))
+        self.oa_model.setText(str(DEFAULTS["openai_model"]))
+        self.oa_url.setText(str(DEFAULTS["openai_url"]))
         self.nr_key.setText(str(DEFAULTS["nine_router_key"]))
         self.nr_model.setText(str(DEFAULTS["nine_router_model"]))
         self.nr_url.setText(str(DEFAULTS["nine_router_url"]))
@@ -242,6 +274,9 @@ class SettingsDialog(QDialog):
         self.ol_model.setText(str(DEFAULTS["ollama_model"]))
         self.llm_temp.setValue(float(DEFAULTS["llm_temperature"]))
         self.tr_batch.setValue(int(DEFAULTS["translate_batch"]))
+        self.asr_backend.setCurrentIndex(
+            max(0, self.asr_backend.findData(DEFAULTS["asr_backend"])))
+        self.whisper_model.setText(str(DEFAULTS["whisper_model"]))
         self.asr_model.setCurrentText(str(DEFAULTS["asr_model"]))
         self.vad_model.setText(str(DEFAULTS["vad_model"]))
         self.punc_model.setText(str(DEFAULTS["punc_model"]))
@@ -271,6 +306,11 @@ class SettingsDialog(QDialog):
         names = [ln.strip() for ln in
                  self.names_edit.toPlainText().splitlines() if ln.strip()]
         self.settings.update({
+            "openai_api_key": self.oa_key.text().strip(),
+            "openai_model": self.oa_model.text().strip() or
+            DEFAULTS["openai_model"],
+            "openai_url": self.oa_url.text().strip() or
+            DEFAULTS["openai_url"],
             "nine_router_key": self.nr_key.text().strip(),
             "nine_router_model": self.nr_model.text().strip(),
             "nine_router_url": self.nr_url.text().strip() or
@@ -280,6 +320,9 @@ class SettingsDialog(QDialog):
             "ollama_model": self.ol_model.text().strip(),
             "llm_temperature": self.llm_temp.value(),
             "translate_batch": self.tr_batch.value(),
+            "asr_backend": self.asr_backend.currentData(),
+            "whisper_model": self.whisper_model.text().strip() or
+            DEFAULTS["whisper_model"],
             "asr_model": self.asr_model.currentText().strip(),
             "vad_model": self.vad_model.text().strip(),
             "punc_model": self.punc_model.text().strip(),

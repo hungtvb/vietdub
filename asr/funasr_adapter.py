@@ -10,8 +10,8 @@
 #     drop end<=start)
 """Step [2] - FunASR transcription + speaker diarization.
 
-Combo (tested 2026-10-08, RTF 0.305 on CPU):
-  SeacoParaformer (ASR) + fsmn-vad (segmentation) + ct-punc 290M
+Default combo (tested 2026-10-25 on CPU):
+  SenseVoiceSmall (ASR) + fsmn-vad (segmentation) + ct-punc 290M
   (punctuation, light version) + cam++ (speaker labels).
 
 Speaker labels come out as spk0/spk1/... and are mapped to integer ids.
@@ -41,7 +41,7 @@ ASR_CHUNK_SEC = 10 * 60
 
 
 def _models_dir() -> Path:
-    """Thư mục tải model FunASR (lần đầu chạy, chỉ 1 lần, ~1.3GB).
+    """Thư mục tải model FunASR (lần đầu chạy, chỉ 1 lần, khoảng 1.3GB).
 
     Windows: %APPDATA%/VietDub/models ; Linux/macOS: ~/.config/VietDub/models.
     Đặt qua biến môi trường MODELSCOPE_CACHE trước khi import modelscope —
@@ -108,7 +108,7 @@ class FunASRAdapter:
             )
         except Exception as e:  # noqa: BLE001
             raise ASRError(
-                "Không tải được model ASR (lần đầu cần mạng để tải ~1.3GB model).\n"
+                "Không tải được model ASR (lần đầu cần mạng để tải model).\n"
                 f"Cách khắc phục: kiểm tra mạng rồi chạy lại. Chi tiết: {e}") from e
 
     def transcribe(self, wav_path: str | Path) -> List[Segment]:

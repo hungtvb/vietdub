@@ -177,21 +177,22 @@ class Orchestrator:
             dur = 0.0
         if dur > 0:
             # edge 17: estimate peak RAM before the heavy steps start
-            mres.check_ram(dur)
+            mres.check_ram(dur, self.settings.get("asr_backend", "whisper"))
         wav = mextract.extract_audio(video, job.stages_dir / "audio.wav",
                                      audio_track=int(job.project.audio_track or 0))
         cp.save_step(job.job_dir, "extract", {"wav_path": str(wav)})
 
     def _step_asr(self):
-        from asr.funasr_adapter import FunASRAdapter
+        from asr.factory import build_adapter
         job = self.job
         s = self.settings
         data = cp.load_step(job.job_dir, "extract") or {}
         wav = data.get("wav_path")
-        adapter = FunASRAdapter(asr_model=s.get("asr_model"),
-                                vad_model=s.get("vad_model"),
-                                punc_model=s.get("punc_model"),
-                                spk_model=s.get("spk_model"))
+        proper_nouns = list(s.get("proper_nouns", []) or [])
+        proper_nouns.extend(job.project.proper_nouns or [])
+        adapter = build_adapter(
+            s, source_language=job.project.src_lang,
+            proper_nouns=list(dict.fromkeys(proper_nouns)))
         segments = adapter.transcribe(wav)
         # edge case 5: low ASR confidence -> needs_review
         conf_thr = float(s.get("asr_confidence_low", 0.5))
@@ -238,18 +239,29 @@ class Orchestrator:
         pio.save_speakers(job.job_dir, "gender", speakers)
 
     def _translators(self):
+        from translation.openai_api import OpenAITranslator
         from translation.nine_router import NineRouterTranslator
         from translation.ollama import OllamaTranslator
         s = self.settings
         providers = []
-        order = [self.job.project.translate_provider, "9router", "ollama"]
+        order = [self.job.project.translate_provider, "openai", "9router",
+                 "ollama"]
         seen = set()
         for name in order:
             if name in seen:
                 continue
             seen.add(name)
             try:
-                if name == "9router":
+                if name == "openai":
+                    if s.get("openai_api_key"):
+                        providers.append(OpenAITranslator(
+                            api_key=s.get("openai_api_key"),
+                            base_url=s.get("openai_url", "https://api.openai.com/v1"),
+                            model=s.get("openai_model", "gpt-4.1"),
+                            temperature=float(s.get("llm_temperature", 0.2)),
+                            batch_size=int(s.get("translate_batch", 20)),
+                            proper_nouns=list(s.get("proper_nouns", []))))
+                elif name == "9router":
                     providers.append(NineRouterTranslator(
                         api_key=s.get("nine_router_key", ""),
                         base_url=s.get("nine_router_url",
@@ -280,7 +292,7 @@ class Orchestrator:
         if not providers:
             raise ValueError(
                 "Chưa cấu hình nguồn dịch nào.\n"
-                "Cách khắc phục: mở Cài đặt -> nhập API key 9Router "
+                "Cách khắc phục: mở Cài đặt -> nhập API key OpenAI/9Router "
                 "hoặc cấu hình Ollama.")
         # analyze only; translation happens in _step_translate
         last_err = None
@@ -326,18 +338,8 @@ class Orchestrator:
         self.logger.info("dịch xong bằng %s: %d câu", used, len(segments))
 
     def _synthesize_tts(self, tts, segments, tts_dir):
-        """TTS with fallback: Edge-TTS first, gTTS (single voice) when Edge
-        fails for ALL sentences (DESIGN.md fallback table, edge case 6)."""
-        from tts import edge_tts as metts
-        from tts import gtts as mgtts
-        try:
-            return tts.synthesize(segments, tts_dir)
-        except metts.TTSError as e:
-            self.logger.warning(
-                "Edge-TTS lỗi toàn bộ (%s), chuyển sang gTTS (giọng đơn, "
-                "không phân biệt nam/nữ)", str(e).split("\n")[0][:160])
-            g = mgtts.GTTS()
-            return g.synthesize(segments, tts_dir)
+        """Use Edge-TTS only; surface a failure so the job can be retried."""
+        return tts.synthesize(segments, tts_dir)
 
     def _fit_and_track(self, segments, tts_dir, synthesize_fn):
         """Split-and-retry loop for too-long sentences (edge case 1).

@@ -8,15 +8,18 @@
 
 VietDub là app desktop (PySide6) chạy trên Windows 11, lồng tiếng video tiếng Trung sang tiếng Việt:
 
-- Nghe + tách loa tự động (FunASR, chạy local, CPU).
+- Mặc định Whisper chạy local trên CPU để nhận chữ và timestamps; FunASR/CAM++ tách loa.
+- Có backend Qwen3-ASR-1.7B tùy chọn; Qwen ForcedAligner tạo timestamp, CAM++ gán loa.
 - Đoán giới tính từng loa bằng pitch → gán giọng lồng tiếng nam/nữ.
 - LLM phân tích quan hệ người nói trước khi dịch → đại từ xưng hô chuẩn (tôi/em/anh/ngài…).
 - Lồng tiếng bằng Edge-TTS (2 giọng Việt: 1 nam + 1 nữ), tự co giãn tốc độ cho khớp thời lượng từng câu.
 - Trộn tiếng lồng lên trên tiếng gốc (giảm nhỏ), gắn phụ đề, xuất video hoàn chỉnh.
 - Có điểm dừng duyệt tay sau bước nghe và sau bước dịch.
-- Module dịch cắm được 2 nguồn: 9Router (mimo-v2.6-flash-free, mặc định) và Ollama local.
+- Module dịch cắm được OpenAI API (mặc định), 9Router và Ollama local.
 
-Mục tiêu phi chức năng: chạy được trên máy CPU 16GB RAM, không cần GPU, toàn bộ miễn phí, project lưu được giữa chừng để chạy tiếp.
+Mục tiêu phi chức năng: chạy được trên máy CPU 16GB RAM, không cần GPU,
+project lưu được giữa chừng để chạy tiếp. ASR chạy local; OpenAI API tính phí
+riêng và có thể thay bằng 9Router hoặc Ollama.
 
 **Tiêu chuẩn production (Tony 2026-10-08 — "Đây không phải app demo, nó phải là app dùng thật"):**
 - Không code đối phó, không UI giả, không logic placeholder, không nút bấm chết — mọi chức năng chạy thật end-to-end: tải link thật, ASR thật, dịch thật, TTS thật, render ra video thật xem được.
@@ -36,7 +39,10 @@ Video đầu vào (file local HOẶC link Douyin/TikTok/YouTube...)
 [1] Tách audio ── ffmpeg → wav 16kHz mono
         │
         ▼
-[2] Nghe + tách loa ── FunASR (SeacoParaformer + fsmn-vad + cam++)
+[2] Nhận chữ ── chọn một backend:
+        │   ── Whisper large-v3-turbo + CAM++
+        │   ── FunASR trực tiếp (SenseVoiceSmall + fsmn-vad + cam++)
+        │   ── Qwen3-ASR-1.7B + Qwen ForcedAligner + CAM++
         │   → segments: {index, start, end, speaker, text_src}
         │   ⏸ ĐIỂM DỪNG DUYỆT #1: sửa chữ, gộp/tách câu, sửa loa
         ▼
@@ -69,9 +75,9 @@ Fallback từng bước:
 | Bước | Lỗi | Dự phòng |
 |------|-----|----------|
 | [0] Lấy video | link sai / cần đăng nhập / bị chặn | báo lỗi tiếng Việt dễ hiểu, retry 2 lần → gợi ý tải tay file rồi kéo vào tab File |
-| [2] ASR | OOM / model lỗi | tự đổi sang model nhẹ hơn, báo log |
-| [4–5] Dịch | 9Router timeout/503 | thử lại 3 lần → đổi sang Ollama nếu có → Google Translate free (cảnh báo có thể 429) |
-| [6] TTS | Edge-TTS websocket lỗi | gTTS (giọng đơn, báo rõ trong log) |
+| [2] ASR | Whisper/Qwen lỗi hoặc không có câu hợp lệ | dùng transcript FunASR và đánh dấu cần duyệt; lỗi FunASR thì báo log |
+| [4–5] Dịch | OpenAI/9Router timeout hoặc Ollama lỗi | thử nguồn tiếp theo đã cấu hình → Google Translate free (cảnh báo chất lượng) |
+| [6] TTS | Edge-TTS websocket lỗi toàn bộ | báo lỗi để chạy lại; chỉ dùng Edge-TTS |
 | [8] Render | thiếu font sub | dùng font hệ thống, báo log |
 
 ## 3. Kiến trúc thư mục
@@ -83,11 +89,15 @@ vietdub/
 │   ├── job.py              # trạng thái job: idle/running/paused/review/done/failed
 │   └── checkpoint.py       # lưu/khôi phục sau mỗi bước
 ├── asr/
-│   └── funasr_adapter.py   # load model 1 lần, transcribe + speaker labels
+│   ├── factory.py          # tạo backend theo Settings
+│   ├── whisper_adapter.py  # Whisper transcript + ghép nhãn CAM++ theo thời gian
+│   ├── qwen_adapter.py     # Qwen text + ForcedAligner timestamp + CAM++ loa
+│   └── funasr_adapter.py   # SenseVoice/VAD/punctuation/CAM++
 ├── speaker/
 │   └── gender.py           # pitch (pyin) → male/female + confidence
 ├── translation/
 │   ├── base.py             # interface chung: analyze() + translate()
+│   ├── openai_api.py       # gọi OpenAI Chat Completions API
 │   ├── nine_router.py      # gọi 9Router / mimo-v2.6-flash-free
 │   ├── ollama.py           # gọi Ollama local
 │   └── prompts.py          # prompt phân tích quan hệ + prompt dịch
@@ -188,7 +198,12 @@ Checkpoint: sau mỗi bước, `stages/<ten_buoc>.json` được ghi. Mở lại
 
 Interface chung (`translation/base.py`): 2 hàm `analyze(segments, speakers)` và `translate(segments, analysis)`. Thêm provider mới chỉ cần implement 2 hàm này.
 
-**9Router (mặc định):**
+**OpenAI API (mặc định):**
+- Endpoint mặc định `https://api.openai.com/v1`, model `gpt-4.1`.
+- Cần OpenAI API key riêng; gói ChatGPT không bao gồm API usage.
+- API key và model chỉnh được trong Settings.
+
+**9Router:**
 - Endpoint: `https://...` (cấu hình trong settings), model `mimo-v2.6-flash-free`.
 - Đã test thực tế: dịch Trung→Việt chuẩn đại từ nhất trong 14 model free (您→"ngài", cấp trên→"em/anh"; phân tích đúng phóng viên→khán giả: tôi/quý vị).
 - Cần API key của Tony, lưu trong settings (không hardcode).
@@ -384,13 +399,13 @@ Chạy pipeline trong `QThread`, UI nhận signal `progress(step, pct, msg)` và
 
 **Màn 5 — Hoàn thành:** player xem thử video đã lồng tiếng + sub, nút [Mở thư mục] [Làm video khác].
 
-**Dialog Cài đặt** (mở từ mọi màn): 9Router API key + model, Ollama endpoint + model, model ASR (lớn/nhỏ), model dấu câu, ngưỡng pitch, âm lượng dub/gốc, style phụ đề, chất lượng video, đường dẫn FFmpeg.
+**Dialog Cài đặt** (mở từ mọi màn): OpenAI API key + model, 9Router key + model, Ollama endpoint + model; backend ASR (Whisper+CAM++, FunASR trực tiếp, hoặc Qwen+ForcedAligner+CAM++), model Whisper/FunASR, VAD, dấu câu, ngưỡng pitch, âm lượng dub/gốc, style phụ đề, chất lượng video, đường dẫn FFmpeg.
 
 Quy tắc UI: không dùng emoji làm icon, icon vẽ tay/vector đồng bộ.
 
 ## 9. Config đầy đủ
 
-**Cài đặt chung** (`%APPDATA%/VietDub/settings.json`): 9Router key/model, Ollama endpoint/model, model ASR + dấu câu, giọng nam/nữ mặc định, rate/pitch, ngưỡng pitch, âm lượng, style sub, crf, review_stops mặc định.
+**Cài đặt chung** (`%APPDATA%/VietDub/settings.json`): OpenAI key/model/endpoint, 9Router key/model, Ollama endpoint/model, ASR backend + model Whisper/FunASR/VAD/dấu câu/Qwen/ForcedAligner, giọng nam/nữ mặc định, rate/pitch, ngưỡng pitch, âm lượng, style sub, crf, review_stops mặc định.
 
 **Theo từng project** (lưu trong `project.json`): video vào/ra, cặp giọng, nguồn dịch, âm lượng, chế độ sub, có dừng duyệt hay không. Mở project cũ = khôi phục đúng lựa chọn lần trước.
 
@@ -429,7 +444,7 @@ Mỗi case phải có cách xử lý trong code + test case tương ứng (chạ
 
 - PyInstaller chế độ onedir → 1 thư mục `VietDub/`, chạy `VietDub.exe`, không cần cài Python.
 - FFmpeg đóng gói kèm (binary Windows).
-- Model FunASR tải 1 lần duy nhất lúc chạy đầu tiên về `%APPDATA%/VietDub/models/` (~1.3GB với ct-punc 290M — bản nhẹ, sẽ đo lại RAM trước khi chốt).
+- Model FunASR tải về `%APPDATA%/VietDub/models/`; Whisper và Qwen tải về `%APPDATA%/VietDub/models/huggingface/`. Cần mạng ở lần tải đầu; backend Qwen tải thêm khoảng 6 GB và chạy chậm hơn trên CPU.
 - Không cần GPU. RAM đỉnh đo được ~5.3GB với bản ct-punc-large → bản release dùng ct-punc 290M để nhẹ hơn.
 
 ## 12. Tiêu chí nghiệm thu (verify)
@@ -463,7 +478,7 @@ Chạy end-to-end trên clip test 55s (phóng viên + ông Lý):
 
 ## 13. Task breakdown (đã duyệt)
 
-**Wave 1 — lõi pipeline:** 1. khung project + checkpoint → 2. media (ffmpeg) → 3. asr (FunASR) → 4. speaker (pitch) → 5. translation (9Router + Ollama) → 6. tts (Edge-TTS 2 giọng + khớp giờ).
+**Wave 1 — lõi pipeline:** 1. khung project + checkpoint → 2. media (ffmpeg) → 3. asr (Whisper + FunASR/CAM++) → 4. speaker (pitch) → 5. translation (OpenAI API + 9Router + Ollama) → 6. tts (Edge-TTS 2 giọng + khớp giờ).
 
 **Wave 2 — UI PySide6:** 7. màn chính → 8. màn xử lý → 9. duyệt sub gốc + duyệt dịch → 10. hoàn thành + settings.
 
@@ -514,6 +529,11 @@ LƯU Ý TRUNG THỰC về [2]: số đo trực tiếp pipeline FunASR thô trư�
 ~143 phút). Bảng trên dùng số đo qua adapter (đúng code app chạy thật).
 [2] chiếm ~2/3 tổng thời gian — nếu Tony muốn rút ngắn đêm chạy, hướng tối ưu:
 giảm chunk ASR, batch VAD lớn hơn, hoặc thử bản paraformer nhỏ hơn.
+
+Đo thêm 2026-10-25 trên video ChinaJoy thật dài 120s: backend hybrid Whisper +
+CAM++ hoàn tất trong 109.5s trên CPU sau khi weights đã có cache, với 44 câu
+và chuỗi loa 0→1→0→2→0. Đây là một clip và không có phụ đề chuẩn để tính CER/WER;
+xem `docs/ASR_BENCHMARK_2026-10-25.md` để biết cách so sánh và giới hạn.
 
 5. **RAM cho audio 90 phút**: xử lý theo chunk (ASR theo đoạn 5–10 phút, TTS theo câu), không ôm hết vào RAM; báo RAM đỉnh ước lượng, cảnh báo trước nếu vượt RAM máy.
 6. **Kết hợp batch queue (future)**: qua đêm chạy được NHIỀU phim nối tiếp nhau — mỗi job checkpoint riêng, job này lỗi không chặn job sau (log lỗi, chạy tiếp job kế).
