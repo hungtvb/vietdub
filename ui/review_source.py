@@ -16,9 +16,9 @@ from pathlib import Path
 from typing import Callable, Dict, List
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QPushButton,
+from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton,
                                QStyledItemDelegate, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -98,7 +98,7 @@ class ReviewSourceWindow(QWidget):
         self.on_back = on_back
         self.setWindowTitle(f"VietDub — Duyệt sub gốc: {job.project.name}")
         self.resize(1180, 760)
-        self.setMinimumSize(920, 620)
+        self.setMinimumSize(700, 500)
 
         self.segments: List[Segment] = pio.load_segments(job.job_dir, "asr") or []
         self.speakers: Dict[int, Speaker] = \
@@ -118,13 +118,21 @@ class ReviewSourceWindow(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 20, 22, 18)
         root.setSpacing(12)
+        header = QFrame()
+        header.setObjectName("workflowHeader")
+        header_lay = QVBoxLayout(header)
+        header_lay.setContentsMargins(15, 10, 15, 12)
+        header_lay.setSpacing(3)
+        eyebrow = QLabel("DUYỆT NỘI DUNG  ·  1/2")
+        eyebrow.setObjectName("workflowEyebrow")
+        header_lay.addWidget(eyebrow)
         title = QLabel("Duyệt phụ đề gốc")
         title.setObjectName("pageTitle")
-        root.addWidget(title)
+        header_lay.addWidget(title)
         instruction = QLabel(
             "Sửa nội dung trực tiếp trong bảng. Enter để xuống dòng tiếp theo.")
         instruction.setProperty("role", "secondary")
-        root.addWidget(instruction)
+        header_lay.addWidget(instruction)
         n_review = sum(1 for s in self.segments if s.needs_review)
         # Điểm dừng #1 chạy TRƯỚC bước gender -> checkpoint "gender" chưa có;
         # đếm loa distinct từ chính các segment (không đếm self.speakers).
@@ -134,7 +142,9 @@ class ReviewSourceWindow(QWidget):
             + (f" — {n_review} câu tô vàng cần kiểm tra kỹ (ASR nghe không "
                "chắc)." if n_review else "."))
         self.lbl_note.setProperty("role", "secondary")
-        root.addWidget(self.lbl_note)
+        self.lbl_note.setWordWrap(True)
+        header_lay.addWidget(self.lbl_note)
+        root.addWidget(header)
 
         self.tbl = QTableWidget(len(self.segments), len(COLS))
         self.tbl.setHorizontalHeaderLabels(COLS)
@@ -154,8 +164,21 @@ class ReviewSourceWindow(QWidget):
         self.tbl.setSelectionMode(QTableWidget.SingleSelection)
         self.tbl.setAlternatingRowColors(True)
         self.tbl.verticalHeader().setDefaultSectionSize(38)
-        root.addWidget(self.tbl, 1)
+        table_card = QFrame()
+        table_card.setObjectName("workflowCard")
+        table_lay = QVBoxLayout(table_card)
+        table_lay.setContentsMargins(11, 9, 11, 10)
+        section = QLabel("BẢN GHI VÀ NGƯỜI NÓI")
+        section.setObjectName("workflowSection")
+        table_lay.addWidget(section)
+        table_lay.addWidget(self.tbl, 1)
+        root.addWidget(table_card, 1)
 
+        actions_card = QFrame()
+        actions_card.setObjectName("workflowFooter")
+        actions = QVBoxLayout(actions_card)
+        actions.setContentsMargins(11, 7, 11, 7)
+        actions.setSpacing(5)
         row = QHBoxLayout()
         self.btn_play = QPushButton("Nghe lại câu")
         self.btn_play.clicked.connect(self.play_selected)
@@ -177,10 +200,14 @@ class ReviewSourceWindow(QWidget):
         row.addWidget(self.btn_split)
         row.addWidget(self.btn_merge)
         row.addStretch(1)
-        row.addWidget(btn_settings)
-        row.addWidget(btn_back)
-        row.addWidget(btn_next)
-        root.addLayout(row)
+        actions.addLayout(row)
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        footer.addWidget(btn_settings)
+        footer.addWidget(btn_back)
+        footer.addWidget(btn_next)
+        actions.addLayout(footer)
+        root.addWidget(actions_card)
 
     def open_settings(self) -> None:
         from ui.common import open_settings_dialog
@@ -228,8 +255,9 @@ class ReviewSourceWindow(QWidget):
     def _ensure_player(self) -> QMediaPlayer:
         if self._player is None:
             self._player = QMediaPlayer(self)
-            self._audio_out = QAudioOutput(self)
-            self._player.setAudioOutput(self._audio_out)
+            if QGuiApplication.platformName() != "offscreen":
+                self._audio_out = QAudioOutput(self)
+                self._player.setAudioOutput(self._audio_out)
             self._player.mediaStatusChanged.connect(self._on_media_status)
         return self._player
 

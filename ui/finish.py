@@ -13,16 +13,48 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
-from PySide6.QtWidgets import (QGroupBox, QHBoxLayout, QLabel, QPushButton,
-                               QSlider, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit,
+                               QPushButton, QSlider, QStackedWidget,
+                               QVBoxLayout, QWidget)
 
 from core import checkpoint as cp
 from core.job import Job
 from core.settings import Settings
 from ui.common import error_box, fmt_time, info_box
+from ui.poster_loader import PosterLoader
+
+
+class PosterLabel(QLabel):
+    def __init__(self):
+        super().__init__("Đang chuẩn bị hình xem trước…")
+        self.setObjectName("finishPoster")
+        self.setAlignment(Qt.AlignCenter)
+        self._original = QPixmap()
+        self._placeholder = "Đang chuẩn bị hình xem trước…"
+
+    def set_poster(self, path: Path) -> None:
+        self._original = QPixmap(str(path))
+        self._fit()
+
+    def clear_poster(self) -> None:
+        self._original = QPixmap()
+        self._placeholder = "Đang chuẩn bị hình xem trước…"
+        self.clear()
+        self.setText(self._placeholder)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit()
+
+    def _fit(self) -> None:
+        if self._original.isNull():
+            self.setText(self._placeholder)
+        else:
+            self.setPixmap(self._original.scaled(
+                self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
 
 class FinishWindow(QWidget):
@@ -34,33 +66,60 @@ class FinishWindow(QWidget):
         self.on_new = on_new
         self.setWindowTitle(f"VietDub — Hoàn thành: {job.project.name}")
         self.resize(1080, 800)
-        self.setMinimumSize(860, 680)
+        self.setMinimumSize(650, 500)
 
         data = cp.load_step(job.job_dir, "render") or {}
         self.video_out = data.get("video_out", "") or ""
         self.srt_path = data.get("srt", "") or ""
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(22, 20, 22, 18)
-        root.setSpacing(12)
-        title = QLabel("Video đã lồng tiếng")
+        root.setContentsMargins(22, 18, 22, 18)
+        root.setSpacing(13)
+        header = QHBoxLayout()
+        title_stack = QVBoxLayout()
+        title_stack.setSpacing(2)
+        badge = QLabel("●  XUẤT HOÀN TẤT")
+        badge.setObjectName("finishBadge")
+        title_stack.addWidget(badge)
+        title = QLabel("Video đã sẵn sàng")
         title.setObjectName("pageTitle")
-        root.addWidget(title)
-        note = QLabel("Xem thử thành phẩm hoặc mở thư mục lưu file.")
-        note.setProperty("role", "secondary")
-        root.addWidget(note)
+        title_stack.addWidget(title)
+        header.addLayout(title_stack)
+        header.addStretch(1)
+        new = QPushButton("Video mới")
+        new.setProperty("role", "secondary")
+        new.clicked.connect(self.on_new)
+        header.addWidget(new)
+        root.addLayout(header)
+
+        preview_card = QFrame()
+        preview_card.setObjectName("finishCard")
+        preview_lay = QVBoxLayout(preview_card)
+        preview_lay.setContentsMargins(13, 11, 13, 12)
+        preview_lay.setSpacing(9)
+        preview_title = QLabel("XEM TRƯỚC THÀNH PHẨM")
+        preview_title.setObjectName("finishSection")
+        preview_lay.addWidget(preview_title)
+        self.preview_stack = QStackedWidget()
+        self.preview_stack.setMinimumHeight(150)
+        self.poster = PosterLabel()
         self.video = QVideoWidget()
-        self.video.setMinimumHeight(400)
-        root.addWidget(self.video, 1)
+        self.preview_stack.addWidget(self.poster)
+        self.preview_stack.addWidget(self.video)
+        preview_lay.addWidget(self.preview_stack, 1)
 
         self._player: QMediaPlayer | None = None
         self._audio_out: QAudioOutput | None = None
+        self._poster_loader = PosterLoader(self)
+        self._poster_loader.ready.connect(self._poster_ready)
         if not self.video_out or not Path(self.video_out).is_file():
             error_box(self, "Không thấy video kết quả",
                       f"Không tìm thấy file video:\n{self.video_out}")
+        else:
+            self._load_poster()
 
         ctl = QHBoxLayout()
-        self.btn_play = QPushButton("Phát")
+        self.btn_play = QPushButton("▶  Phát")
         self.btn_play.clicked.connect(self.toggle_play)
         ctl.addWidget(self.btn_play)
         self.slider = QSlider(Qt.Horizontal)
@@ -69,36 +128,39 @@ class FinishWindow(QWidget):
         ctl.addWidget(self.slider, 1)
         self.lbl_time = QLabel("00:00 / 00:00")
         ctl.addWidget(self.lbl_time)
-        root.addLayout(ctl)
+        preview_lay.addLayout(ctl)
+        root.addWidget(preview_card, 1)
 
-        files = QGroupBox("Tệp đầu ra")
+        files = QFrame()
+        files.setObjectName("finishCard")
         files_lay = QVBoxLayout(files)
-        files_lay.setContentsMargins(14, 18, 14, 12)
-        video_path = QLabel(f"Video  ·  {self.video_out or '—'}")
-        video_path.setWordWrap(True)
-        video_path.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        video_path.setProperty("role", "secondary")
-        sub_path = QLabel(f"Phụ đề  ·  {self.srt_path or '—'}")
-        sub_path.setWordWrap(True)
-        sub_path.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        sub_path.setProperty("role", "secondary")
-        files_lay.addWidget(video_path)
-        files_lay.addWidget(sub_path)
+        files_lay.setContentsMargins(13, 11, 13, 12)
+        files_title = QLabel("TỆP ĐẦU RA")
+        files_title.setObjectName("finishSection")
+        files_lay.addWidget(files_title)
+        files_lay.addWidget(QLabel("VIDEO MP4"))
+        self.video_path_label = QLineEdit(self.video_out or "—")
+        self.video_path_label.setReadOnly(True)
+        files_lay.addWidget(self.video_path_label)
+        files_lay.addWidget(QLabel("PHỤ ĐỀ SRT"))
+        self.sub_path_label = QLineEdit(self.srt_path or "—")
+        self.sub_path_label.setReadOnly(True)
+        files_lay.addWidget(self.sub_path_label)
         root.addWidget(files)
 
         row = QHBoxLayout()
         btn_open = QPushButton("Mở thư mục")
         btn_open.setProperty("role", "secondary")
         btn_open.clicked.connect(self.open_folder)
-        btn_new = QPushButton("Làm video khác")
-        btn_new.setProperty("role", "primary")
-        btn_new.clicked.connect(self.on_new)
+        btn_edit = QPushButton("Biên tập video  →")
+        btn_edit.setProperty("role", "primary")
+        btn_edit.clicked.connect(self.open_editor)
         btn_settings = QPushButton("Cài đặt")
         btn_settings.clicked.connect(self.open_settings)
         row.addWidget(btn_open)
-        row.addStretch(1)
         row.addWidget(btn_settings)
-        row.addWidget(btn_new)
+        row.addStretch(1)
+        row.addWidget(btn_edit)
         root.addLayout(row)
 
     # -------------------------------------------------------------- phát thử
@@ -107,13 +169,27 @@ class FinishWindow(QWidget):
         if player.playbackState() == QMediaPlayer.PlayingState:
             player.pause()
         else:
+            self.preview_stack.setCurrentWidget(self.video)
             player.play()
+
+    def _load_poster(self) -> None:
+        self._poster_loader.request(self.video_out, str(self.job.stages_dir))
+
+    def _poster_ready(self, source: str, path: str) -> None:
+        if source != self.video_out:
+            return
+        if path:
+            self.poster.set_poster(Path(path))
+        else:
+            self.poster._placeholder = "Phát để xem video"
+            self.poster.setText(self.poster._placeholder)
 
     def _ensure_player(self) -> QMediaPlayer:
         if self._player is None:
             self._player = QMediaPlayer(self)
-            self._audio_out = QAudioOutput(self)
-            self._player.setAudioOutput(self._audio_out)
+            if QGuiApplication.platformName() != "offscreen":
+                self._audio_out = QAudioOutput(self)
+                self._player.setAudioOutput(self._audio_out)
             self._player.setVideoOutput(self.video)
             self._player.setSource(QUrl.fromLocalFile(self.video_out))
             self._player.positionChanged.connect(self._on_position)
@@ -123,7 +199,7 @@ class FinishWindow(QWidget):
 
     def _on_state(self, state) -> None:
         self.btn_play.setText(
-            "Tạm dừng" if state == QMediaPlayer.PlayingState else "Phát")
+            "Ⅱ  Tạm dừng" if state == QMediaPlayer.PlayingState else "▶  Phát")
 
     def _on_position(self, pos: int) -> None:
         self.slider.setValue(pos)
@@ -151,3 +227,37 @@ class FinishWindow(QWidget):
     def open_settings(self) -> None:
         from ui.common import open_settings_dialog
         open_settings_dialog(self, self.settings)
+
+    def open_editor(self) -> None:
+        if getattr(self, "_editor", None) is not None and self._editor.isVisible():
+            self._editor.raise_()
+            self._editor.activateWindow()
+            return
+        from ui.editor import EditorWindow
+        try:
+            self._editor = EditorWindow(self.job, self.settings, self._on_edited)
+        except Exception as exc:  # noqa: BLE001 - missing original assets
+            error_box(self, "Không mở được trình biên tập", str(exc))
+            return
+        self._editor.show()
+
+    def _on_edited(self, video: str, srt: str) -> None:
+        self.video_out, self.srt_path = video, srt
+        self.video_path_label.setText(video)
+        self.sub_path_label.setText(srt)
+        if self._player is not None:
+            self._player.stop()
+            self._player.setSource(QUrl.fromLocalFile(video))
+        self.preview_stack.setCurrentWidget(self.poster)
+        self.poster.clear_poster()
+        self._load_poster()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        editor = getattr(self, "_editor", None)
+        if editor is not None and editor.isVisible():
+            editor.close()
+            if editor.isVisible():  # background export is still active
+                event.ignore()
+                return
+        self._poster_loader.stop()
+        super().closeEvent(event)

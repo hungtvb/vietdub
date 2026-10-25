@@ -13,7 +13,7 @@ from typing import Callable, Dict, List
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QGridLayout, QGroupBox, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
                                QLineEdit, QPushButton, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -44,7 +44,7 @@ class ReviewViWindow(QWidget):
         self.on_back = on_back
         self.setWindowTitle(f"VietDub — Duyệt bản dịch: {job.project.name}")
         self.resize(1180, 760)
-        self.setMinimumSize(920, 620)
+        self.setMinimumSize(700, 520)
         # True khi window bị đóng bởi chính nút [Quay lại]/[Lồng tiếng] ->
         # closeEvent không schedule on_back lần nữa.
         self._close_via_button = False
@@ -55,13 +55,21 @@ class ReviewViWindow(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 20, 22, 18)
         root.setSpacing(12)
+        header = QFrame()
+        header.setObjectName("workflowHeader")
+        header_lay = QVBoxLayout(header)
+        header_lay.setContentsMargins(15, 10, 15, 12)
+        header_lay.setSpacing(3)
+        eyebrow = QLabel("DUYỆT NỘI DUNG  ·  2/2")
+        eyebrow.setObjectName("workflowEyebrow")
+        header_lay.addWidget(eyebrow)
         title = QLabel("Duyệt bản dịch")
         title.setObjectName("pageTitle")
-        root.addWidget(title)
+        header_lay.addWidget(title)
         instruction = QLabel(
             "Sửa nội dung trực tiếp trong bảng. Enter để xuống dòng tiếp theo.")
         instruction.setProperty("role", "secondary")
-        root.addWidget(instruction)
+        header_lay.addWidget(instruction)
         n_review = sum(1 for s in self.segments if s.needs_review)
         note = QLabel(
             f"Tổng {len(self.segments)} câu. Đại từ xưng hô đã khóa theo "
@@ -70,11 +78,18 @@ class ReviewViWindow(QWidget):
                if n_review else ""))
         note.setProperty("role", "secondary")
         note.setWordWrap(True)
-        root.addWidget(note)
+        header_lay.addWidget(note)
+        root.addWidget(header)
 
         # Metadata tổng thể (bước [4b]) — xem/sửa; sai thì sửa rồi bấm Dịch lại
         self.meta = pio.load_video_metadata(job.job_dir) or {}
+        self._meta_user_toggled = False
+        self.btn_meta = QPushButton("Bối cảnh và giọng điệu  ▾")
+        self.btn_meta.setProperty("role", "secondary")
+        self.btn_meta.clicked.connect(self._toggle_meta)
+        root.addWidget(self.btn_meta)
         meta_box = QGroupBox("Bối cảnh và giọng điệu")
+        self.meta_box = meta_box
         meta_grid = QGridLayout(meta_box)
         meta_grid.setContentsMargins(14, 18, 14, 12)
         meta_grid.setHorizontalSpacing(12)
@@ -86,8 +101,9 @@ class ReviewViWindow(QWidget):
             ed = QLineEdit(str(self.meta.get(key, "")))
             ed.setPlaceholderText(label)
             self.meta_edits[key] = ed
-            meta_grid.addWidget(lbl, 0, col)
-            meta_grid.addWidget(ed, 1, col)
+            group_row, group_col = divmod(col, 2)
+            meta_grid.addWidget(lbl, group_row * 2, group_col)
+            meta_grid.addWidget(ed, group_row * 2 + 1, group_col)
         root.addWidget(meta_box)
 
         self.tbl = QTableWidget(len(self.segments), len(COLS))
@@ -103,9 +119,20 @@ class ReviewViWindow(QWidget):
         self.tbl.setSelectionMode(QTableWidget.SingleSelection)
         self.tbl.setAlternatingRowColors(True)
         self.tbl.verticalHeader().setDefaultSectionSize(38)
-        root.addWidget(self.tbl, 1)
+        table_card = QFrame()
+        table_card.setObjectName("workflowCard")
+        table_lay = QVBoxLayout(table_card)
+        table_lay.setContentsMargins(11, 9, 11, 10)
+        section = QLabel("CÁC CÂU ĐÃ DỊCH")
+        section.setObjectName("workflowSection")
+        table_lay.addWidget(section)
+        table_lay.addWidget(self.tbl, 1)
+        root.addWidget(table_card, 1)
 
-        row = QHBoxLayout()
+        footer = QFrame()
+        footer.setObjectName("workflowFooter")
+        row = QHBoxLayout(footer)
+        row.setContentsMargins(11, 7, 11, 7)
         btn_settings = QPushButton("Cài đặt")
         btn_settings.clicked.connect(self.open_settings)
         btn_retranslate = QPushButton("Dịch lại với metadata này")
@@ -124,7 +151,21 @@ class ReviewViWindow(QWidget):
         row.addStretch(1)
         row.addWidget(btn_back)
         row.addWidget(btn_next)
-        root.addLayout(row)
+        root.addWidget(footer)
+
+    def _toggle_meta(self) -> None:
+        self._meta_user_toggled = True
+        self._set_meta_visible(not self.meta_box.isVisible())
+
+    def _set_meta_visible(self, visible: bool) -> None:
+        self.meta_box.setVisible(visible)
+        self.btn_meta.setText("Bối cảnh và giọng điệu  " +
+                              ("▴" if visible else "▾"))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "meta_box") and not self._meta_user_toggled:
+            self._set_meta_visible(self.width() >= 800)
 
     def open_settings(self) -> None:
         from ui.common import open_settings_dialog

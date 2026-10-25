@@ -16,12 +16,12 @@ import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal, QUrl
-from PySide6.QtGui import QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QGuiApplication
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog,
-                               QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+                               QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel,
                                QLineEdit, QMainWindow, QProgressBar, QPushButton,
-                               QTabWidget, QVBoxLayout, QWidget)
+                               QScrollArea, QTabWidget, QVBoxLayout, QWidget)
 
 from core.job import Job
 from core.settings import Settings
@@ -114,7 +114,7 @@ class MainWindow(QMainWindow):
         mbin.configure(self.settings.get("ffmpeg_path"))
         self.setWindowTitle("VietDub — Lồng tiếng video Trung sang Việt")
         self.resize(800, 790)
-        self.setMinimumSize(700, 700)
+        self.setMinimumSize(620, 500)
 
         self.job: Job | None = None          # tạo khi cần (tải link / bắt đầu)
         self.video_path: str = ""            # file local sẵn sàng xử lý
@@ -131,19 +131,38 @@ class MainWindow(QMainWindow):
         self._player: QMediaPlayer | None = None
         self._audio_out: QAudioOutput | None = None
 
+        shell = QWidget()
+        shell.setObjectName("mainShell")
+        shell_lay = QVBoxLayout(shell)
+        shell_lay.setContentsMargins(0, 0, 0, 0)
+        shell_lay.setSpacing(0)
+        self.setCentralWidget(shell)
+        page = QScrollArea()
+        page.setWidgetResizable(True)
+        page.setFrameShape(QFrame.NoFrame)
+        page.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        shell_lay.addWidget(page, 1)
         central = QWidget()
         central.setObjectName("appRoot")
-        self.setCentralWidget(central)
+        page.setWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(24, 20, 24, 22)
-        root.setSpacing(14)
+        root.setContentsMargins(24, 18, 24, 24)
+        root.setSpacing(16)
 
-        head = QHBoxLayout()
+        header_card = QFrame()
+        header_card.setObjectName("mainHeader")
+        head = QHBoxLayout(header_card)
+        head.setContentsMargins(15, 10, 15, 10)
+        mark = QLabel("VD")
+        mark.setObjectName("mainMark")
+        mark.setFixedSize(34, 34)
+        mark.setAlignment(Qt.AlignCenter)
+        head.addWidget(mark)
         title_stack = QVBoxLayout()
-        title_stack.setSpacing(2)
+        title_stack.setSpacing(0)
         title = QLabel("VietDub")
         title.setObjectName("appTitle")
-        subtitle = QLabel("Lồng tiếng video, gọn trong một quy trình.")
+        subtitle = QLabel("Studio lồng tiếng Việt")
         subtitle.setObjectName("appSubtitle")
         title_stack.addWidget(title)
         title_stack.addWidget(subtitle)
@@ -153,22 +172,59 @@ class MainWindow(QMainWindow):
         self.btn_settings.setProperty("role", "secondary")
         self.btn_settings.clicked.connect(self.open_settings)
         head.addWidget(self.btn_settings)
-        root.addLayout(head)
+        root.addWidget(header_card)
 
+        hero = QFrame()
+        hero.setObjectName("mainHero")
+        hero_lay = QVBoxLayout(hero)
+        hero_lay.setContentsMargins(22, 17, 22, 18)
+        hero_lay.setSpacing(4)
+        kicker = QLabel("TẠO DỰ ÁN MỚI")
+        kicker.setObjectName("mainHeroKicker")
+        hero_lay.addWidget(kicker)
+        hero_title = QLabel("Lồng tiếng video theo cách của bạn")
+        hero_title.setObjectName("mainHeroTitle")
+        hero_title.setWordWrap(True)
+        hero_lay.addWidget(hero_title)
+        hero_note = QLabel("Chọn video, kiểm tra bản dịch, rồi xuất thành phẩm.")
+        hero_note.setObjectName("mainHeroNote")
+        hero_note.setWordWrap(True)
+        hero_lay.addWidget(hero_note)
+        root.addWidget(hero)
+
+        source_card = QFrame()
+        source_card.setObjectName("mainCard")
+        source_lay = QVBoxLayout(source_card)
+        source_lay.setContentsMargins(15, 12, 15, 12)
+        source_title = QLabel("01   Nguồn video")
+        source_title.setObjectName("sectionTitle")
+        source_lay.addWidget(source_title)
         self.tabs = QTabWidget()
         self.tabs.setMaximumHeight(300)
-        root.addWidget(self.tabs)
+        source_lay.addWidget(self.tabs)
+        root.addWidget(source_card)
         self._build_file_tab()
         self._build_link_tab()
 
         root.addWidget(self._build_options_group())
 
-        self.btn_start = QPushButton("Bắt đầu lồng tiếng")
+        footer = QFrame()
+        footer.setObjectName("mainFooter")
+        footer_lay = QHBoxLayout(footer)
+        footer_lay.setContentsMargins(24, 10, 24, 10)
+        self.source_status = QLabel("Chưa chọn video")
+        self.source_status.setObjectName("mainSourceStatus")
+        self.source_status.setMaximumWidth(340)
+        footer_lay.addWidget(self.source_status, 1)
+        self.btn_start = QPushButton("Bắt đầu lồng tiếng  →")
         self.btn_start.setMinimumHeight(48)
+        self.btn_start.setMinimumWidth(200)
+        self.btn_start.setMaximumWidth(250)
         self.btn_start.setProperty("role", "primary")
         self.btn_start.setEnabled(False)
         self.btn_start.clicked.connect(self.start_job)
-        root.addWidget(self.btn_start)
+        footer_lay.addWidget(self.btn_start)
+        shell_lay.addWidget(footer)
 
     # ------------------------------------------------------------------ tab
     def _build_file_tab(self) -> None:
@@ -252,6 +308,9 @@ class MainWindow(QMainWindow):
                       "trong Cài đặt.")
             return
         info["name"].setText(Path(path).name)
+        short_name = Path(path).name
+        self.source_status.setText(f"Sẵn sàng · {short_name[:42]}")
+        self.source_status.setToolTip(path)
         try:
             info["dur"].setText(fmt_time(mextract.duration_sec(path)))
         except Exception:  # noqa: BLE001
@@ -396,11 +455,11 @@ class MainWindow(QMainWindow):
         pf.addRow("Nguồn dịch:", self.provider)
         lay.addLayout(pf)
 
-        self.chk_review = QCheckBox("Dừng để duyệt sau mỗi chặng "
-                                    "(sửa sub gốc, sửa bản dịch)")
+        self.chk_review = QCheckBox("Dừng để duyệt phụ đề và bản dịch")
         self.chk_review.setChecked(bool(self.settings.get("review_stops", True)))
-        self.chk_overnight = QCheckBox("Chế độ qua đêm (chạy liền 9 bước, "
-                                       "không dừng chờ người)")
+        self.chk_overnight = QCheckBox("Chế độ qua đêm (chạy liên tục)")
+        self.chk_overnight.setToolTip(
+            "Chạy liền 9 bước và tự bỏ qua điểm dừng duyệt.")
         self.chk_overnight.setChecked(bool(self.settings.get("overnight", False)))
         self.chk_overnight.toggled.connect(self._on_overnight_toggled)
         lay.addWidget(self.chk_review)
@@ -475,8 +534,9 @@ class MainWindow(QMainWindow):
         btn.setText("Nghe thử")
         if self._player is None:
             self._player = QMediaPlayer(self)
-            self._audio_out = QAudioOutput(self)
-            self._player.setAudioOutput(self._audio_out)
+            if QGuiApplication.platformName() != "offscreen":
+                self._audio_out = QAudioOutput(self)
+                self._player.setAudioOutput(self._audio_out)
         self._player.setSource(QUrl.fromLocalFile(wav))
         self._player.play()
 
@@ -590,6 +650,7 @@ class MainWindow(QMainWindow):
         self.video_path = ""
         self.video_url = ""
         self.btn_start.setEnabled(False)
+        self.source_status.setText("Chưa chọn video")
         self.tabs.setMaximumHeight(300)
         self.file_info["box"].setVisible(False)
         self.link_info["box"].setVisible(False)

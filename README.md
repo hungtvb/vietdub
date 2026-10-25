@@ -115,6 +115,13 @@ Có 2 cách chạy — chọn 1:
    9 bước không dừng duyệt (sáng dậy có phim).
 2. Kết quả: `<tên video>_vidub.mp4` + file `.srt` trong thư mục đã chọn.
    Log chi tiết từng job nằm ở `jobs/<mã job>/run.log`.
+3. Tại màn thành phẩm, chọn **Biên tập video** để kéo mép đoạn video cần
+   giữ, kéo hoặc chỉnh thời gian và nội dung từng phụ đề, thêm/xóa câu, rồi
+   chọn ảnh logo, vị trí, kích thước và độ mờ. Timeline có thanh zoom và
+   kéo để tua. Bấm **Xuất video** để tạo MP4 và SRT mới; file cũ được giữ lại.
+   Bản nháp biên tập được lưu cùng job. Sửa chữ phụ đề không thay đổi lời
+   lồng tiếng đã tổng hợp. Editor có khu xem trước, timeline Video/Dub/Subtitle
+   và panel công cụ; khi thu hẹp cửa sổ có thể chuyển giữa xem trước và công cụ.
 
 ## Cấu trúc
 
@@ -130,8 +137,9 @@ asr/          whisper_adapter.py (Whisper transcript + CAM++ nhãn loa),
 speaker/      gender.py (pitch -> nam/nữ)
 translation/  base.py, openai_api.py, nine_router.py, ollama.py, prompts.py
 tts/          edge_tts.py, duration_fit.py (khớp thời lượng)
-media/        fetch.py (yt-dlp), extract.py, mix.py, render.py, subs.py
+media/        fetch.py (yt-dlp), extract.py, mix.py, render.py, editor.py,
+              thumbnail.py, subs.py
 project/      schema.py, io.py
 tests/        pytest cho từng module (18 edge cases)
-ui/           Wave 2 (PySide6)
+ui/           App PySide6, gồm editor timeline và poster loader nền
 ```

@@ -24,6 +24,110 @@ QLabel#appTitle {
 QLabel#appSubtitle, QLabel[role="secondary"] {
     color: #6e6e73;
 }
+QWidget#mainShell {
+    background: #f3f5f9;
+}
+QFrame#mainHeader, QFrame#mainCard, QFrame#mainFooter {
+    background: #ffffff;
+    border: 1px solid #e1e6ee;
+    border-radius: 14px;
+}
+QFrame#mainFooter {
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+}
+QLabel#mainMark {
+    background: #dcecff;
+    color: #1258a6;
+    border-radius: 10px;
+    font-weight: 800;
+}
+QFrame#mainHero {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                stop:0 #173968, stop:1 #0c2243);
+    border: 1px solid #214b83;
+    border-radius: 16px;
+}
+QLabel#mainHeroKicker {
+    color: #8dc8ff;
+    font-size: 10px;
+    font-weight: 700;
+}
+QLabel#mainHeroTitle {
+    color: #ffffff;
+    font-size: 21px;
+    font-weight: 700;
+}
+QLabel#mainHeroNote {
+    color: #c0d3ec;
+    font-size: 12px;
+}
+QLabel#sectionTitle {
+    color: #223047;
+    font-size: 15px;
+    font-weight: 700;
+}
+QLabel#mainSourceStatus {
+    color: #647187;
+    font-size: 12px;
+}
+QFrame#finishCard {
+    background: #ffffff;
+    border: 1px solid #e1e6ee;
+    border-radius: 14px;
+}
+QLabel#finishBadge {
+    color: #17845e;
+    font-size: 11px;
+    font-weight: 700;
+}
+QLabel#finishSection {
+    color: #68778c;
+    font-size: 11px;
+    font-weight: 700;
+}
+QVideoWidget {
+    background: #10141c;
+    border-radius: 10px;
+}
+QLabel#finishPoster {
+    color: #a9b8cc;
+    background: #10141c;
+    border-radius: 10px;
+    font-size: 13px;
+}
+QFrame#workflowHeader {
+    background: #ffffff;
+    border: 1px solid #e1e6ee;
+    border-radius: 14px;
+}
+QFrame#workflowCard {
+    background: #ffffff;
+    border: 1px solid #e1e6ee;
+    border-radius: 13px;
+}
+QFrame#workflowFooter {
+    background: #ffffff;
+    border: 1px solid #e1e6ee;
+    border-radius: 11px;
+}
+QLabel#workflowEyebrow, QLabel#workflowSection {
+    color: #5e7798;
+    font-size: 11px;
+    font-weight: 700;
+}
+QPlainTextEdit#runLog {
+    color: #c8d8eb;
+    background: #101a2a;
+    border: 1px solid #283c56;
+    border-radius: 9px;
+    font-family: monospace;
+    font-size: 12px;
+    padding: 10px;
+    selection-background-color: #2763a6;
+}
 QLabel#pageTitle {
     color: #1d1d1f;
     font-size: 20px;

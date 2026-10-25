@@ -9,10 +9,11 @@ app vẫn giữ nguyên lựa chọn cũ.
 """
 from __future__ import annotations
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox,
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFrame,
                                QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-                               QPushButton, QSpinBox, QTabWidget, QVBoxLayout,
+                               QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout,
                                QWidget)
 
 from core.settings import DEFAULTS, Settings
@@ -25,6 +26,7 @@ class SettingsDialog(QDialog):
         self.settings = settings
         self.setWindowTitle("Cài đặt VietDub")
         self.resize(820, 760)
+        self.setMinimumSize(620, 480)
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(14)
@@ -51,6 +53,14 @@ class SettingsDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         row.addWidget(self.buttons)
         root.addLayout(row)
+
+    def _add_scroll_tab(self, tab: QWidget, label: str) -> None:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(tab)
+        self.tabs.addTab(scroll, label)
 
     # ------------------------------------------------------------- tab dịch
     def _build_translate_tab(self) -> None:
@@ -106,7 +116,7 @@ class SettingsDialog(QDialog):
         note.setWordWrap(True)
         note.setProperty("role", "secondary")
         f.addRow(note)
-        self.tabs.addTab(tab, "Dịch thuật")
+        self._add_scroll_tab(tab, "Dịch thuật")
 
     def check_ollama(self) -> None:
         import requests
@@ -178,7 +188,7 @@ class SettingsDialog(QDialog):
         qwen_note.setWordWrap(True)
         qwen_note.setProperty("role", "secondary")
         f.addRow(qwen_note)
-        self.tabs.addTab(tab, "Nhận dạng")
+        self._add_scroll_tab(tab, "Nhận dạng")
 
     # ------------------------------------------------------------ tab giọng
     def _build_voice_tab(self) -> None:
@@ -217,7 +227,7 @@ class SettingsDialog(QDialog):
         self.tts_conc.setRange(1, 20)
         self.tts_conc.setValue(int(self.settings.get("tts_concurrency", 10)))
         f.addRow("Số câu TTS song song:", self.tts_conc)
-        self.tabs.addTab(tab, "Giọng lồng tiếng")
+        self._add_scroll_tab(tab, "Giọng lồng tiếng")
 
     # ------------------------------------------------------------ tab video
     def _build_video_tab(self) -> None:
@@ -260,7 +270,7 @@ class SettingsDialog(QDialog):
         btn_browse.clicked.connect(self.browse_ffmpeg)
         row.addWidget(btn_browse)
         f.addRow("Đường dẫn FFmpeg:", row)
-        self.tabs.addTab(tab, "Video và phụ đề")
+        self._add_scroll_tab(tab, "Video và phụ đề")
 
     def browse_font(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -290,7 +300,7 @@ class SettingsDialog(QDialog):
         self.names_edit.setPlainText(
             "\n".join(self.settings.get("proper_nouns", [])))
         lay.addWidget(self.names_edit)
-        self.tabs.addTab(tab, "Tên riêng")
+        self._add_scroll_tab(tab, "Tên riêng")
 
     # ------------------------------------------------------------------ lưu
     def restore_defaults(self) -> None:

@@ -15,8 +15,9 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from PySide6.QtCore import QObject, QThread, Signal, Qt
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit,
-                               QProgressBar, QPushButton, QTableWidget,
+from PySide6.QtWidgets import (QFrame, QHeaderView, QHBoxLayout, QLabel,
+                               QMessageBox, QPlainTextEdit, QProgressBar,
+                               QPushButton, QSplitter, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
 from core.job import CANCELLED, DONE, FAILED, PAUSED, REVIEW, Job
@@ -64,7 +65,7 @@ class ProgressWindow(QWidget):
         self.on_close = on_close
         self.setWindowTitle(f"VietDub — Đang xử lý: {job.project.name}")
         self.resize(900, 760)
-        self.setMinimumSize(760, 640)
+        self.setMinimumSize(650, 500)
 
         self._thread: QThread | None = None
         self._runner: JobRunner | None = None
@@ -73,19 +74,36 @@ class ProgressWindow(QWidget):
         self._finish_win = None
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(22, 20, 22, 20)
-        root.setSpacing(12)
-        self.lbl_title = QLabel(f"Đang xử lý: {job.project.name}")
+        root.setContentsMargins(18, 16, 18, 15)
+        root.setSpacing(11)
+        header = QFrame()
+        header.setObjectName("workflowHeader")
+        header_lay = QVBoxLayout(header)
+        header_lay.setContentsMargins(17, 13, 17, 15)
+        header_lay.setSpacing(5)
+        eyebrow = QLabel("QUY TRÌNH  ·  9 BƯỚC")
+        eyebrow.setObjectName("workflowEyebrow")
+        header_lay.addWidget(eyebrow)
+        self.lbl_title = QLabel(f"Đang xử lý · {job.project.name}")
         self.lbl_title.setObjectName("pageTitle")
-        root.addWidget(self.lbl_title)
+        header_lay.addWidget(self.lbl_title)
 
         self.lbl_step = QLabel("Chuẩn bị…")
         self.lbl_step.setObjectName("statusText")
-        root.addWidget(self.lbl_step)
+        header_lay.addWidget(self.lbl_step)
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
-        root.addWidget(self.bar)
+        header_lay.addWidget(self.bar)
+        root.addWidget(header)
 
+        self.body_split = QSplitter(Qt.Horizontal)
+        steps_card = QFrame()
+        steps_card.setObjectName("workflowCard")
+        steps_lay = QVBoxLayout(steps_card)
+        steps_lay.setContentsMargins(12, 10, 12, 11)
+        steps_title = QLabel("CÁC CÔNG ĐOẠN")
+        steps_title.setObjectName("workflowSection")
+        steps_lay.addWidget(steps_title)
         self.tbl = QTableWidget(len(STEPS), 2)
         self.tbl.setHorizontalHeaderLabels(["Bước", "Trạng thái"])
         self.tbl.verticalHeader().setVisible(False)
@@ -95,18 +113,34 @@ class ProgressWindow(QWidget):
         for i, step in enumerate(STEPS):
             self.tbl.setItem(i, 0, QTableWidgetItem(STEP_LABEL[step]))
             self.tbl.setItem(i, 1, QTableWidgetItem("Chờ"))
-        self.tbl.setColumnWidth(0, 420)
-        self.tbl.horizontalHeader().setStretchLastSection(True)
-        self.tbl.setMaximumHeight(250)
-        root.addWidget(self.tbl)
+        self.tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tbl.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeToContents)
+        steps_lay.addWidget(self.tbl, 1)
+        self.body_split.addWidget(steps_card)
 
-        root.addWidget(QLabel("Nhật ký chạy:"))
+        log_card = QFrame()
+        log_card.setObjectName("workflowCard")
+        log_lay = QVBoxLayout(log_card)
+        log_lay.setContentsMargins(12, 10, 12, 11)
+        log_title = QLabel("NHẬT KÝ XỬ LÝ")
+        log_title.setObjectName("workflowSection")
+        log_lay.addWidget(log_title)
         self.log_view = QPlainTextEdit()
+        self.log_view.setObjectName("runLog")
+        self.log_view.setPlaceholderText("Nhật ký xử lý sẽ xuất hiện ở đây…")
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(MAX_LOG_LINES)
-        root.addWidget(self.log_view, 1)
+        log_lay.addWidget(self.log_view, 1)
+        self.body_split.addWidget(log_card)
+        self.body_split.setStretchFactor(0, 2)
+        self.body_split.setStretchFactor(1, 3)
+        root.addWidget(self.body_split, 1)
 
-        row = QHBoxLayout()
+        footer = QFrame()
+        footer.setObjectName("workflowFooter")
+        row = QHBoxLayout(footer)
+        row.setContentsMargins(11, 7, 11, 7)
         self.btn_pause = QPushButton("Tạm dừng")
         self.btn_pause.clicked.connect(self.pause)
         self.btn_resume = QPushButton("Tiếp tục")
@@ -124,7 +158,16 @@ class ProgressWindow(QWidget):
         row.addWidget(self.btn_cancel)
         row.addStretch(1)
         row.addWidget(self.btn_settings)
-        root.addLayout(row)
+        root.addWidget(footer)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "body_split"):
+            orientation = Qt.Vertical if self.width() < 760 else Qt.Horizontal
+            if self.body_split.orientation() != orientation:
+                self.body_split.setOrientation(orientation)
+                if orientation == Qt.Vertical:
+                    self.body_split.setSizes([165, 120])
 
     # ------------------------------------------------------------------ chạy
     def begin(self, resume_from: Optional[str] = None) -> None:
@@ -304,6 +347,8 @@ class ProgressWindow(QWidget):
     def _new_video(self) -> None:
         if self._finish_win:
             self._finish_win.close()
+            if self._finish_win.isVisible():
+                return
             self._finish_win = None
         # closeEvent (idle) tự gọi on_close() -> hiện lại màn chính.
         self.close()
