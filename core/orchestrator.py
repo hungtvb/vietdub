@@ -24,7 +24,7 @@ from typing import Dict, List, Optional
 
 from core import checkpoint as cp
 from core.job import CANCELLED, DONE, FAILED, PAUSED, REVIEW, RUNNING, Job
-from core.logger import setup_job_logger
+from core.logger import activate_job_logger, close_job_logger, setup_job_logger
 from core.settings import Settings
 from project import io as pio
 from project.schema import Segment, Speaker
@@ -63,21 +63,23 @@ class Orchestrator:
     # -- main entry ---------------------------------------------------------
     def run(self, resume_from: Optional[str] = None) -> str:
         job, proj = self.job, self.job.project
+        activate_job_logger(job.job_id)
         job.status = RUNNING
-        if all(cp.has_step(job.job_dir, s) for s in STEPS):
-            self.logger.info("job %s: mọi bước đã có checkpoint -> DONE",
-                             job.job_id)
-            job.status = DONE
-            return DONE
-        start_from = resume_from or job.resume_from or self._first_missing_step()
-        if proj.overnight and proj.review_stops:
-            self.logger.info("chế độ qua đêm: tự TẮT điểm dừng duyệt "
-                             "(không treo chờ người giữa đêm)")
-        self.logger.info("bắt đầu job %s từ bước '%s' (overnight=%s)",
-                         job.job_id, start_from or "fetch", proj.overnight)
-
-        step_idx = STEPS.index(start_from) if start_from in STEPS else 0
+        step = resume_from or job.resume_from or "fetch"
         try:
+            if not resume_from and not job.resume_from and all(
+                    cp.has_step(job.job_dir, s) for s in STEPS):
+                self.logger.info("job %s: mọi bước đã có checkpoint -> DONE",
+                                 job.job_id)
+                job.status = DONE
+                return DONE
+            start_from = resume_from or job.resume_from or self._first_missing_step()
+            if proj.overnight and proj.review_stops:
+                self.logger.info("chế độ qua đêm: tự TẮT điểm dừng duyệt "
+                                 "(không treo chờ người giữa đêm)")
+            self.logger.info("bắt đầu job %s từ bước '%s' (overnight=%s)",
+                             job.job_id, start_from or "fetch", proj.overnight)
+            step_idx = STEPS.index(start_from) if start_from in STEPS else 0
             for step in STEPS[step_idx:]:
                 # Wave 2 UI control: pause/cancel take effect BETWEEN steps
                 # (each step is atomic and checkpointed). The current step
@@ -106,6 +108,7 @@ class Orchestrator:
                     self.logger.info("%s: đã có checkpoint, bỏ qua",
                                      STEP_LABEL[step])
                     continue
+                cp.invalidate_from(job.job_dir, proj, step)
                 self._run_step(step)
                 if (proj.effective_review_stops() and step in REVIEW_AFTER):
                     job.status = REVIEW
@@ -120,14 +123,21 @@ class Orchestrator:
             return DONE
         except Exception as e:  # noqa: BLE001 - logged with traceback, no crash
             job.status = FAILED
+            # The retry button resumes from this field. Keep it aligned with
+            # the step that actually failed, including explicit reruns such
+            # as retranslation from the review screen.
+            job.resume_from = step
             self.last_error = str(e)
             pio.save_project(job.job_dir, proj)
             self.logger.error("job %s THẤT BẠI ở bước '%s': %s\n%s",
                               job.job_id, step, e, traceback.format_exc())
             return FAILED
         finally:
-            pio.save_project(job.job_dir, proj)
-            job.emit_progress("done", 100.0, job.status)
+            try:
+                pio.save_project(job.job_dir, proj)
+            finally:
+                job.emit_progress("done", 100.0, job.status)
+                close_job_logger(job.job_id)
 
     def _first_missing_step(self) -> str:
         for step in STEPS:
@@ -376,7 +386,10 @@ class Orchestrator:
         from tts import duration_fit as mfit
         s = self.settings
         max_rounds = 3
-        rounds = 0
+        # Count split depth per sentence lineage. A long film can contain
+        # many independent long lines; one line must not consume another's
+        # retry budget.
+        split_depth = {id(seg): 0 for seg in segments}
         overflow_ids = set()
         while True:
             try:
@@ -388,15 +401,15 @@ class Orchestrator:
                     force_overflow=overflow_ids)
                 return segments, decisions
             except mfit.TooLongError as e:
-                rounds += 1
-                if rounds > max_rounds:
+                depth = split_depth.get(id(e.segment), 0)
+                if depth >= max_rounds:
                     raise RuntimeError(
                         f"Không tách câu vừa khung giờ sau {max_rounds} lần "
                         f"thử (câu {e.segment.index}).\nCách khắc phục: rút "
                         "ngắn bản dịch câu này ở bước [5] rồi chạy lại.") from e
                 self.logger.info("câu %d quá dài (tỉ lệ %.2f) -> tách câu "
                                  "làm %d/%d", e.segment.index, e.ratio,
-                                 rounds, max_rounds)
+                                 depth + 1, max_rounds)
                 try:
                     a, b = mfit.split_segment(e.segment)
                 except ValueError:
@@ -408,6 +421,9 @@ class Orchestrator:
                     continue
                 idx = segments.index(e.segment)
                 segments[idx:idx + 1] = [a, b]
+                split_depth.pop(id(e.segment), None)
+                split_depth[id(a)] = depth + 1
+                split_depth[id(b)] = depth + 1
                 for j, sg in enumerate(segments):
                     sg.index = j
                 # re-TTS the two halves, then re-plan

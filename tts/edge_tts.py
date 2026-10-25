@@ -89,8 +89,6 @@ class EdgeTTS:
 
     async def _synthesize_one(self, item: Dict, sem: asyncio.Semaphore) -> bool:
         path = Path(item["filename"])
-        if _vail_file(path):
-            return True  # resume: already done (edge case 10)
         text = (item["text"] or "").strip()
         if not text:
             return False
@@ -133,6 +131,8 @@ class EdgeTTS:
         sem = asyncio.Semaphore(self.concurrency)
         results = await asyncio.gather(
             *(self._synthesize_one(it, sem) for it in queue))
+        for item, succeeded in zip(queue, results):
+            item["succeeded"] = succeeded
         ok = sum(1 for r in results if r)
         return {"ok": ok, "err": len(results) - ok}
 
@@ -158,10 +158,14 @@ class EdgeTTS:
                     and key_file.read_text().strip() == key:
                 seg.audio_vi = str(fname)
                 continue
-            key_file.write_text(key)
+            # A stale WAV is not valid audio for this segment. The queued
+            # worker must regenerate it; never allow duration_fit to reuse it
+            # if the request fails.
+            seg.audio_vi = ""
             queue.append({"index": seg.index, "text": text,
                           "voice": self.voice_for(seg.gender),
-                          "filename": str(fname), "seg": seg})
+                          "filename": str(fname), "seg": seg,
+                          "cache_key": key})
 
         if queue:
             try:
@@ -177,9 +181,12 @@ class EdgeTTS:
                     "Cách khắc phục: kiểm tra mạng (Edge-TTS cần websocket "
                     "tới Microsoft), thử lại sau ít phút.")
             for it in queue:
-                if _vail_file(it["filename"]):
+                if it.get("succeeded") and _vail_file(it["filename"]):
                     it["seg"].audio_vi = it["filename"]
+                    Path(it["filename"]).with_suffix(".md5").write_text(
+                        it["cache_key"], encoding="utf-8")
                 else:
+                    it["seg"].audio_vi = ""
                     log.warning("câu %d TTS lỗi -> chèn im lặng ở bước khớp giờ",
                                 it["index"])
         if progress_cb:

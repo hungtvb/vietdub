@@ -103,3 +103,14 @@ def mark_done(job_dir: Path, project, step: str) -> None:
 def has_step(job_dir: Path, step: str) -> bool:
     """True only if the checkpoint exists AND loads valid."""
     return load_step(job_dir, step) is not None
+
+
+def invalidate_from(job_dir: Path, project, step: str) -> None:
+    """Discard a rerun step and every result that depends on it."""
+    stale = STEPS[STEPS.index(step):]
+    for name in stale:
+        stage_path(job_dir, name).unlink(missing_ok=True)
+    if "tts" in stale:
+        stage_path(job_dir, "tts_meta").unlink(missing_ok=True)
+    project.stages_done = [name for name in project.stages_done
+                           if name not in stale]

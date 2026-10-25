@@ -87,3 +87,20 @@ def test_build_track_preserves_gaps(tmp_path):
     assert np.abs(gap).max() < 1e-6  # silence preserved
     tail = data[int(5.2 * sr):int(5.8 * sr)]
     assert np.abs(tail).max() > 0.1  # sentence 2 placed at 5s
+
+
+def test_segment_crossing_track_chunk_boundary_is_not_replayed(tmp_path):
+    sr = 44100
+    wav = tmp_path / "crossing.wav"
+    # The second half differs so replaying the start at t=60 is observable.
+    samples = np.r_[np.full(2 * sr, 0.1), np.full(2 * sr, 0.3)]
+    sf.write(str(wav), samples, sr, subtype="PCM_16")
+    seg = Segment(index=0, start=58.0, end=62.0, speaker=0,
+                  audio_vi=str(wav))
+
+    out = mfit.build_track([seg], tmp_path / "track.wav", 64.0)
+    data, _ = sf.read(str(out), dtype="float32")
+
+    assert data[int(59.0 * sr)] == pytest.approx(0.1, abs=0.02)
+    assert data[int(60.5 * sr)] == pytest.approx(0.3, abs=0.02)
+    assert np.abs(data[int(62.5 * sr)]).max() < 0.02

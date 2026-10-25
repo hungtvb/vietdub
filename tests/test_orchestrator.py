@@ -87,6 +87,23 @@ def test_failure_keeps_checkpoints(tmp_path, monkeypatch):
     assert orch2.called[0] == "gender"
 
 
+def test_explicit_rerun_failure_retries_the_failed_step(tmp_path, monkeypatch):
+    job = _job(tmp_path, monkeypatch, review_stops=True)
+    job.resume_from = "tts"  # value left by the earlier translation review
+    orch = StubOrchestrator(job, Settings(path=tmp_path / "s.json"))
+    for step in STEPS[:6]:
+        orch._run_step(step)
+    orch.called.clear()
+    orch.fail_on = "translate"
+
+    assert orch.run(resume_from="translate") == FAILED
+    assert job.resume_from == "translate"
+
+    retry = StubOrchestrator(job, Settings(path=tmp_path / "s.json"))
+    assert retry.run(resume_from=job.resume_from) == REVIEW
+    assert retry.called[0] == "translate"
+
+
 def test_run_log_written(tmp_path, monkeypatch):
     job = _job(tmp_path, monkeypatch)
     orch = StubOrchestrator(job, Settings(path=tmp_path / "s.json"))
@@ -207,13 +224,40 @@ def test_fit_unsplittable_gets_overflow(tmp_path, monkeypatch):
     assert len(out) == 1
 
 
+def test_many_unsplittable_lines_do_not_share_split_budget(tmp_path, monkeypatch):
+    orch = _fit_job(tmp_path, monkeypatch)
+    wav = tmp_path / "long.wav"
+    import numpy as np
+    import soundfile as sf
+    sf.write(wav, np.zeros(2 * 44100, dtype=np.float32), 44100)
+    segments = [Segment(index=i, start=float(i * 3), end=float(i * 3 + 1),
+                        speaker=0, text_vi="ừ", audio_vi=str(wav))
+                for i in range(4)]
+
+    out, decisions = orch._fit_and_track(segments, tmp_path, lambda items: items)
+
+    assert len(out) == 4
+    assert [action for _, action, _ in decisions] == ["overflow"] * 4
+
+
 def test_fit_gives_up_after_max_rounds(tmp_path, monkeypatch):
     orch = _fit_job(tmp_path, monkeypatch)
 
     def always_long(segments, **kw):
         raise mfit.TooLongError(segments[0], 2.0)
 
+    def always_splittable(seg):
+        from project.schema import Segment
+        midpoint = (seg.start + seg.end) / 2
+        return (
+            Segment(index=seg.index, start=seg.start, end=midpoint,
+                    speaker=seg.speaker, text_vi="first half"),
+            Segment(index=seg.index + 1, start=midpoint, end=seg.end,
+                    speaker=seg.speaker, text_vi="second half"),
+        )
+
     monkeypatch.setattr(mfit, "plan", always_long)
+    monkeypatch.setattr(mfit, "split_segment", always_splittable)
     with pytest.raises(RuntimeError) as e:
         orch._fit_and_track([_long_seg()], tmp_path, lambda segs: segs)
     assert "3 lần" in str(e.value)
