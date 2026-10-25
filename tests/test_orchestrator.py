@@ -96,6 +96,41 @@ def test_run_log_written(tmp_path, monkeypatch):
     assert "[2] Nghe + tách loa" in content
 
 
+def test_gender_confidence_marks_segments_unless_manually_set(
+        tmp_path, monkeypatch):
+    from core import checkpoint as checkpoint
+    from project import io as pio
+    from project.schema import Segment, Speaker
+    from speaker import gender as mgender
+
+    job = _job(tmp_path, monkeypatch)
+    settings = Settings(path=tmp_path / "settings.json")
+    settings.set("pitch_confidence_low", 0.7)
+    orch = Orchestrator(job, settings)
+    segments = [
+        Segment(index=0, start=0, end=1, speaker=0, text_src="line 0"),
+        Segment(index=1, start=1, end=2, speaker=1, text_src="line 1"),
+    ]
+    guesses = {
+        0: Speaker(id=0, gender="female", confidence=0.64),
+        1: Speaker(id=1, gender="male", confidence=0.9),
+    }
+    manual = {1: Speaker(id=1, gender="male", confidence=0.0)}
+    monkeypatch.setattr(pio, "load_segments", lambda *_: segments)
+    monkeypatch.setattr(checkpoint, "load_step", lambda *_: {"wav_path": "audio.wav"})
+    monkeypatch.setattr(mgender, "estimate_genders", lambda *_args, **_kwargs: guesses)
+    monkeypatch.setattr(pio, "load_speakers", lambda *_: manual)
+    monkeypatch.setattr(pio, "save_segments", lambda *_: None)
+    monkeypatch.setattr(pio, "save_speakers", lambda *_: None)
+
+    orch._step_gender()
+
+    assert segments[0].needs_review is True
+    assert segments[1].needs_review is False
+    assert segments[0].gender == "female"
+    assert segments[1].gender == "male"
+
+
 def test_no_blocking_input_in_core():
     # core must NEVER wait for user input (overnight safety).
     # Use AST so prose mentions in comments/docstrings don't false-positive.

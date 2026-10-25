@@ -50,7 +50,7 @@ DEFAULTS = {
     # --- speaker gender ---
     "pitch_male_max_hz": 160.0,
     "pitch_female_min_hz": 165.0,
-    "pitch_confidence_low": 0.55,
+    "pitch_confidence_low": 0.7,
     # --- TTS ---
     "voice_male": "vi-VN-NamMinhNeural",
     "voice_female": "vi-VN-HoaiMyNeural",

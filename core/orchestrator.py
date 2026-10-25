@@ -221,8 +221,10 @@ class Orchestrator:
         # màn duyệt lưu đã chứa gender user đặt -> giữ lại, không để pitch
         # ghi đè. Chỉ áp dụng khi user đã đặt rõ male/female.
         manual = pio.load_speakers(job.job_dir, "gender") or {}
+        manually_labeled = set()
         for spk_id, mspk in manual.items():
             if mspk.gender in ("male", "female") and spk_id in speakers:
+                manually_labeled.add(spk_id)
                 if speakers[spk_id].gender != mspk.gender:
                     self.logger.info(
                         "giữ giới tính do người dùng sửa tay cho loa %d: %s "
@@ -231,10 +233,19 @@ class Orchestrator:
                     speakers[spk_id].gender = mspk.gender
                     speakers[spk_id].confidence = max(
                         speakers[spk_id].confidence, mspk.confidence)
+        confidence_thr = float(
+            self.settings.get("pitch_confidence_low", 0.7))
         for seg in segments:
             spk = speakers.get(seg.speaker)
             if spk:
                 seg.gender = spk.gender
+                if (seg.speaker not in manually_labeled
+                        and spk.confidence < confidence_thr):
+                    seg.needs_review = True
+                    self.logger.warning(
+                        "speaker %d gender dựa trên pitch chưa chắc "
+                        "(confidence %.2f < %.2f); đánh dấu câu %d cần duyệt",
+                        seg.speaker, spk.confidence, confidence_thr, seg.index)
         pio.save_segments(job.job_dir, "asr", segments)  # persist genders
         pio.save_speakers(job.job_dir, "gender", speakers)
 
@@ -244,6 +255,16 @@ class Orchestrator:
         from translation.ollama import OllamaTranslator
         s = self.settings
         providers = []
+        configured_names = s.get("proper_nouns", []) or []
+        project_names = self.job.project.proper_nouns or []
+        if isinstance(configured_names, str):
+            configured_names = [configured_names]
+        if isinstance(project_names, str):
+            project_names = [project_names]
+        proper_nouns = list(dict.fromkeys(
+            str(name).strip()
+            for name in [*configured_names, *project_names]
+            if name is not None and str(name).strip()))
         order = [self.job.project.translate_provider, "openai", "9router",
                  "ollama"]
         seen = set()
@@ -260,7 +281,7 @@ class Orchestrator:
                             model=s.get("openai_model", "gpt-4.1"),
                             temperature=float(s.get("llm_temperature", 0.2)),
                             batch_size=int(s.get("translate_batch", 20)),
-                            proper_nouns=list(s.get("proper_nouns", []))))
+                            proper_nouns=proper_nouns))
                 elif name == "9router":
                     providers.append(NineRouterTranslator(
                         api_key=s.get("nine_router_key", ""),
@@ -270,7 +291,7 @@ class Orchestrator:
                                     "mimo-v2.6-flash-free"),
                         temperature=float(s.get("llm_temperature", 0.2)),
                         batch_size=int(s.get("translate_batch", 20)),
-                        proper_nouns=list(s.get("proper_nouns", []))))
+                        proper_nouns=proper_nouns))
                 elif name == "ollama":
                     if s.get("ollama_model"):
                         providers.append(OllamaTranslator(
@@ -279,7 +300,7 @@ class Orchestrator:
                             model=s.get("ollama_model", ""),
                             temperature=float(s.get("llm_temperature", 0.2)),
                             batch_size=int(s.get("translate_batch", 20)),
-                            proper_nouns=list(s.get("proper_nouns", []))))
+                            proper_nouns=proper_nouns))
             except Exception as e:  # noqa: BLE001 - misconfigured provider skipped
                 self.logger.warning("bỏ qua provider %s: %s", name, e)
         return providers

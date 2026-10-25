@@ -79,24 +79,51 @@ class BaseTranslator:
         step = self.batch_size
         for b0 in range(0, len(segments), step):
             chunk = segments[b0:b0 + step]
-            table, line_aud = self._analyze_batch(chunk, speakers)
-            if table:
+            end = b0 + len(chunk)
+            neighbors = segments[max(0, b0 - 2):b0]
+            neighbors += segments[end:end + 2]
+            context_lines = []
+            for line in neighbors:
+                spk = speakers.get(line.speaker)
+                gender = spk.gender if spk else "unknown"
+                context_lines.append(
+                    f"[{line.index}] SPEAKER_{line.speaker} ({gender}): "
+                    f"{line.text_src}")
+            table, line_aud = self._analyze_batch(
+                chunk, speakers, context_lines)
+            if table or line_aud:
                 batch_data.append((table, line_aud,
                                    Counter(s.speaker for s in chunk)))
         if not batch_data:
             # edge case 7 fallback: keep default pronouns (toi/ban)
             log.warning("phân tích quan hệ thất bại ở mọi batch, dùng đại từ "
                         "mặc định tôi/bạn")
+            for seg in segments:
+                if not (seg.audience or "").strip():
+                    seg.audience = "audience"
+                    seg.needs_review = True
             return speakers
         # per-line audience from the batch LLM (respect manual review edits:
         # review stop #1 may have set audience by hand -> only fill empties)
+        analyzed_lines = {}
         for _, line_aud, _ in batch_data:
-            for seg in segments:
-                if not (seg.audience or "").strip() and seg.index in line_aud:
-                    seg.audience = line_aud[seg.index]
+            analyzed_lines.update(line_aud)
+        for seg in segments:
+            if (seg.audience or "").strip():
+                continue
+            if seg.index in analyzed_lines:
+                seg.audience = analyzed_lines[seg.index]
+            else:
+                # A failed batch must not leave the address target ambiguous
+                # for translation. Use a safe default and make it visible.
+                seg.audience = "audience"
+                seg.needs_review = True
+                log.warning("câu %d thiếu phân tích audience; dùng khán giả "
+                            "và đánh dấu cần duyệt", seg.index)
         # (d) metadata pass needs a relationship table -> preliminary
         # deterministic merge (the arbiter may still override it below)
         prelim_table = self._merge_majority(speakers, batch_data)
+        self._set_frequent_defaults(prelim_table, segments)
         prelim = {sid: self._speaker_view(sid, speakers[sid], fields)
                   for sid, fields in prelim_table.items()}
         try:
@@ -116,6 +143,7 @@ class BaseTranslator:
             if not locked:
                 log.warning("trọng tài thất bại, dùng gộp đa số dự phòng")
                 locked = prelim_table
+        self._set_frequent_defaults(locked, segments)
         self._apply_analysis(speakers, locked)
         self._post_rule_interviewee(speakers)
         return speakers
@@ -135,7 +163,9 @@ class BaseTranslator:
         return spk
 
     def _analyze_batch(self, chunk: List[Segment],
-                       speakers: Dict[int, Speaker]) -> Tuple[dict, dict]:
+                       speakers: Dict[int, Speaker],
+                       context_lines: List[str] | None = None
+                       ) -> Tuple[dict, dict]:
         """One analyze LLM call for a chunk.
 
         Returns (table, line_aud): table = {sid: {"role", "relations", "tone"}},
@@ -146,7 +176,11 @@ class BaseTranslator:
             spk = speakers.get(s.speaker)
             g = spk.gender if spk else "unknown"
             lines.append(f"[{s.index}] SPEAKER_{s.speaker} ({g}): {s.text_src}")
-        user = prompts.build_analyze_user(lines)
+        user = prompts.build_analyze_user(lines, context_lines)
+        expected_ids = {s.index for s in chunk}
+        expected_speakers = {s.speaker for s in chunk}
+        if len(expected_ids) != len(chunk):
+            raise ValueError("segment ids trùng trong batch phân tích")
         for attempt in range(ANALYZE_RETRIES):
             try:
                 raw = self._chat(prompts.ANALYZE_SYSTEM, user)
@@ -161,17 +195,95 @@ class BaseTranslator:
                         or not isinstance(spk_items, list)):
                     raise ValueError("thiếu mảng 'segments'/'lines'/'speakers'")
                 line_aud: Dict[int, str] = {}
+                line_needs_review = set()
                 for it in seg_items:
+                    if not isinstance(it, dict):
+                        raise ValueError("line audience không phải object")
                     idx = int(it["id"])
+                    if idx not in expected_ids or idx in line_aud:
+                        raise ValueError(f"id line không hợp lệ hoặc trùng: {idx}")
                     aud = self._norm_audience(it.get("audience"), speakers)
-                    if aud:
-                        line_aud[idx] = aud
+                    if not aud:
+                        raise ValueError(f"audience không hợp lệ ở line {idx}")
+                    line_aud[idx] = aud
+                    if it.get("needs_review") is True:
+                        line_needs_review.add(idx)
+                returned_line_ids = set(line_aud)
                 table: Dict[int, dict] = {}
                 for it in spk_items:
+                    if not isinstance(it, dict):
+                        raise ValueError("speaker entry không phải object")
                     sid = int(it["id"])
-                    if sid not in speakers:
-                        continue
+                    if sid not in expected_speakers or sid in table:
+                        raise ValueError(
+                            f"speaker id không hợp lệ hoặc trùng: {sid}")
+                    raw_relations = it.get("relations")
+                    if not isinstance(raw_relations, list) or not raw_relations:
+                        raise ValueError(f"speaker {sid} thiếu relations")
+                    for relation in raw_relations:
+                        if not isinstance(relation, dict):
+                            raise ValueError(
+                                f"relation của speaker {sid} sai kiểu")
+                        if not self._norm_audience(
+                                relation.get("audience"), speakers):
+                            raise ValueError(
+                                f"audience relation sai ở speaker {sid}")
+                        if not str(relation.get("pronoun_i") or "").strip():
+                            raise ValueError(
+                                f"thiếu pronoun_i ở speaker {sid}")
+                        if not str(relation.get("pronoun_you") or "").strip():
+                            raise ValueError(
+                                f"thiếu pronoun_you ở speaker {sid}")
                     table[sid] = self._norm_locked_fields(sid, it, speakers)
+                for sid in expected_speakers:
+                    target_audiences = {
+                        line_aud[seg.index] for seg in chunk
+                        if seg.speaker == sid and seg.index in returned_line_ids
+                    }
+                    relation_audiences = {
+                        relation["audience"]
+                        for relation in table.get(sid, {}).get("relations", [])
+                    }
+                    if not target_audiences.issubset(relation_audiences):
+                        raise ValueError(
+                            f"speaker {sid} thiếu relation cho audience "
+                            f"{sorted(target_audiences - relation_audiences)}")
+                # Preserve usable partial analysis when a model omits rows.
+                # Missing labels use the speaker's default relation (or the
+                # audience fallback) and are always exposed for human review.
+                for seg in chunk:
+                    if seg.index not in line_aud:
+                        rels = table.get(seg.speaker, {}).get("relations", [])
+                        default = next((r for r in rels
+                                        if r.get("is_default")), None)
+                        line_aud[seg.index] = (
+                            default.get("audience", "audience")
+                            if default else "audience")
+                        seg.needs_review = True
+                    if seg.speaker not in table:
+                        seg.needs_review = True
+                segment_by_id = {seg.index: seg for seg in chunk}
+                for line_id in line_needs_review:
+                    segment_by_id[line_id].needs_review = True
+                if returned_line_ids == expected_ids:
+                    # Make the default relation deterministic: most frequent
+                    # target audience, with first appearance breaking ties.
+                    for sid in table:
+                        audience_counts = Counter(
+                            line_aud[seg.index] for seg in chunk
+                            if seg.speaker == sid)
+                        if audience_counts:
+                            default_aud = audience_counts.most_common(1)[0][0]
+                            for relation in table[sid]["relations"]:
+                                relation["is_default"] = (
+                                    relation["audience"] == default_aud)
+                if (returned_line_ids != expected_ids
+                        or expected_speakers - set(table)):
+                    log.warning(
+                        "batch phân tích thiếu %d nhãn line và %d speaker; "
+                        "dùng fallback, đánh dấu câu liên quan cần duyệt",
+                        len(expected_ids - returned_line_ids),
+                        len(expected_speakers - set(table)))
                 return table, line_aud
             except (ValueError, KeyError, TypeError) as e:
                 log.warning("analyze batch attempt %d/%d bad JSON: %s",
@@ -197,23 +309,40 @@ class BaseTranslator:
         {"role", "relations": [{audience, pronoun_i, pronoun_you, is_default}],
         "tone"}. Exactly one relation is marked default."""
         rels = []
+        relation_index = {}
         for r in it.get("relations") or []:
             if not isinstance(r, dict):
                 continue
             aud = BaseTranslator._norm_audience(r.get("audience"), speakers)
             if not aud:
                 continue
-            rels.append({
+            relation = {
                 "audience": aud,
-                "pronoun_i": str(r.get("pronoun_i", "tôi") or "tôi"),
-                "pronoun_you": str(r.get("pronoun_you", "bạn") or "bạn"),
-                "is_default": bool(r.get("is_default", False)),
-            })
+                "pronoun_i": str(r.get("pronoun_i") or "tôi").strip(),
+                "pronoun_you": str(r.get("pronoun_you") or "bạn").strip(),
+                "is_default": r.get("is_default") is True,
+            }
+            if not relation["pronoun_i"]:
+                relation["pronoun_i"] = "tôi"
+            if not relation["pronoun_you"]:
+                relation["pronoun_you"] = "bạn"
+            if aud not in relation_index:
+                relation_index[aud] = len(rels)
+                rels.append(relation)
+            else:
+                idx = relation_index[aud]
+                current = rels[idx]
+                # Duplicate audience entries are collapsed; prefer an
+                # explicitly marked default when their pronouns disagree.
+                if relation["is_default"] and not current["is_default"]:
+                    rels[idx] = relation
         if not rels:
             rels = [{"audience": "audience", "pronoun_i": "tôi",
                      "pronoun_you": "bạn", "is_default": True}]
-        if not any(r["is_default"] for r in rels):
-            rels[0]["is_default"] = True
+        default_idx = next((i for i, r in enumerate(rels)
+                            if r["is_default"]), 0)
+        for i, relation in enumerate(rels):
+            relation["is_default"] = i == default_idx
         return {"role": str(it.get("role", "") or ""),
                 "relations": rels,
                 "tone": str(it.get("tone", "neutral") or "neutral")}
@@ -238,12 +367,40 @@ class BaseTranslator:
                 locked: Dict[int, dict] = {}
                 for it in items:
                     sid = int(it["id"])
-                    if sid not in speakers:
-                        continue
+                    if sid not in speakers or sid in locked:
+                        raise ValueError(
+                            f"speaker id không hợp lệ hoặc trùng: {sid}")
+                    relations = it.get("relations")
+                    if not isinstance(relations, list) or not relations:
+                        raise ValueError(f"speaker {sid} thiếu relations")
+                    for relation in relations:
+                        if (not isinstance(relation, dict)
+                                or not self._norm_audience(
+                                    relation.get("audience"), speakers)
+                                or not str(relation.get("pronoun_i") or "")
+                                .strip()
+                                or not str(relation.get("pronoun_you") or "")
+                                .strip()):
+                            raise ValueError(
+                                f"relation sai ở speaker {sid}")
                     if it.get("note"):
                         log.info("trọng tài speaker %d: %s",
                                  sid, str(it["note"])[:200])
                     locked[sid] = self._norm_locked_fields(sid, it, speakers)
+                    expected_audiences = {
+                        relation["audience"]
+                        for batch, _, _ in batch_data
+                        for relation in batch.get(sid, {}).get(
+                            "relations", [])
+                    }
+                    actual_audiences = {
+                        relation["audience"]
+                        for relation in locked[sid]["relations"]
+                    }
+                    if not expected_audiences.issubset(actual_audiences):
+                        raise ValueError(
+                            f"arbiter bỏ audience của speaker {sid}: "
+                            f"{sorted(expected_audiences - actual_audiences)}")
                 # fill any speaker the arbiter dropped via majority merge
                 missing = [sid for sid in speakers if sid not in locked]
                 if missing:
@@ -267,7 +424,8 @@ class BaseTranslator:
         out: List[str] = []
         for sid in sorted(speakers):
             batches = [i for i, (t, _, _) in enumerate(batch_data) if sid in t]
-            out.append(f"SPEAKER_{sid}: appears in batches {batches} "
+            out.append(f"SPEAKER_{sid} (gender={speakers[sid].gender}): "
+                       f"appears in batches {batches} "
                        f"({total.get(sid, 0)} lines total)")
             for i, (t, _, counts) in enumerate(batch_data):
                 f = t.get(sid)
@@ -287,6 +445,29 @@ class BaseTranslator:
             if len(pairs) > 1:
                 out.append(f"  !! CONFLICT: {sorted(pairs)}")
         return out
+
+    @staticmethod
+    def _set_frequent_defaults(table: Dict[int, dict],
+                               segments: List[Segment]) -> None:
+        """Choose each default relation from the most frequent audience."""
+        for sid, fields in table.items():
+            relations = fields.get("relations") or []
+            if not relations:
+                continue
+            reliable = [seg for seg in segments
+                        if seg.speaker == sid and seg.audience
+                        and not seg.needs_review]
+            candidates = reliable or [seg for seg in segments
+                                      if seg.speaker == sid and seg.audience]
+            counts = Counter(seg.audience for seg in candidates)
+            preferred = counts.most_common(1)[0][0] if counts else None
+            default_idx = next(
+                (i for i, relation in enumerate(relations)
+                 if relation.get("audience") == preferred),
+                next((i for i, relation in enumerate(relations)
+                      if relation.get("is_default")), 0))
+            for i, relation in enumerate(relations):
+                relation["is_default"] = i == default_idx
 
     @staticmethod
     def _controversial_lines(segments: List[Segment],
@@ -375,8 +556,13 @@ class BaseTranslator:
             rels = fields.get("relations")
             if isinstance(rels, list) and rels:
                 clean = [dict(r) for r in rels if isinstance(r, dict)]
-                if not any(r.get("is_default") for r in clean):
-                    clean[0]["is_default"] = True
+                if not clean:
+                    clean = [{"audience": "audience", "pronoun_i": "tôi",
+                              "pronoun_you": "bạn", "is_default": True}]
+                default_idx = next((i for i, r in enumerate(clean)
+                                    if r.get("is_default") is True), 0)
+                for i, relation in enumerate(clean):
+                    relation["is_default"] = i == default_idx
             else:  # legacy flat table -> single default relation
                 pi = str(fields.get("pronoun_i", "tôi") or "tôi")
                 py = str(fields.get("pronoun_you", "bạn") or "bạn")
@@ -397,11 +583,10 @@ class BaseTranslator:
 
         In a news program (signature: a reporter/anchor/narrator whose
         *audience* relation is tôi/quý vị), a non-presenter speaker stuck on
-        the generic fallback pair tôi/bạn gets the conventional Vietnamese
-        dubbing address "anh" on the default relation. Guards against the
-        LLM taking the lazy "safe default" exit (seen 3/3 runs on video 01:
-        interviewee -> tôi/bạn instead of tôi/anh). The reviewer can still
-        correct it at review stop #1.
+        the generic fallback pair tôi/bạn gets a conventional respectful
+        Vietnamese address based on the reporter's known gender. This guards
+        against the LLM taking the generic "safe default" exit (seen 3/3 runs
+        on video 01). The reviewer can still correct it during review.
         """
         def audience_pair(spk: Speaker, aud: str):
             for r in spk.relations or []:
@@ -418,19 +603,25 @@ class BaseTranslator:
                 break
         if reporter is None:
             return
+        reporter_gender = speakers[reporter].gender
+        if reporter_gender not in ("female", "male"):
+            log.info("bỏ qua quy tắc hậu kiểm interviewee: chưa rõ giới tính "
+                     "phóng viên %d", reporter)
+            return
+        reporter_you = "chị" if reporter_gender == "female" else "anh"
         for sid, s in speakers.items():
             if sid == reporter or self._REPORTER_RE.search(s.role or ""):
                 continue
-            d = next((r for r in s.relations or [] if r.get("is_default")),
-                     None)
+            d = next((r for r in s.relations or []
+                      if r.get("audience") == str(reporter)), None)
             if d and (d.get("pronoun_i"), d.get("pronoun_you")) == (
                     "tôi", "bạn"):
                 log.warning(
                     "quy tắc hậu kiểm: speaker %d (%s) trong chương trình tin "
-                    "tức rớt về 'bạn' mặc định -> sửa default pronoun_you="
-                    "'anh' (quy ước lồng tiếng; sửa tay ở màn duyệt nếu cần)",
-                    sid, (s.role or "")[:40])
-                d["pronoun_you"] = "anh"
+                    "tức rớt về 'bạn' mặc định -> sửa cách gọi theo giới tính "
+                    "phóng viên (%s; sửa tay ở màn duyệt nếu cần)",
+                    sid, (s.role or "")[:40], reporter_you)
+                d["pronoun_you"] = reporter_you
                 s.sync_default_pronouns()
 
     # -- step [4b]: video-level metadata (1 LLM pass, Tony) ------------------
@@ -483,6 +674,19 @@ class BaseTranslator:
                         "setting": str(data.get("setting", "other")
                                        or "other"),
                         "tone_notes": str(data.get("tone_notes", "") or "")}
+                meta["genre"] = self._enum_or_other(
+                    meta["genre"], {"news", "interview", "period drama",
+                                    "modern drama", "cartoon", "documentary",
+                                    "talk show", "variety", "education",
+                                    "other"})
+                meta["style"] = self._enum_or_other(
+                    meta["style"], {"formal", "casual", "humorous",
+                                    "lively", "solemn", "other"})
+                meta["setting"] = self._enum_or_other(
+                    meta["setting"], {"modern", "historical", "workplace",
+                                      "school", "family", "fantasy", "other"})
+                meta["tone_notes"] = " ".join(
+                    meta["tone_notes"].split())[:240]
                 log.info("metadata video: %s/%s/%s", meta["genre"],
                          meta["style"], meta["setting"])
                 return meta
@@ -492,6 +696,11 @@ class BaseTranslator:
         log.warning("không suy được metadata video, dùng mặc định 'other'")
         return {"genre": "other", "style": "other", "setting": "other",
                 "tone_notes": ""}
+
+    @staticmethod
+    def _enum_or_other(value: str, allowed: set[str]) -> str:
+        normalized = " ".join(str(value or "").strip().lower().split())
+        return normalized if normalized in allowed else "other"
 
     # -- step [5]: translation ----------------------------------------------
     def translate(self, segments: List[Segment],
@@ -507,7 +716,7 @@ class BaseTranslator:
                 for r in spk.relations or [])
             rel_table.append(
                 f"SPEAKER_{sid}: gender={spk.gender}, role={spk.role}, "
-                f"{rels or 'toi/ban (default)'}, tone={spk.tone}")
+                f"{rels or 'to audience: tôi/bạn (default)'}, tone={spk.tone}")
         system = prompts.translate_system_with_names(self.proper_nouns,
                                                       video_metadata)
 
@@ -518,11 +727,12 @@ class BaseTranslator:
         step = self.batch_size
         for b0 in range(0, n, step):
             chunk = segments[b0:b0 + step]
-            ctx0 = max(0, b0 - 2)
-            ctx_lines = [f"[{s.index}] {self._line_header(s)}: {s.text_src}"
-                         for s in segments[ctx0:b0]]
-            lines = [f"[{s.index}] {self._line_header(s)} "
-                     f"{s.start:.1f}-{s.end:.1f}s: {s.text_src}" for s in chunk]
+            ctx_lines = self._translation_context(
+                segments, b0, out, end_position=b0 + len(chunk))
+            lines = [f"[{s.index}]{' SOURCE NEEDS REVIEW' if s.needs_review else ''} "
+                     f"{self._line_header(s)} "
+                     f"{s.start:.1f}-{s.end:.1f}s ZH: {s.text_src}"
+                     for s in chunk]
             user = prompts.build_translate_user(rel_table, lines,
                                                 self.proper_nouns,
                                                 ctx_lines or None)
@@ -534,13 +744,25 @@ class BaseTranslator:
             # edge case 8 fallback: translate missing lines one-by-one, plain
             log.warning("%d câu bị thiếu sau dịch batch, dịch lẻ bù: %s",
                         len(missing), missing[:10])
-            for s in segments:
+            for pos, s in enumerate(segments):
                 if s.index in out:
                     continue
-                out[s.index] = self._translate_single(system, rel_table, s)
+                context = self._translation_context(segments, pos, out)
+                translated = self._translate_single(
+                    system, rel_table, s, context)
+                if translated is None:
+                    out[s.index] = s.text_src
+                    s.needs_review = True
+                else:
+                    out[s.index] = translated
 
         for s in segments:
             s.text_vi = out.get(s.index, s.text_src)
+            if self._looks_untranslated(s.text_src, s.text_vi,
+                                        self.proper_nouns):
+                s.needs_review = True
+                log.warning("câu %d có vẻ chưa được dịch sang tiếng Việt; "
+                            "đánh dấu cần duyệt", s.index)
         # validate: số câu ra phải == số câu vào; câu nào rớt đại từ so với
         # bảng khóa thì đánh dấu để Tony duyệt tay ở điểm dừng #2
         empty = [s.index for s in segments if not (s.text_vi or "").strip()]
@@ -562,6 +784,51 @@ class BaseTranslator:
         elif aud.isdigit():
             h += f" (to SPEAKER_{aud})"
         return h
+
+    def _translation_context(self, segments: List[Segment], position: int,
+                             translated: Dict[int, str],
+                             end_position: int | None = None) -> List[str]:
+        """Build two-sided context without asking the model to return it."""
+        before = segments[max(0, position - 2):position]
+        after_start = end_position if end_position is not None else position + 1
+        after = segments[after_start:after_start + 2]
+        lines = []
+        for seg in before:
+            review = " SOURCE NEEDS REVIEW" if seg.needs_review else ""
+            line = (f"[PREVIOUS] [{seg.index}]{review} "
+                    f"{self._line_header(seg)} "
+                    f"ZH: {seg.text_src}")
+            vi = translated.get(seg.index)
+            if vi:
+                line += f" | VI: {vi}"
+            lines.append(line)
+        for seg in after:
+            review = " SOURCE NEEDS REVIEW" if seg.needs_review else ""
+            lines.append(f"[NEXT] [{seg.index}]{review} "
+                         f"{self._line_header(seg)} "
+                         f"ZH: {seg.text_src}")
+        return lines
+
+    @staticmethod
+    def _looks_untranslated(source: str, target: str,
+                            proper_nouns: List[str] | None = None) -> bool:
+        """Flag empty, unchanged Chinese, or predominantly Han-character output."""
+        source = re.sub(r"\s+", " ", str(source or "")).strip()
+        target = re.sub(r"\s+", " ", str(target or "")).strip()
+        if not target:
+            return True
+        def normalize(value: str) -> str:
+            return re.sub(r"[\s\W_]+", "", value).casefold()
+
+        if (source and normalize(source) == normalize(target)
+                and re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", source)):
+            custom = {normalize(str(name))
+                      for name in (proper_nouns or []) if name}
+            if normalize(source) not in custom:
+                return True
+        han = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", target))
+        latin = len(re.findall(r"[A-Za-zÀ-ỹ]", target))
+        return han >= 3 and han > latin
 
     @staticmethod
     def _pronoun_hit(text: str, pronoun: str) -> bool:
@@ -609,42 +876,111 @@ class BaseTranslator:
                          chunk: List[Segment]) -> Dict[int, str]:
         want_ids = [s.index for s in chunk]
         last_err = ""
+        retry_user = user
+        best: Dict[int, str] = {}
+        sources = {seg.index: seg.text_src for seg in chunk}
         for attempt in range(TRANSLATE_RETRIES):
             try:
-                raw = self._chat(system, user)
+                raw = self._chat(system, retry_user)
                 data = _parse_json(raw)
                 items = data.get("translations")
                 if not isinstance(items, list):
                     raise ValueError("thiếu mảng 'translations'")
-                got = {int(it["id"]): str(it["text_vi"]) for it in items}
-                if sorted(got.keys()) != sorted(want_ids):
-                    raise ValueError(
-                        f"số câu/id không khớp (muốn {want_ids}, được "
-                        f"{sorted(got.keys())})")
-                return got
+                got: Dict[int, str] = {}
+                duplicates = set()
+                invalid_rows = 0
+                for item in items:
+                    if not isinstance(item, dict):
+                        invalid_rows += 1
+                        continue
+                    try:
+                        line_id = int(item["id"])
+                    except (KeyError, TypeError, ValueError):
+                        invalid_rows += 1
+                        continue
+                    if line_id not in sources:
+                        invalid_rows += 1
+                        continue
+                    text_vi = item.get("text_vi")
+                    if line_id in got or line_id in duplicates:
+                        got.pop(line_id, None)
+                        duplicates.add(line_id)
+                        invalid_rows += 1
+                        continue
+                    if not isinstance(text_vi, str) or not text_vi.strip():
+                        invalid_rows += 1
+                        continue
+                    text_vi = text_vi.strip()
+                    if self._looks_untranslated(
+                            sources[line_id], text_vi, self.proper_nouns):
+                        invalid_rows += 1
+                        continue
+                    got[line_id] = text_vi
+                for line_id, text_vi in got.items():
+                    best.setdefault(line_id, text_vi)
+                missing = [line_id for line_id in want_ids
+                           if line_id not in best]
+                if not missing:
+                    return {line_id: best[line_id] for line_id in want_ids}
+                last_err = (f"thiếu {len(missing)} câu usable, id: "
+                            f"{missing[:10]}; {invalid_rows} dòng output sai")
+                log.warning("translate batch attempt %d/%d lỗi: %s",
+                            attempt + 1, TRANSLATE_RETRIES, last_err[:200])
             except (ValueError, KeyError, TypeError) as e:
                 last_err = str(e)
                 log.warning("translate batch attempt %d/%d lỗi: %s",
                             attempt + 1, TRANSLATE_RETRIES, last_err[:200])
-        log.warning("batch dịch thất bại sau %d lần (%s), dịch lẻ từng câu",
+                missing = [line_id for line_id in want_ids
+                           if line_id not in best]
+            if not missing:
+                return {line_id: best[line_id] for line_id in want_ids}
+            retry_user = (
+                user + "\n\nCorrection for the previous attempt: "
+                + f"complete missing target ids {missing}. Return each id "
+                "exactly once with non-empty Vietnamese text. Fully "
+                "translate any target line that was left mostly in "
+                "Chinese. Preserve meaning and proper names.")
+        log.warning("batch dịch còn %d/%d câu sau %d lần (%s), dịch lẻ "
+                    "phần thiếu", len(want_ids) - len(best), len(want_ids),
                     TRANSLATE_RETRIES, last_err[:120])
-        return {}
+        return {line_id: best[line_id] for line_id in want_ids
+                if line_id in best}
 
     def _translate_single(self, system: str, rel_table: List[str],
-                          seg: Segment) -> str:
+                          seg: Segment,
+                          context_lines: List[str] | None = None
+                          ) -> str | None:
         user = prompts.build_translate_user(
             rel_table,
-            [f"[{seg.index}] {self._line_header(seg)}: {seg.text_src}"],
-            self.proper_nouns)
-        for _ in range(2):
+            [f"[{seg.index}]{' SOURCE NEEDS REVIEW' if seg.needs_review else ''} "
+             f"{self._line_header(seg)} ZH: {seg.text_src}"],
+            self.proper_nouns, context_lines)
+        retry_user = user
+        for attempt in range(2):
             try:
-                data = _parse_json(self._chat(system, user))
-                items = data.get("translations") or []
-                if items:
-                    return str(items[0].get("text_vi", seg.text_src))
-            except (ValueError, KeyError, TypeError):
-                continue
-        return seg.text_src  # last resort: keep source text
+                data = _parse_json(self._chat(system, retry_user))
+                items = data.get("translations")
+                if not isinstance(items, list) or len(items) != 1:
+                    raise ValueError("cần đúng một translation entry")
+                item = items[0]
+                if not isinstance(item, dict) or int(item["id"]) != seg.index:
+                    raise ValueError("id của câu dịch lẻ không khớp")
+                text_vi = item.get("text_vi")
+                if not isinstance(text_vi, str) or not text_vi.strip():
+                    raise ValueError("câu dịch lẻ rỗng hoặc sai kiểu")
+                text_vi = text_vi.strip()
+                if self._looks_untranslated(seg.text_src, text_vi,
+                                            self.proper_nouns):
+                    raise ValueError("câu dịch lẻ vẫn chủ yếu là tiếng Trung")
+                return text_vi
+            except (ValueError, KeyError, TypeError) as e:
+                log.warning("dịch lẻ câu %d lần %d lỗi: %s",
+                            seg.index, attempt + 1, str(e)[:160])
+                retry_user = (
+                    user + "\n\nCorrection: return exactly this id once "
+                    "with non-empty Vietnamese text. Translate the source "
+                    "fully while preserving meaning and proper names.")
+        return None
 
 
 def _parse_json(raw: str) -> dict:
@@ -723,6 +1059,13 @@ def translate_with_fallback(providers: List[BaseTranslator],
                          prov.name)
             segments = prov.translate(segments, speakers,
                                       video_metadata=video_metadata)
+            if segments and all(
+                    BaseTranslator._looks_untranslated(
+                        seg.text_src, seg.text_vi, prov.proper_nouns)
+                    for seg in segments):
+                raise TranslateError(
+                    f"provider {prov.name} không tạo được câu dịch tiếng "
+                    "Việt dùng được")
             return segments, prov.name
         except Exception as e:  # noqa: BLE001
             last_err = e
@@ -732,8 +1075,16 @@ def translate_with_fallback(providers: List[BaseTranslator],
                     "(dự phòng cuối): chất lượng đại từ có thể kém, nên "
                     "duyệt lại bản dịch ở bước [5]")
         vi = google_translate_free([s.text_src for s in segments])
-        for s, t in zip(segments, vi):
-            s.text_vi = (t or "").strip() or s.text_src
+        for i, seg in enumerate(segments):
+            text_vi = (vi[i] if i < len(vi) else "") or ""
+            seg.text_vi = text_vi.strip() or seg.text_src
+            # Machine fallback has no speaker-aware pronoun control; always
+            # expose it for review, even if the text looks fluent.
+            seg.needs_review = True
+            if BaseTranslator._looks_untranslated(
+                    seg.text_src, seg.text_vi):
+                log.warning("Google fallback không dịch rõ câu %d; giữ cờ "
+                            "cần duyệt", seg.index)
         return segments, "google_free"
     raise TranslateError(
         "Tất cả nguồn dịch đều lỗi (kể cả Google Translate free).\n"

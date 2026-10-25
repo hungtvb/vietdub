@@ -23,6 +23,14 @@ def test_translate_happy_path():
     assert t.calls == 1  # single batch
 
 
+def test_translate_prompt_marks_uncertain_source():
+    segs = make_segments(1)
+    segs[0].needs_review = True
+    t = FakeTranslator([_good(0, 1)])
+    t.translate(segs, make_speakers())
+    assert "SOURCE NEEDS REVIEW" in t.last_user
+
+
 def test_batching_splits_large_input():
     segs = make_segments(45)
     t = FakeTranslator([_good(0, 20), _good(20, 20), _good(40, 5)])
@@ -67,7 +75,7 @@ def test_line_mismatch_fallback_single():
     t = FakeTranslator([short, short, short,
                         single(0), single(1), single(2)])
     out = t.translate(segs, make_speakers())
-    assert [s.text_vi for s in out] == ["LE 0", "LE 1", "LE 2"]
+    assert [s.text_vi for s in out] == ["VI 0", "LE 1", "LE 2"]
 
 
 def test_proper_noun_rule_in_prompt():
@@ -152,7 +160,9 @@ def test_post_rule_interviewee_fallback_to_anh():
     t = FakeTranslator([_analyze_json([
         ("news anchor", "audience", "tôi", "quý vị"),
         ("interviewee", "0", "tôi", "bạn")])])
-    out = t.analyze(make_segments(2), make_speakers())
+    spks = make_speakers()
+    spks[0].gender = "male"  # the interviewee addresses a male reporter
+    out = t.analyze(make_segments(2), spks)
     assert out[0].pronoun_you == "quý vị"          # presenter untouched
     assert out[1].pronoun_i == "tôi"
     assert out[1].pronoun_you == "anh"              # post-rule fired
@@ -278,6 +288,26 @@ def test_analyze_fills_line_audience():
     t.analyze(segs, make_speakers())
     assert segs[0].audience == "audience"
     assert segs[1].audience == "0"
+
+
+def test_analyze_propagates_source_review_flag():
+    from translation.base import BaseTranslator
+
+    segs = make_segments(2)
+    payload = json.dumps({
+        "speakers": [
+            {"id": sid, "role": "speaker", "tone": "neutral",
+             "relations": [{"audience": "audience", "pronoun_i": "tôi",
+                            "pronoun_you": "bạn", "is_default": True}]}
+            for sid in (0, 1)],
+        "lines": [
+            {"id": 0, "audience": "audience", "needs_review": True},
+            {"id": 1, "audience": "audience", "needs_review": False}],
+    })
+    t = FakeTranslator([payload])
+    t._analyze_batch(segs, make_speakers())
+    assert segs[0].needs_review is True
+    assert segs[1].needs_review is False
 
 
 def test_analyze_respects_manual_audience():

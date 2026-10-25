@@ -66,7 +66,7 @@ class ReviewViWindow(QWidget):
         note = QLabel(
             f"Tổng {len(self.segments)} câu. Đại từ xưng hô đã khóa theo "
             "bảng quan hệ ở bước phân tích — sửa tay nếu thấy chưa hợp."
-            + (f" {n_review} câu tô vàng mất đại từ so với bảng, cần kiểm tra kỹ."
+            + (f" {n_review} câu tô vàng có dấu hiệu cần kiểm tra kỹ."
                if n_review else ""))
         note.setProperty("role", "secondary")
         note.setWordWrap(True)

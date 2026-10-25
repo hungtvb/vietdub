@@ -46,6 +46,8 @@ class OpenAITranslator(BaseTranslator):
             "temperature": self.temperature,
             "max_tokens": 4096,
         }
+        if self.base_url == "https://api.openai.com/v1":
+            body["response_format"] = {"type": "json_object"}
         last_err: Exception | None = None
         for attempt in range(self.max_retries):
             try:
