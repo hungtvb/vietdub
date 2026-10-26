@@ -141,6 +141,8 @@ class Project:
     dst_lang: str = "vi"
     audio_track: int = 0       # edge 12: which audio track to extract (Wave 2: dropdown)
     tts_provider: str = "edge"      # "edge" | "vieneu"
+    vieneu_backend: str = "auto"   # frozen on each job
+    vieneu_precision: str = "fp32"
     voice_male: str = "vi-VN-NamMinhNeural"
     voice_female: str = "vi-VN-HoaiMyNeural"
     tts_rate: str = "+0%"
