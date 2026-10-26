@@ -112,6 +112,19 @@ class PaddleDetector:
                 yield tuple(map(int, box)), float(score)
 
 
+def _safe_auto_logo_box(box, width, height):
+    """Limit heuristic masks to small marks at the topmost image corners.
+
+    A permanent picture-in-picture face is also temporally static and MUST NOT
+    be auto-masked. This geometry is intentionally conservative.
+    """
+    x1, y1, x2, y2 = box
+    return (0 <= x1 < x2 <= width and 0 <= y1 < y2 <= height
+            and y1 <= .09*height and y2 <= .18*height
+            and x2-x1 <= .23*width
+            and (x2 <= .27*width or x1 >= .73*width))
+
+
 def _static_logos(frames, duration, width, height):
     """Opaque unchanging top-corner overlay candidates; never infer transparent logos."""
     if len(frames) < 10:
@@ -145,7 +158,7 @@ def _static_logos(frames, duration, width, height):
             # Static picture-in-picture faces look like logos to edge-variance
             # heuristics. Only auto-select the narrow uppermost corner strip;
             # everything lower requires explicit approval/manual boxes.
-            if box[1] > .09*height or box[3] > .18*height or (box[2]-box[0]) > .23*width:
+            if not _safe_auto_logo_box(box, width, height):
                 continue
             boxes.append(Region(0, duration, box, "logo", .70, "static-heuristic"))
     return boxes
