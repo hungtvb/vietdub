@@ -22,7 +22,7 @@ jobs:
           python-version: '3.11'
       - name: Install isolated smoke dependencies
         run: |
-          command -v ffmpeg
+          sudo apt-get install -y --no-install-recommends ffmpeg
           python -m pip install --upgrade pip
           pip install pytest numpy 'opencv-python-headless>=4.8,<5'
       - name: Test synthetic OCR and render (no ASR / OCR weights)
