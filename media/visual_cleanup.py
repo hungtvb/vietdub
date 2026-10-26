@@ -177,10 +177,14 @@ class VisualCleanup:
                 if frame_n % step == 0:
                     t = frame_n/fps
                     if self.config.auto_logo and "logo" in self.config.categories:
+                        # Keep thumbnails, never 32 full-resolution 4K frames.
+                        thumb_w = min(320, width)
+                        thumb_h = max(1, round(height * thumb_w / width))
+                        thumb = cv2.resize(frame, (thumb_w, thumb_h))
                         if len(logo_frames) < 32:
-                            logo_frames.append(frame.copy())
+                            logo_frames.append(thumb)
                         elif sampled % max(1, round(25/self.config.sample_sec)) == 0:
-                            logo_frames[sampled % 32] = frame.copy()
+                            logo_frames[sampled % 32] = thumb
                     expired = [r for r in tracks if sampled - r["sample"] > 1]
                     tracks = [r for r in tracks if sampled - r["sample"] <= 1]
                     for r in expired:
@@ -236,6 +240,9 @@ class VisualCleanup:
                         r["score"]/r["hits"]))
             if self.config.auto_logo and "logo" in self.config.categories:
                 for item in _static_logos(logo_frames, duration, width, height):
+                    if any(_overlap(item.box, e) >= .15*(item.box[2]-item.box[0])*(item.box[3]-item.box[1])
+                           for e in self.config.exclude):
+                        continue
                     if not any(_iou(item.box, r.box) > .4 and r.kind == "logo" for r in regions):
                         regions.append(item)
             regions += [r for r in self.config.manual if r.kind in self.config.categories]
