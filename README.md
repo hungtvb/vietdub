@@ -150,3 +150,27 @@ project/      schema.py, io.py
 tests/        pytest cho từng module (18 edge cases)
 ui/           App PySide6, gồm editor timeline và poster loader nền
 ```
+
+## Tùy chọn: VietDub STT riêng (local)
+
+Bản thử nghiệm cho phép VietDub gọi engine STT bên ngoài qua giao tiếp HTTP
+`http://127.0.0.1:8768/v1/transcribe`. Đây **không phải** backend mặc định:
+Whisper + CAM++ vẫn chạy như trước nếu không chọn STT riêng.
+
+1. Tải và cài package `vietdub-stt` riêng (Python 3.10+, FFmpeg,
+   `pip install -e '.[qwen,api]'` từ thư mục package).
+2. Trong terminal, chạy `python -m vietdub_stt.api`. Dịch vụ chỉ lắng nghe
+   trên loopback; lần đầu dùng cần tải weights Qwen và aligner.
+3. Trong VietDub → **Cài đặt → Nhận dạng**, chọn
+   **VietDub STT riêng (local) + CAM++**. Nhập URL trên, chọn
+   **Fast (Qwen 0.6B)** hoặc **Quality (Qwen 1.7B)**.
+4. Chạy video với luồng 9 bước hiện tại. Nếu server offline, contract sai hoặc
+   timestamp không hợp lệ, VietDub báo lỗi thay vì âm thầm sử dụng transcript
+   giả. Người nói chưa xác định được đánh dấu để duyệt thủ công.
+
+STT service xuất JSON schema v1 (`start`, `end`, `text`,
+`speaker_id`, `needs_review`). Do bản service MVP chưa tự diarize,
+VietDub vẫn dùng CAM++ để gắn speaker, chỉ chấp nhận nhãn có độ phủ
+lượt nói đủ lớn và giữ trạng thái cần kiểm duyệt nếu không chắc chắn.
+Đây là tích hợp experimental; chưa có kết quả inference + phim thành phẩm
+được xác minh với model thật.
