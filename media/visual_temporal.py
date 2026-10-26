@@ -143,9 +143,26 @@ class TemporalCleanPlate:
             if r["source"] == "exemplar-patch":
                 x1,y1,x2,y2=p.box
                 a,b,c,d=p.donor_box
-                donor=frame[b:d,a:c].astype(np.float32)
+                donor=frame[b:d,a:c].copy()
+                # Chroma/luminance matching reduces obvious rectangular green
+                # or purple texture seams when an always-on logo crosses cuts.
+                border_samples = [
+                    frame[max(0,y1-10):y1,x1:x2],
+                    frame[y2:min(self.h,y2+13),x1:x2],
+                    frame[y1:y2,max(0,x1-15):x1],
+                    frame[y1:y2,x2:min(self.w,x2+13)]
+                ]
+                samples = [a.reshape(-1,3) for a in border_samples if a.size]
+                if samples:
+                    border = np.concatenate(samples,axis=0).reshape(-1,1,3)
+                    border_lab = cv2.cvtColor(border,cv2.COLOR_BGR2LAB).reshape(-1,3).astype(np.float32)
+                    donor_lab = cv2.cvtColor(donor,cv2.COLOR_BGR2LAB).astype(np.float32)
+                    chroma_shift = (np.median(border_lab,axis=0) -
+                                    np.median(donor_lab.reshape(-1,3),axis=0))*.87
+                    donor = cv2.cvtColor(np.clip(donor_lab+chroma_shift,0,255).astype(np.uint8),
+                                         cv2.COLOR_LAB2BGR)
                 old=out[y1:y2,x1:x2].astype(np.float32)
-                mixed=old*(1-p.alpha[:,:,None])+donor*p.alpha[:,:,None]
+                mixed=old*(1-p.alpha[:,:,None])+donor.astype(np.float32)*p.alpha[:,:,None]
                 out[y1:y2,x1:x2]=np.clip(mixed,0,255).astype(np.uint8)
                 continue
             x1,y1,x2,y2=p.region["_effective_box"]
