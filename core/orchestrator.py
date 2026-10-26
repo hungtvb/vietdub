@@ -548,7 +548,7 @@ class Orchestrator:
                 if not review_path.is_file():
                     raise FileNotFoundError(f"Không tìm thấy plan đã duyệt: {review_path}")
                 plan = json.loads(review_path.read_text(encoding="utf-8"))
-                if not any(r.get("source") in ("temporal-clean-plate", "exemplar-patch")
+                if not any(r.get("source") in ("temporal-clean-plate", "exemplar-patch", "flat-strip-repaint")
                            for r in plan.get("regions", [])):
                     raise ValueError("Plan đã duyệt phải có vùng clean-plate hoặc exemplar")
                 video_for_render = engine.render(
