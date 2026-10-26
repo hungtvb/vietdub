@@ -1,7 +1,8 @@
 # Safe Transcript Merge — Implementation Plan
 
-**Goal:** Prevent merging transcript rows with different speaker or audience
-labels, which currently drops the second row's labels.
+**Goal:** Prevent merging transcript rows with different speaker/audience
+labels or conflicting non-empty gender values, which currently drops the
+second row's metadata.
 
 **Architecture:** Keep the validation in `ReviewSourceWindow`, where editable
 table values are committed immediately before a merge. Compatible rows follow
@@ -11,6 +12,7 @@ the existing merge path unchanged.
 
 - Speaker IDs are compared after reading the current table edits.
 - Audience values are compared after the audience dropdown edits are read.
+- Conflicting non-empty speaker-gender values are rejected instead of discarded.
 - Rejected merges keep both rows and preserve the table edits in memory.
 - Compatible merges preserve existing timing, confidence, and review flags.
 

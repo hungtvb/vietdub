@@ -20,7 +20,7 @@ This scan covers the desktop workflow, nine-step orchestrator, persisted job/che
 
 ### P1 — Keep merged transcript metadata accurate
 
-The source-review merge action currently combines adjacent transcript text while retaining the first segment's speaker and audience. Merging lines from different speakers or audiences can silently change who the transcript says spoke and who they addressed. The existing-feature team is implementing a compatibility guard and clear feedback.
+The source-review merge action currently combines adjacent transcript text while retaining the first segment's speaker and audience. Merging lines from different speakers or audiences can silently change who the transcript says spoke and who they addressed. Conflicting non-empty gender labels can also be lost when rows with the same speaker ID are merged. The existing-feature team is implementing compatibility guards and clear feedback.
 
 ### P2 — Keep related review checkpoints in sync
 
@@ -46,7 +46,7 @@ PR #2 had no GitHub status checks or workflow runs reported by GitHub. The repos
 
 ### Phase 1 — Existing workflow data integrity
 
-- Prevent transcript merges that cross speaker or audience boundaries.
+- Prevent transcript merges that cross speaker or audience boundaries or carry conflicting non-empty gender labels.
 - Keep user edits intact when a merge is rejected or persistence fails.
 - Review source/translation save and navigation paths for silent loss or stale state.
 

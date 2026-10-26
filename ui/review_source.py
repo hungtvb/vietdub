@@ -462,6 +462,12 @@ class ReviewSourceWindow(QWidget):
                 "một nhãn cho cả hai câu trước khi gộp để không mất lựa chọn "
                 "đã duyệt.")
             return
+        if a.gender and b.gender and a.gender != b.gender:
+            error_box(
+                self, "Không thể gộp hai câu có giới tính người nói khác nhau",
+                "Hai câu cùng nhãn loa nhưng giới tính đang khác nhau. Hãy "
+                "sửa nhãn giới tính trước khi gộp để không mất lựa chọn đã duyệt.")
+            return
         a.text_src = ((a.text_src or "").rstrip() + " " +
                       (b.text_src or "").lstrip()).strip()
         a.end = max(a.end, b.end)

@@ -10,19 +10,21 @@ or who it is addressed to when two rows are merged.
 `ReviewSourceWindow.merge_with_next()` joins the selected row with the next
 row, keeps the first row's speaker and audience, and deletes the second row.
 When those labels differ, the merged transcript misattributes part of the
-dialogue and discards a human review decision.
+dialogue and discards a human review decision. When both rows identify a gender
+but those values conflict, the merge also silently drops one reviewed value.
 
 ## Design
 
 - Commit the active table editor and read the current row values first.
 - Merge only when both rows have the same speaker ID and the same audience
-  value.
-- If either label differs, show a concise explanation and leave both rows
-  intact. The edits already committed to the table remain visible and in the
-  in-memory segments, so the user can correct labels and retry.
+  value, and when non-empty gender values do not conflict.
+- If either identity/audience label differs or both gender values conflict,
+  show a concise explanation and leave both rows intact. The edits already
+  committed to the table remain visible and in the in-memory segments, so the
+  user can correct labels and retry.
 - Preserve existing timing, confidence, and `needs_review` merge behavior.
 - If the first row has no gender value, carry the second row's value when
-  merging; speaker gender is not a reason to reject a merge.
+  merging; one missing gender alone is not a reason to reject a merge.
 
 ## Non-goals
 
@@ -34,6 +36,7 @@ dialogue and discards a human review decision.
 
 - Different speaker IDs block the merge and both transcript rows remain intact.
 - Different audience values block the merge and both rows retain their values.
+- Conflicting non-empty gender values block the merge and both rows remain intact.
 - Matching speaker and audience values merge using the current timing and
   review-flag behavior.
 - A blocked merge does not revert edits made in the active table editor.
