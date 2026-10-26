@@ -59,6 +59,7 @@ class BatchQueueWindow(QDialog):
         self._progress_window = None
         self._active_job: Job | None = None
         self._started = False
+        self._restored_unfinished = False
         self._queue_active = False
         self._blocked = False
         self._all_finished = False
@@ -282,6 +283,7 @@ class BatchQueueWindow(QDialog):
                 return
             self.status.setText("Hàng đợi đã hoàn tất.")
             return
+        self._restored_unfinished = True
         if active_index is not None:
             self._current_index = active_index
             entry = self.entries[active_index]
@@ -319,6 +321,8 @@ class BatchQueueWindow(QDialog):
                     and inspection.resume_from == expected)
 
     def add_files(self) -> None:
+        if self._started or self._restored_unfinished:
+            return
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Thêm video vào hàng đợi", "", VIDEO_FILTER)
         if not paths:
@@ -352,7 +356,7 @@ class BatchQueueWindow(QDialog):
                      "Không thêm được các tệp này:\n" + "\n".join(rejected[:8]))
 
     def remove_selected(self) -> None:
-        if self._started:
+        if self._started or self._restored_unfinished:
             return
         rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()},
                       reverse=True)
@@ -370,7 +374,7 @@ class BatchQueueWindow(QDialog):
         self._update_controls()
 
     def move_selected(self, delta: int) -> None:
-        if self._started:
+        if self._started or self._restored_unfinished:
             return
         selected = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
         if not selected:
@@ -877,12 +881,12 @@ class BatchQueueWindow(QDialog):
 
     # ------------------------------------------------------------ window flow
     def _update_controls(self) -> None:
-        editable = not self._started
+        editable = not self._started and not self._restored_unfinished
         self.btn_add.setEnabled(editable)
         self.btn_remove.setEnabled(editable and bool(self.table.selectedItems()))
         self.btn_up.setEnabled(editable and bool(self.table.selectedItems()))
         self.btn_down.setEnabled(editable and bool(self.table.selectedItems()))
-        self.btn_start.setEnabled(editable and bool(self.entries))
+        self.btn_start.setEnabled(not self._started and bool(self.entries))
         can_act = (self._blocked and self._current_index is not None
                    and self._progress_window is None)
         can_resume = can_act or self._needs_finalize
