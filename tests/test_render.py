@@ -99,8 +99,16 @@ def test_no_subtitle_mode_has_no_text_track(tmp_path):
     out = mrender.render(v, a, srt, tmp_path / "no_subs.mp4", sub_mode="none")
     assert out.is_file()
     assert not out.with_suffix(".srt").exists()
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries",
-         "stream=index", "-of", "csv=p=0", str(out)],
-        capture_output=True, text=True, check=True)
-    assert probe.stdout.strip() == ""
+    import shutil
+    if shutil.which("ffprobe"):
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries",
+             "stream=index", "-of", "csv=p=0", str(out)],
+            capture_output=True, text=True, check=True)
+        assert probe.stdout.strip() == ""
+    else:
+        # Portable imageio-ffmpeg smoke runners may not ship ffprobe.
+        probe = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(out)],
+                               capture_output=True, text=True)
+        assert "Stream #" in probe.stderr
+        assert "Subtitle:" not in probe.stderr
