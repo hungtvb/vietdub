@@ -15,19 +15,20 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal, QUrl
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QGuiApplication
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog,
-                               QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel,
-                               QLineEdit, QMainWindow, QProgressBar, QPushButton,
-                               QScrollArea, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QBoxLayout, QCheckBox, QComboBox, QFileDialog,
+                               QFormLayout, QFrame, QGroupBox, QHBoxLayout,
+                               QLabel, QLineEdit, QMainWindow, QProgressBar,
+                               QPushButton, QScrollArea, QSizePolicy,
+                               QTabWidget, QVBoxLayout, QWidget)
 
 from core.job import Job
 from core.settings import Settings
 from media import _bin as mbin
-from project.schema import Project
-from ui.common import confirm_box, error_box, fmt_size, fmt_time, info_box
+from ui.common import confirm_box, error_box, fmt_time
+from ui.theme import APP_BACKGROUND, UI_COLORS
 
 VIDEO_FILTER = ("Video (*.mp4 *.mkv *.avi *.mov *.webm *.ts *.m4v);;"
                 "Tất cả (*.*)")
@@ -42,7 +43,7 @@ class DropLabel(QLabel):
         self.setAcceptDrops(True)
         self.setAlignment(Qt.AlignCenter)
         self.setWordWrap(True)
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(96)
 
     def dragEnterEvent(self, e: QDragEnterEvent) -> None:  # noqa: N802
         if e.mimeData().hasUrls():
@@ -69,8 +70,8 @@ class DownloadWorker(QObject):
         self.job = job
 
     def run(self) -> None:
-        from media import fetch as mfetch
         try:
+            from media import fetch as mfetch
             path = mfetch.resolve(
                 self.url, self.job.job_dir,
                 progress_cb=lambda p, s: self.progressed.emit(p, s))
@@ -91,12 +92,12 @@ class VoicePreviewWorker(QObject):
         self.tmpdir = tmpdir
 
     def run(self) -> None:
-        from project.schema import Segment
-        from tts.edge_tts import EdgeTTS
-        seg = Segment(index=0, start=0.0, end=6.0, speaker=0,
-                      gender=self.gender,
-                      text_vi="Xin chào, đây là giọng lồng tiếng của VietDub.")
         try:
+            from project.schema import Segment
+            from tts.edge_tts import EdgeTTS
+            seg = Segment(index=0, start=0.0, end=6.0, speaker=0,
+                          gender=self.gender,
+                          text_vi="Xin chào, đây là giọng lồng tiếng của VietDub.")
             tts = EdgeTTS(voice_male=self.voice, voice_female=self.voice)
             tts.synthesize([seg], self.tmpdir)
             if seg.audio_vi:
@@ -107,12 +108,91 @@ class VoicePreviewWorker(QObject):
             self.failed.emit(str(e))
 
 
+class VideoInfoWorker(QObject):
+    """Đọc một lần bằng ffprobe ngoài luồng giao diện."""
+    finished = Signal(str, dict)
+    failed = Signal(str, str)
+    completed = Signal()
+
+    def __init__(self, path: str):
+        super().__init__()
+        self.path = path
+        self.ffprobe = mbin.ffprobe_cmd()
+
+    @Slot()
+    def run(self) -> None:
+        import json
+        import subprocess
+        try:
+            result = subprocess.run(
+                [self.ffprobe, "-v", "error", "-print_format", "json",
+                 "-show_streams", "-show_format", self.path],
+                capture_output=True, text=True, timeout=30)
+            if result.returncode:
+                raise ValueError("Tệp video bị hỏng hoặc định dạng không được hỗ trợ.")
+            data = json.loads(result.stdout or "{}")
+            streams = data.get("streams", [])
+            video = next((st for st in streams
+                          if st.get("codec_type") == "video"), None)
+            audio = [st for st in streams if st.get("codec_type") == "audio"]
+            if not video:
+                raise ValueError("Tệp này không có hình ảnh video hợp lệ.")
+            if not audio:
+                raise ValueError("Video không có âm thanh để nhận dạng và lồng tiếng.")
+            try:
+                duration = float(data.get("format", {}).get("duration", 0) or 0)
+            except (ValueError, TypeError):
+                duration = 0.0
+            width, height = video.get("width"), video.get("height")
+            self.finished.emit(self.path, {
+                "audio": audio, "duration": duration,
+                "resolution": f"{width}×{height}" if width and height else "—"})
+        except subprocess.TimeoutExpired:
+            self.failed.emit(self.path, "Đọc thông tin video quá 30 giây.")
+        except OSError:
+            self.failed.emit(self.path, "Không chạy được công cụ đọc video ffprobe.")
+        except json.JSONDecodeError:
+            self.failed.emit(self.path, "Công cụ đọc video trả về thông tin không hợp lệ.")
+        except ValueError as exc:
+            self.failed.emit(self.path, str(exc))
+        except Exception:  # noqa: BLE001 - luôn khép lại vòng đời worker
+            self.failed.emit(self.path, "Không kiểm tra được thông tin video.")
+        finally:
+            self.completed.emit()
+
+
+class _VideoInfoRequest(QObject):
+    """Nhận kết quả trên luồng UI; token phân biệt cả lần chọn lại cùng tệp."""
+    def __init__(self, window, generation: int, target: dict, url: str):
+        super().__init__(window)
+        self.generation = generation
+        self.target = target
+        self.url = url
+
+    @Slot(str, dict)
+    def ready(self, path: str, data: dict) -> None:
+        window = self.parent()
+        if (self.generation == window._source_generation
+                and not window._close_when_idle):
+            window._show_info(self.target, path, data, self.url)
+
+    @Slot(str, str)
+    def failed(self, path: str, message: str) -> None:
+        window = self.parent()
+        if (self.generation == window._source_generation
+                and not window._close_when_idle):
+            window._source_feedback(
+                f"{message} Chọn video khác hoặc kiểm tra FFmpeg trong Cài đặt.",
+                "danger")
+
+
 class MainWindow(QMainWindow):
     def __init__(self, settings: Settings | None = None):
         super().__init__()
         self.settings = settings or Settings()
         mbin.configure(self.settings.get("ffmpeg_path"))
         self.setWindowTitle("VietDub — Lồng tiếng video Trung sang Việt")
+        self.setStyleSheet(f"QWidget#appRoot, QWidget#mainShell {{ background: {APP_BACKGROUND}; }}")
         self.resize(800, 790)
         self.setMinimumSize(620, 500)
 
@@ -125,6 +205,11 @@ class MainWindow(QMainWindow):
         self._pv_worker = None
         self._pv_tmps: list = []          # thư mục tạm của [Nghe thử]
         self._progress_win = None
+        self._tasks: dict[QThread, tuple] = {}
+        self._source_generation = 0
+        self._active_info = None
+        self._close_when_idle = False
+        self._preview_buttons: list[QPushButton] = []
 
         # Khởi tạo audio engine khi người dùng nghe thử, không phải lúc mở app.
         # Một số máy không có audio backend khả dụng; điều đó không nên chặn UI.
@@ -137,7 +222,7 @@ class MainWindow(QMainWindow):
         shell_lay.setContentsMargins(0, 0, 0, 0)
         shell_lay.setSpacing(0)
         self.setCentralWidget(shell)
-        page = QScrollArea()
+        page = self.page = QScrollArea()
         page.setWidgetResizable(True)
         page.setFrameShape(QFrame.NoFrame)
         page.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -146,7 +231,7 @@ class MainWindow(QMainWindow):
         central.setObjectName("appRoot")
         page.setWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(24, 18, 24, 24)
+        root.setContentsMargins(20, 16, 20, 20)
         root.setSpacing(16)
 
         header_card = QFrame()
@@ -174,57 +259,61 @@ class MainWindow(QMainWindow):
         head.addWidget(self.btn_settings)
         root.addWidget(header_card)
 
-        hero = QFrame()
-        hero.setObjectName("mainHero")
-        hero_lay = QVBoxLayout(hero)
-        hero_lay.setContentsMargins(22, 17, 22, 18)
-        hero_lay.setSpacing(4)
-        kicker = QLabel("TẠO DỰ ÁN MỚI")
-        kicker.setObjectName("mainHeroKicker")
-        hero_lay.addWidget(kicker)
-        hero_title = QLabel("Lồng tiếng video theo cách của bạn")
-        hero_title.setObjectName("mainHeroTitle")
-        hero_title.setWordWrap(True)
-        hero_lay.addWidget(hero_title)
-        hero_note = QLabel("Chọn video, kiểm tra bản dịch, rồi xuất thành phẩm.")
-        hero_note.setObjectName("mainHeroNote")
-        hero_note.setWordWrap(True)
-        hero_lay.addWidget(hero_note)
-        root.addWidget(hero)
+        intro = QLabel("Chọn video để bắt đầu")
+        intro.setObjectName("pageTitle")
+        intro.setWordWrap(True)
+        root.addWidget(intro)
 
         source_card = QFrame()
         source_card.setObjectName("mainCard")
         source_lay = QVBoxLayout(source_card)
         source_lay.setContentsMargins(15, 12, 15, 12)
-        source_title = QLabel("01   Nguồn video")
+        source_title = QLabel("Nguồn video")
         source_title.setObjectName("sectionTitle")
         source_lay.addWidget(source_title)
         self.tabs = QTabWidget()
-        self.tabs.setMaximumHeight(300)
         source_lay.addWidget(self.tabs)
         root.addWidget(source_card)
         self._build_file_tab()
         self._build_link_tab()
+        self.source_detail = QLabel("Chọn video có âm thanh để nhận dạng lời thoại.")
+        self.source_detail.setWordWrap(True)
+        self.source_detail.setTextFormat(Qt.PlainText)
+        self.source_detail.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.source_detail.setProperty("role", "secondary")
+        source_lay.addWidget(self.source_detail)
 
-        root.addWidget(self._build_options_group())
+        self.options_toggle = QPushButton("Tùy chọn lồng tiếng…")
+        self.options_toggle.setCheckable(True)
+        self.options_toggle.setProperty("role", "secondary")
+        self.options_toggle.setToolTip("Giọng đọc, nguồn dịch, duyệt phụ đề và thư mục lưu")
+        root.addWidget(self.options_toggle)
+        self.options_box = self._build_options_group()
+        self.options_box.setVisible(False)
+        self.options_toggle.toggled.connect(self.options_box.setVisible)
+        root.addWidget(self.options_box)
+        root.addStretch(1)
 
         footer = QFrame()
         footer.setObjectName("mainFooter")
-        footer_lay = QHBoxLayout(footer)
+        self.footer_lay = QBoxLayout(QBoxLayout.LeftToRight, footer)
+        footer_lay = self.footer_lay
         footer_lay.setContentsMargins(24, 10, 24, 10)
         self.source_status = QLabel("Chưa chọn video")
         self.source_status.setObjectName("mainSourceStatus")
-        self.source_status.setMaximumWidth(340)
+        self.source_status.setWordWrap(True)
+        self.source_status.setTextFormat(Qt.PlainText)
+        self.source_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         footer_lay.addWidget(self.source_status, 1)
-        self.btn_start = QPushButton("Bắt đầu lồng tiếng  →")
+        self.btn_start = QPushButton("Bắt đầu lồng tiếng")
         self.btn_start.setMinimumHeight(48)
         self.btn_start.setMinimumWidth(200)
-        self.btn_start.setMaximumWidth(250)
         self.btn_start.setProperty("role", "primary")
         self.btn_start.setEnabled(False)
         self.btn_start.clicked.connect(self.start_job)
         footer_lay.addWidget(self.btn_start)
         shell_lay.addWidget(footer)
+        self._resize_footer()
 
     # ------------------------------------------------------------------ tab
     def _build_file_tab(self) -> None:
@@ -265,6 +354,7 @@ class MainWindow(QMainWindow):
         self.dl_bar = QProgressBar()
         self.dl_bar.setRange(0, 100)
         self.dl_bar.setValue(0)
+        self.dl_bar.setTextVisible(False)
         dl_row.addWidget(self.dl_bar, 1)
         self.dl_speed = QLabel("")
         dl_row.addWidget(self.dl_speed)
@@ -280,6 +370,8 @@ class MainWindow(QMainWindow):
         form = QFormLayout(box)
         name = QLabel("—")
         name.setWordWrap(True)
+        name.setTextFormat(Qt.PlainText)
+        name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         dur = QLabel("—")
         res = QLabel("—")
         form.addRow("Tên file:", name)
@@ -288,8 +380,10 @@ class MainWindow(QMainWindow):
         track_row_widget = QWidget()
         track_row_lay = QHBoxLayout(track_row_widget)
         track_row_lay.setContentsMargins(0, 0, 0, 0)
-        track_label = QLabel("Track audio:")
+        track_label = QLabel("Rãnh âm thanh:")
         track = QComboBox()
+        track.setMinimumContentsLength(12)
+        track.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         track_row_lay.addWidget(track_label)
         track_row_lay.addWidget(track, 1)
         form.addRow(track_row_widget)
@@ -297,63 +391,119 @@ class MainWindow(QMainWindow):
         return {"box": box, "name": name, "dur": dur, "res": res,
                 "track": track, "track_row": track_row_widget}
 
-    def _show_info(self, info: dict, path: str) -> None:
-        from media import extract as mextract
-        try:
-            streams = mextract.audio_streams(path)
-        except Exception as e:  # noqa: BLE001
-            error_box(self, "Không đọc được video",
-                      f"Không đọc được file video:\n{e}\n\n"
-                      "Cách khắc phục: thử file khác, hoặc kiểm tra FFmpeg "
-                      "trong Cài đặt.")
+    def _source_feedback(self, message: str, state: str = "secondary_text") -> None:
+        self.source_status.setText(
+            "Video chưa sẵn sàng · xem hướng dẫn ở nguồn video" if state == "danger" else message)
+        self.source_status.setStyleSheet(f"color: {UI_COLORS[state]};")
+        self.source_status.setToolTip(message)
+        self.source_detail.setText(message)
+        self.source_detail.setStyleSheet(f"color: {UI_COLORS[state]};")
+        if not self._close_when_idle:
+            QTimer.singleShot(30, self._reveal_source_feedback)
+
+    @Slot()
+    def _reveal_source_feedback(self) -> None:
+        self.page.ensureWidgetVisible(self.source_detail, 0, 12)
+
+    def _clear_source(self, message: str) -> int:
+        self._source_generation += 1
+        self.video_path = ""
+        self.video_url = ""
+        self._active_info = None
+        self.btn_start.setEnabled(False)
+        self.file_info["box"].hide()
+        self.link_info["box"].hide()
+        self._source_feedback(message)
+        return self._source_generation
+
+    def _probe_video(self, target: dict, path: str, url: str = "",
+                     generation: int | None = None) -> None:
+        if generation is None:
+            generation = self._clear_source("Đang kiểm tra video…")
+        if generation != self._source_generation:
             return
+        self._source_feedback("Đang kiểm tra video…")
+        worker = VideoInfoWorker(path)
+        receiver = _VideoInfoRequest(self, generation, target, url)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        worker.finished.connect(receiver.ready)
+        worker.failed.connect(receiver.failed)
+        worker.completed.connect(thread.quit)
+        worker.completed.connect(worker.deleteLater)
+        thread.started.connect(worker.run)
+        self._retain_task(thread, worker, receiver)
+        thread.start()
+
+    def _show_info(self, info: dict, path: str, data: dict, url: str = "") -> None:
+        self.video_path, self.video_url = path, url
+        self._active_info = info
         info["name"].setText(Path(path).name)
-        short_name = Path(path).name
-        self.source_status.setText(f"Sẵn sàng · {short_name[:42]}")
+        info["name"].setToolTip(path)
+        self._source_feedback("Sẵn sàng lồng tiếng", "success")
         self.source_status.setToolTip(path)
-        try:
-            info["dur"].setText(fmt_time(mextract.duration_sec(path)))
-        except Exception:  # noqa: BLE001
-            info["dur"].setText("—")
-        info["res"].setText(self._resolution(path))
+        info["dur"].setText(fmt_time(data["duration"]))
+        info["res"].setText(data["resolution"])
         combo: QComboBox = info["track"]
         combo.clear()
-        for i, st in enumerate(streams):
+        for i, st in enumerate(data["audio"]):
             lang = st.get("tags", {}).get("language", "")
-            ch = st.get("channels", "?")
+            channels = st.get("channels", "?")
             codec = st.get("codec_name", "")
-            label = f"Track {i + 1} — {codec}, {ch} kênh" \
-                + (f" ({lang})" if lang else "")
-            combo.addItem(label, i)
-        info["track_row"].setVisible(len(streams) > 1)
+            label = f"Rãnh {i + 1} — {codec}, {channels} kênh"
+            combo.addItem(label + (f" ({lang})" if lang else ""), i)
+        info["track_row"].setVisible(len(data["audio"]) > 1)
         combo.setCurrentIndex(0)
-        info["box"].setVisible(True)
-        self.tabs.setMaximumHeight(370)
-        self.btn_start.setEnabled(True)
+        info["box"].show()
+        self.btn_start.setEnabled(not self._close_when_idle)
 
-    @staticmethod
-    def _resolution(path: str) -> str:
-        from media import extract as mextract
-        try:
-            for st in mextract.probe(path).get("streams", []):
-                if st.get("codec_type") == "video":
-                    w, h = st.get("width"), st.get("height")
-                    if w and h:
-                        return f"{w}×{h}"
-        except Exception:  # noqa: BLE001
-            pass
-        return "—"
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "footer_lay"):
+            self._resize_footer()
+
+    def _resize_footer(self) -> None:
+        compact = self.width() < 760
+        self.footer_lay.setDirection(
+            QBoxLayout.TopToBottom if compact else QBoxLayout.LeftToRight)
+
+    def _retain_task(self, thread: QThread, worker: QObject,
+                     receiver: QObject | None = None) -> None:
+        self._tasks[thread] = (worker, receiver)
+        thread.finished.connect(self._task_finished)
+
+    @Slot()
+    def _task_finished(self) -> None:
+        thread = self.sender()
+        _, receiver = self._tasks.pop(thread, (None, None))
+        if receiver is not None:
+            receiver.deleteLater()
+        if thread is self._dl_thread:
+            self._dl_worker = self._dl_thread = None
+            self.btn_download.setEnabled(True)
+        if thread is self._pv_thread:
+            self._pv_worker = self._pv_thread = None
+            for button in self._preview_buttons:
+                button.setEnabled(True)
+            self._preview_button.setText("Nghe thử")
+        thread.deleteLater()
+        if self._close_when_idle and not self._tasks:
+            self.close()
 
     # -------------------------------------------------------------- tab File
     def pick_video_file(self, path: str = "") -> None:
         if not path:
             path, _ = QFileDialog.getOpenFileName(
                 self, "Chọn video", "", VIDEO_FILTER)
-        if not path or not Path(path).is_file():
+        if not path:
             return
-        self.video_path = path
-        self.video_url = ""
-        self._show_info(self.file_info, path)
+        if not Path(path).is_file():
+            self._clear_source("Chưa chọn được video")
+            self._source_feedback("Tệp không tồn tại hoặc không phải là tệp video. "
+                                  "Bấm Chọn video để chọn một tệp khác.", "danger")
+            return
+        self.tabs.setCurrentIndex(0)
+        self._probe_video(self.file_info, path)
 
     # -------------------------------------------------------------- tab Link
     def _ensure_job(self) -> Job:
@@ -371,6 +521,10 @@ class MainWindow(QMainWindow):
             error_box(self, "Link không hợp lệ",
                       "Link phải bắt đầu bằng http:// hoặc https://.")
             return
+        if self._dl_thread is not None:
+            return
+        self._download_url = url
+        self._download_generation = self._clear_source("Đang tải video…")
         self.btn_download.setEnabled(False)
         self.dl_bar.setValue(0)
         self.dl_speed.setText("Đang tải…")
@@ -388,31 +542,34 @@ class MainWindow(QMainWindow):
         # deleteLater được xử lý ngay, không leak worker mỗi lần tải.
         worker.finished.connect(worker.deleteLater)
         worker.failed.connect(worker.deleteLater)
-        thread.finished.connect(lambda: setattr(self, "_dl_worker", None))
+        self._retain_task(thread, worker)
         # GIỮ reference: không giữ -> Python GC worker -> run() không chạy
         self._dl_worker = worker
         self._dl_thread = thread
         thread.start()
 
+    @Slot(float, str)
     def _on_dl_progress(self, pct: float, speed: str) -> None:
         self.dl_bar.setValue(int(pct))
         self.dl_speed.setText(f"{pct:.0f}% {speed}".strip())
 
+    @Slot(str)
     def _on_dl_finished(self, path: str) -> None:
-        self.btn_download.setEnabled(True)
-        self.dl_speed.setText("Tải xong")
-        self.video_url = self.link_edit.text().strip()
-        self.video_path = path
-        self._show_info(self.link_info, path)
-        info_box(self, "Tải xong",
-                 f"Đã tải video về:\n{Path(path).name}\n\n"
-                 "Giờ bạn có thể bấm [Bắt đầu lồng tiếng].")
+        self.dl_bar.setValue(100)
+        self.dl_speed.setText("Đã tải xong")
+        if (self._download_generation == self._source_generation
+                and not self._close_when_idle):
+            self._probe_video(self.link_info, path, self._download_url,
+                              self._download_generation)
 
+    @Slot(str)
     def _on_dl_failed(self, message: str) -> None:
-        self.btn_download.setEnabled(True)
         self.dl_bar.setValue(0)
-        self.dl_speed.setText("Tải lỗi")
-        error_box(self, "Tải video thất bại", message)
+        self.dl_speed.setText("Tải lỗi · sửa liên kết và thử lại")
+        if (self._download_generation == self._source_generation
+                and not self._close_when_idle):
+            self._source_feedback(f"Tải thất bại: {message}. Kiểm tra liên kết rồi tải lại.",
+                                  "danger")
 
     # --------------------------------------------------------------- tùy chọn
     def _build_options_group(self) -> QGroupBox:
@@ -421,10 +578,15 @@ class MainWindow(QMainWindow):
 
         # giọng nam / nữ + nghe thử
         vg = QFormLayout()
+        vg.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.voice_male = QComboBox()
         self.voice_male.setEditable(True)
+        self.voice_male.setMinimumContentsLength(12)
+        self.voice_male.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.voice_female = QComboBox()
         self.voice_female.setEditable(True)
+        self.voice_female.setMinimumContentsLength(12)
+        self.voice_female.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         for cb, default in ((self.voice_male, self.settings.get("voice_male")),
                             (self.voice_female, self.settings.get("voice_female"))):
             cb.addItem(default)
@@ -435,12 +597,14 @@ class MainWindow(QMainWindow):
         btn_pm.clicked.connect(lambda: self.preview_voice(
             self.voice_male.currentText().strip(), "male", btn_pm))
         row_m.addWidget(btn_pm)
+        self._preview_buttons.append(btn_pm)
         row_f = QHBoxLayout()
         row_f.addWidget(self.voice_female, 1)
         btn_pf = QPushButton("Nghe thử")
         btn_pf.clicked.connect(lambda: self.preview_voice(
             self.voice_female.currentText().strip(), "female", btn_pf))
         row_f.addWidget(btn_pf)
+        self._preview_buttons.append(btn_pf)
         vg.addRow("Giọng nam:", row_m)
         vg.addRow("Giọng nữ:", row_f)
         lay.addLayout(vg)
@@ -448,7 +612,7 @@ class MainWindow(QMainWindow):
         self.provider = QComboBox()
         self.provider.addItem("OpenAI GPT (khuyên dùng)", "openai")
         self.provider.addItem("9Router", "9router")
-        self.provider.addItem("Ollama (chạy local)", "ollama")
+        self.provider.addItem("Ollama (trên máy)", "ollama")
         cur = self.settings.get("translate_provider", "openai")
         self.provider.setCurrentIndex(max(0, self.provider.findData(cur)))
         pf = QFormLayout()
@@ -501,7 +665,11 @@ class MainWindow(QMainWindow):
             error_box(self, "Chưa chọn giọng",
                       "Hãy chọn hoặc nhập mã giọng (vd vi-VN-NamMinhNeural).")
             return
-        btn.setEnabled(False)
+        if self._pv_thread is not None:
+            return
+        self._preview_button = btn
+        for button in self._preview_buttons:
+            button.setEnabled(False)
         btn.setText("Đang tạo…")
         # Thư mục tạm riêng cho giọng mẫu: không tạo thư mục job mồ côi
         # (jobs/<id>/) trên đĩa khi user chỉ bấm [Nghe thử] mà chưa bao giờ
@@ -512,10 +680,8 @@ class MainWindow(QMainWindow):
         worker = VoicePreviewWorker(voice, gender, tmpdir)
         thread = QThread(self)
         worker.moveToThread(thread)
-        worker.done.connect(
-            lambda wav: self._on_preview_done(wav, btn))
-        worker.failed.connect(
-            lambda msg: self._on_preview_failed(msg, btn))
+        worker.done.connect(self._on_preview_done)
+        worker.failed.connect(self._on_preview_failed)
         thread.started.connect(worker.run)
         worker.done.connect(thread.quit)
         worker.failed.connect(thread.quit)
@@ -523,15 +689,16 @@ class MainWindow(QMainWindow):
         # deleteLater được xử lý ngay, không leak worker mỗi lần nghe thử.
         worker.done.connect(worker.deleteLater)
         worker.failed.connect(worker.deleteLater)
-        thread.finished.connect(lambda: setattr(self, "_pv_worker", None))
+        self._retain_task(thread, worker)
         # GIỮ reference: không giữ -> Python GC worker -> run() không chạy
         self._pv_worker = worker
         self._pv_thread = thread
         thread.start()
 
-    def _on_preview_done(self, wav: str, btn: QPushButton) -> None:
-        btn.setEnabled(True)
-        btn.setText("Nghe thử")
+    @Slot(str)
+    def _on_preview_done(self, wav: str) -> None:
+        if self._close_when_idle:
+            return
         if self._player is None:
             self._player = QMediaPlayer(self)
             if QGuiApplication.platformName() != "offscreen":
@@ -540,9 +707,10 @@ class MainWindow(QMainWindow):
         self._player.setSource(QUrl.fromLocalFile(wav))
         self._player.play()
 
-    def _on_preview_failed(self, message: str, btn: QPushButton) -> None:
-        btn.setEnabled(True)
-        btn.setText("Nghe thử")
+    @Slot(str)
+    def _on_preview_failed(self, message: str) -> None:
+        if self._close_when_idle:
+            return
         error_box(self, "Không nghe thử được",
                   f"{message}\n\nCách khắc phục: kiểm tra mạng (Edge-TTS cần "
                   "kết nối tới Microsoft), rồi bấm Nghe thử lại.")
@@ -560,15 +728,15 @@ class MainWindow(QMainWindow):
             self.chk_overnight.setChecked(bool(self.settings.get("overnight", False)))
 
     def _transient_workers_running(self) -> bool:
-        return any(thread is not None and thread.isRunning()
-                   for thread in (self._dl_thread, self._pv_thread))
+        return bool(self._tasks)
 
     def closeEvent(self, e) -> None:  # noqa: N802
         if self._transient_workers_running():
+            self._close_when_idle = True
+            self.btn_start.setEnabled(False)
+            self.centralWidget().setEnabled(False)
+            self._source_feedback("Đang hoàn tất tác vụ nền trước khi đóng…")
             e.ignore()
-            info_box(self, "Vui lòng đợi",
-                     "Đang tải video hoặc tạo giọng mẫu. "
-                     "Hãy đợi hoàn tất rồi đóng ứng dụng.")
             return
 
         if self._player is not None:
@@ -584,16 +752,17 @@ class MainWindow(QMainWindow):
         super().closeEvent(e)
 
     def _audio_track_index(self) -> int:
-        info = self.file_info if self.tabs.currentIndex() == 0 else self.link_info
-        if info["track_row"].isVisible():
+        info = self._active_info
+        if info is not None and info["track"].count() > 1:
             return int(info["track"].currentData() or 0)
         return 0
 
     def start_job(self) -> None:
-        if not self.video_path or not Path(self.video_path).is_file():
+        if (not self.btn_start.isEnabled() or not self.video_path
+                or not Path(self.video_path).is_file()):
             error_box(self, "Chưa có video",
-                      "Hãy chọn file video (tab File) hoặc tải video từ link "
-                      "(tab Link) trước khi bắt đầu.")
+                      "Hãy chọn file video (Tệp video) hoặc tải video từ liên kết "
+                      "(tab Liên kết) trước khi bắt đầu.")
             return
         provider = self.provider.currentData()
         if provider == "openai" and not self.settings.get("openai_api_key"):
@@ -661,11 +830,7 @@ class MainWindow(QMainWindow):
 
     def _back_to_main(self) -> None:
         self.job = None
-        self.video_path = ""
-        self.video_url = ""
-        self.btn_start.setEnabled(False)
-        self.source_status.setText("Chưa chọn video")
-        self.tabs.setMaximumHeight(300)
+        self._clear_source("Chưa chọn video")
         self.file_info["box"].setVisible(False)
         self.link_info["box"].setVisible(False)
         self.dl_bar.setValue(0)

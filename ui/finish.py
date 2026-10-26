@@ -17,14 +17,15 @@ from PySide6.QtGui import QDesktopServices, QGuiApplication, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit,
-                               QPushButton, QSlider, QStackedWidget,
-                               QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QSizePolicy, QSlider,
+                               QStackedWidget, QVBoxLayout, QWidget)
 
 from core import checkpoint as cp
 from core.job import Job
 from core.settings import Settings
 from ui.common import error_box, fmt_time, info_box
 from ui.poster_loader import PosterLoader
+from ui.theme import APP_BACKGROUND
 
 
 class PosterLabel(QLabel):
@@ -32,6 +33,8 @@ class PosterLabel(QLabel):
         super().__init__("Đang chuẩn bị hình xem trước…")
         self.setObjectName("finishPoster")
         self.setAlignment(Qt.AlignCenter)
+        self.setWordWrap(True)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self._original = QPixmap()
         self._placeholder = "Đang chuẩn bị hình xem trước…"
 
@@ -67,6 +70,8 @@ class FinishWindow(QWidget):
         self.setWindowTitle(f"VietDub — Hoàn thành: {job.project.name}")
         self.resize(1080, 800)
         self.setMinimumSize(650, 500)
+        self.setObjectName("finishRoot")
+        self.setStyleSheet(f"QWidget#finishRoot, QWidget#finishContent {{ background: {APP_BACKGROUND}; }}")
 
         data = cp.load_step(job.job_dir, "render") or {}
         self.video_out = data.get("video_out", "") or ""
@@ -83,6 +88,7 @@ class FinishWindow(QWidget):
         title_stack.addWidget(badge)
         title = QLabel("Video đã sẵn sàng")
         title.setObjectName("pageTitle")
+        title.setWordWrap(True)
         title_stack.addWidget(title)
         header.addLayout(title_stack)
         header.addStretch(1)
@@ -91,6 +97,18 @@ class FinishWindow(QWidget):
         new.clicked.connect(self.on_new)
         header.addWidget(new)
         root.addLayout(header)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        content.setObjectName("finishContent")
+        content_lay = QVBoxLayout(content)
+        content_lay.setContentsMargins(0, 0, 0, 0)
+        content_lay.setSpacing(12)
+        scroll.setWidget(content)
+        root.addWidget(scroll, 1)
 
         preview_card = QFrame()
         preview_card.setObjectName("finishCard")
@@ -104,6 +122,7 @@ class FinishWindow(QWidget):
         self.preview_stack.setMinimumHeight(150)
         self.poster = PosterLabel()
         self.video = QVideoWidget()
+        self.video.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.preview_stack.addWidget(self.poster)
         self.preview_stack.addWidget(self.video)
         preview_lay.addWidget(self.preview_stack, 1)
@@ -124,12 +143,13 @@ class FinishWindow(QWidget):
         ctl.addWidget(self.btn_play)
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, 0)
+        self.slider.setAccessibleName("Vị trí phát video")
         self.slider.sliderMoved.connect(self._seek)
         ctl.addWidget(self.slider, 1)
         self.lbl_time = QLabel("00:00 / 00:00")
         ctl.addWidget(self.lbl_time)
         preview_lay.addLayout(ctl)
-        root.addWidget(preview_card, 1)
+        content_lay.addWidget(preview_card, 1)
 
         files = QFrame()
         files.setObjectName("finishCard")
@@ -141,18 +161,21 @@ class FinishWindow(QWidget):
         files_lay.addWidget(QLabel("VIDEO MP4"))
         self.video_path_label = QLineEdit(self.video_out or "—")
         self.video_path_label.setReadOnly(True)
+        self.video_path_label.setAccessibleName("Đường dẫn video đầu ra")
         files_lay.addWidget(self.video_path_label)
         files_lay.addWidget(QLabel("PHỤ ĐỀ SRT"))
         self.sub_path_label = QLineEdit(self.srt_path or "—")
         self.sub_path_label.setReadOnly(True)
+        self.sub_path_label.setAccessibleName("Đường dẫn phụ đề đầu ra")
         files_lay.addWidget(self.sub_path_label)
-        root.addWidget(files)
+        self._refresh_output_paths()
+        content_lay.addWidget(files)
 
         row = QHBoxLayout()
         btn_open = QPushButton("Mở thư mục")
         btn_open.setProperty("role", "secondary")
         btn_open.clicked.connect(self.open_folder)
-        btn_edit = QPushButton("Biên tập video  →")
+        btn_edit = QPushButton("Biên tập video")
         btn_edit.setProperty("role", "primary")
         btn_edit.clicked.connect(self.open_editor)
         btn_settings = QPushButton("Cài đặt")
@@ -162,6 +185,16 @@ class FinishWindow(QWidget):
         row.addStretch(1)
         row.addWidget(btn_edit)
         root.addLayout(row)
+
+    def _refresh_output_paths(self) -> None:
+        for field, path in ((self.video_path_label, self.video_out),
+                            (self.sub_path_label, self.srt_path)):
+            field.setMinimumWidth(0)
+            field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            field.setText(path or "Không có tệp")
+            field.setToolTip(path or "Không có tệp")
+            # Keep the filename visible; the full path can be selected/copied.
+            field.setCursorPosition(len(field.text()))
 
     # -------------------------------------------------------------- phát thử
     def toggle_play(self) -> None:
@@ -243,8 +276,7 @@ class FinishWindow(QWidget):
 
     def _on_edited(self, video: str, srt: str) -> None:
         self.video_out, self.srt_path = video, srt
-        self.video_path_label.setText(video)
-        self.sub_path_label.setText(srt)
+        self._refresh_output_paths()
         if self._player is not None:
             self._player.stop()
             self._player.setSource(QUrl.fromLocalFile(video))
