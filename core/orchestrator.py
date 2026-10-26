@@ -494,8 +494,27 @@ class Orchestrator:
         out_mp4 = Path(proj.video_out or str(job.job_dir / out_name))
         sub_mode = (self.settings.get("sub_mode", proj.sub_mode)
                     or proj.sub_mode or "burn")
+        video_for_render = fetch_data.get("video_path") or proj.video_in
+        if self.settings.get("visual_cleanup_enabled", False):
+            # Optional step inside render keeps existing checkpoint order stable.
+            # Fail explicitly when OCR/runtime is missing; never silently export
+            # uncleaned video after the user asked for cleanup.
+            from media import visual_cleanup as vclean
+            from media import _bin as mbin
+            config = vclean.Config(
+                mode=str(self.settings.get("visual_cleanup_mode", "blur")),
+                sample_sec=float(self.settings.get("visual_cleanup_interval_sec", 0.65)),
+                min_hits=int(self.settings.get("visual_cleanup_min_hits", 2)),
+                auto_logo=bool(self.settings.get("visual_cleanup_auto_logo", True)))
+            self.logger.info("Visual cleanup enabled: OCR -> temporal tracking -> %s", config.mode)
+            visual_plan = job.stages_dir / "visual_regions.json"
+            video_for_render = vclean.VisualCleanup(config).process(
+                video_for_render, job.stages_dir / "visual_clean.mp4",
+                plan_path=visual_plan, ffmpeg=mbin.ffmpeg_cmd())
+            self.logger.info("Visual cleanup output: %s; review plan: %s",
+                             video_for_render, visual_plan)
         rendered = mrender.render(
-            fetch_data.get("video_path") or proj.video_in,
+            video_for_render,
             mix_data["mixed_wav"], srt_path, out_mp4,
             sub_mode=sub_mode,
             crf=int(self.settings.get("crf", 20)),
