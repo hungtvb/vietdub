@@ -407,13 +407,23 @@ class ProgressWindow(QWidget):
                                      sub_mode=self.settings.get("sub_mode", self.job.project.sub_mode))
             if not inspection.can_open_review:
                 raise ValueError(inspection.blocked_reason or "Checkpoint duyệt không còn hợp lệ.")
+            resume_from = inspection.review_resume_from or inspection.resume_from
+            if inspection.pending_review == "asr":
+                # Invalidate while the ASR review marker is still pending. A
+                # crash after the marker is cleared will then recover at
+                # gender from the missing checkpoint, even before a worker
+                # thread starts. source_review is deliberately preserved by
+                # invalidate_from("gender") for a safe retry.
+                cp.invalidate_from(self.job.job_dir, self.job.project, "gender")
+                from project import io as pio
+                pio.save_project(self.job.job_dir, self.job.project)
             save_pending_review(self.job.job_dir, None)
         except Exception as exc:
             error_box(self._review_win or self, "Chưa lưu được xác nhận duyệt", str(exc))
             return
         # ASR review input is not a completed gender stage. Always run gender
         # estimation after its approval; translation review continues at TTS.
-        self.job.resume_from = inspection.review_resume_from or inspection.resume_from
+        self.job.resume_from = resume_from
         self.job.status = IDLE
         if self._review_win:
             self._review_win.close()

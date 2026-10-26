@@ -297,16 +297,25 @@ class Orchestrator:
             manual = pio.load_speakers(job.job_dir, "gender") or {}
         manually_labeled = set()
         for spk_id, mspk in manual.items():
-            if mspk.gender in ("male", "female") and spk_id in speakers:
-                manually_labeled.add(spk_id)
-                if speakers[spk_id].gender != mspk.gender:
-                    self.logger.info(
-                        "giữ giới tính do người dùng sửa tay cho loa %d: %s "
-                        "(pitch đoán %s)", spk_id, mspk.gender,
-                        speakers[spk_id].gender)
-                    speakers[spk_id].gender = mspk.gender
-                    speakers[spk_id].confidence = max(
-                        speakers[spk_id].confidence, mspk.confidence)
+            if mspk.gender not in ("male", "female"):
+                continue
+            manually_labeled.add(spk_id)
+            estimated = speakers.get(spk_id)
+            if estimated is None:
+                # A short clip or unusable F0 can omit a speaker entirely.
+                # Keep that explicitly labeled speaker in the analysis input.
+                speakers[spk_id] = Speaker.from_dict(mspk.to_dict())
+                self.logger.info(
+                    "giữ người nói %d với giới tính sửa tay %s; không có "
+                    "ước lượng pitch", spk_id, mspk.gender)
+            elif estimated.gender != mspk.gender:
+                self.logger.info(
+                    "giữ giới tính do người dùng sửa tay cho loa %d: %s "
+                    "(pitch đoán %s)", spk_id, mspk.gender,
+                    estimated.gender)
+                estimated.gender = mspk.gender
+                estimated.confidence = max(
+                    estimated.confidence, mspk.confidence)
         confidence_thr = float(
             self.settings.get("pitch_confidence_low", 0.7))
         for seg in segments:
