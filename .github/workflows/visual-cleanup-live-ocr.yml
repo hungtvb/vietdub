@@ -1,0 +1,32 @@
+name: Visual cleanup live OCR E2E
+on:
+  pull_request:
+    paths:
+      - "media/visual_cleanup.py"
+      - "tests/test_visual_cleanup_live_ocr.py"
+      - ".github/workflows/visual-cleanup-live-ocr.yml"
+  workflow_dispatch:
+
+jobs:
+  paddle-real-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install FFmpeg and PaddlePaddle CPU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          python -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+      - name: Install PaddleOCR and smoke dependencies
+        run: |
+          python -m pip install "paddleocr>=3.0,<4" "opencv-python-headless>=4.8,<5" pytest
+      - name: Run unmocked OCR -> track -> blur -> encode test
+        env:
+          VIETDUB_LIVE_OCR: "1"
+          PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: "True"
+        run: pytest -q -s tests/test_visual_cleanup_live_ocr.py
