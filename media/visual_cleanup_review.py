@@ -1,0 +1,39 @@
+"""Render an operator-reviewed visual cleanup plan without rerunning OCR.
+
+Usage:
+    python -m media.visual_cleanup_review \
+      --video /path/input.mp4 \
+      --plan /path/reviewed-plan.json \
+      --out /path/restored.mp4
+
+The output is video-only; original audio may be remuxed by VietDub final render.
+"""
+import argparse
+import json
+from pathlib import Path
+
+from media.visual_cleanup import Config, VisualCleanup, VisualCleanupError
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--video", type=Path, required=True)
+    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--ffmpeg", default="ffmpeg")
+    parser.add_argument("--mode", choices=("blur", "inpaint"), default="blur")
+    args = parser.parse_args(argv)
+    plan = json.loads(args.plan.read_text(encoding="utf-8"))
+    if str(args.video.resolve()) != plan.get("source"):
+        raise VisualCleanupError("The review plan belongs to another source video")
+    if not any(r.get("source") in ("temporal-clean-plate", "exemplar-patch")
+               for r in plan.get("regions", [])):
+        raise VisualCleanupError("Plan lacks operator-reviewed clean-plate regions")
+    output = VisualCleanup(Config(mode=args.mode,auto_logo=False)).render(
+        args.video,args.out,plan,ffmpeg=args.ffmpeg)
+    print(output)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
