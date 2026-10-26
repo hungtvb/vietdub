@@ -86,10 +86,11 @@ def _kind(rect, width, height):
     cy = (y1+y2)/2/height
     ww = (x2-x1)/width
     hh = (y2-y1)/height
+    # Narrow corner marks are more likely logos than bottom subtitles.
+    if (cx < .18 or cx > .82) and (cy < .18 or cy > .83) and ww < .24 and hh < .14:
+        return "logo"
     if cy > .70 and ww > .06 and hh < .16:
         return "subtitle"
-    if (cx < .22 or cx > .78) and (cy < .18 or cy > .83) and ww < .24 and hh < .14:
-        return "logo"
     return "text"
 
 
@@ -170,11 +171,18 @@ class VisualCleanup:
             logo_frames = []
             sampled = 0
             frame_n = 0
+            # Confirm a newly seen subtitle ~180ms later rather than waiting
+            # for the next regular 650ms OCR sample. This catches short lines
+            # without trusting one-frame false positives.
+            quick_frames = max(1, round(fps * .18))
+            last_sample_frame = -quick_frames
+            subtitle_needs_check = False
             while True:
                 ok, frame = cap.read()
                 if not ok:
                     break
-                if frame_n % step == 0:
+                if (frame_n % step == 0 or
+                        (subtitle_needs_check and frame_n - last_sample_frame >= quick_frames)):
                     t = frame_n/fps
                     if self.config.auto_logo and "logo" in self.config.categories:
                         # Keep thumbnails, never 32 full-resolution 4K frames.
@@ -189,8 +197,9 @@ class VisualCleanup:
                     tracks = [r for r in tracks if sampled - r["sample"] <= 1]
                     for r in expired:
                         if r["hits"] >= self.config.min_hits:
-                            regions.append(Region(max(0,r["first"]-step/fps/2),
-                                r["last"]+step/fps/2, r["box"], r["kind"],
+                            margin = min(.15, step / fps / 2)
+                            regions.append(Region(max(0, r["first"]-margin),
+                                r["last"]+margin, r["box"], r["kind"],
                                 r["score"]/r["hits"]))
                     used = set()
                     for raw, score in detector.detect(frame):
@@ -231,12 +240,17 @@ class VisualCleanup:
                                      score=r["score"]+score)
                             used.add(best)
                     sampled += 1
+                    last_sample_frame = frame_n
+                    subtitle_needs_check = any(
+                        r["kind"] == "subtitle" and r["hits"] == 1
+                        and r["sample"] == sampled - 1 for r in tracks)
                 frame_n += 1
             duration = frame_n/fps
             for r in tracks:
                 if r["hits"] >= self.config.min_hits:
-                    regions.append(Region(max(0,r["first"]-step/fps/2),
-                        min(duration,r["last"]+step/fps/2), r["box"], r["kind"],
+                    margin = min(.15, step / fps / 2)
+                    regions.append(Region(max(0,r["first"]-margin),
+                        min(duration,r["last"]+margin), r["box"], r["kind"],
                         r["score"]/r["hits"]))
             if self.config.auto_logo and "logo" in self.config.categories:
                 for item in _static_logos(logo_frames, duration, width, height):
