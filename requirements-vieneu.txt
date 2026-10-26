@@ -1,0 +1,4 @@
+# Optional local VieNeu-TTS v3 Turbo (CPU ONNX or CUDA with suitable setup).
+# Keep this separate from requirements.txt so Edge-TTS installations stay lean.
+# VieNeu upstream: https://github.com/pnnbao97/VieNeu-TTS
+vieneu==3.8.3
