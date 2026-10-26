@@ -411,9 +411,9 @@ class ProgressWindow(QWidget):
         except Exception as exc:
             error_box(self._review_win or self, "Chưa lưu được xác nhận duyệt", str(exc))
             return
-        # Back/Continue save a gender checkpoint with the manual choices.
-        # Start at the missing stage instead of invalidating those choices.
-        self.job.resume_from = inspection.resume_from
+        # ASR review input is not a completed gender stage. Always run gender
+        # estimation after its approval; translation review continues at TTS.
+        self.job.resume_from = inspection.review_resume_from or inspection.resume_from
         self.job.status = IDLE
         if self._review_win:
             self._review_win.close()

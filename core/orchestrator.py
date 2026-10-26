@@ -289,10 +289,12 @@ class Orchestrator:
             data.get("wav_path"), segments,
             male_max_hz=float(self.settings.get("pitch_male_max_hz", 160.0)),
             female_min_hz=float(self.settings.get("pitch_female_min_hz", 165.0)))
-        # Tôn trọng sửa tay ở màn duyệt #1 (DESIGN): checkpoint "gender" do
-        # màn duyệt lưu đã chứa gender user đặt -> giữ lại, không để pitch
-        # ghi đè. Chỉ áp dụng khi user đã đặt rõ male/female.
-        manual = pio.load_speakers(job.job_dir, "gender") or {}
+        # Source-review choices are input data, not a completed gender stage.
+        # Fall back to the old gender checkpoint for jobs created by earlier
+        # versions, then preserve explicit labels over automatic estimates.
+        manual = pio.load_speakers(job.job_dir, "source_review")
+        if manual is None:
+            manual = pio.load_speakers(job.job_dir, "gender") or {}
         manually_labeled = set()
         for spk_id, mspk in manual.items():
             if mspk.gender in ("male", "female") and spk_id in speakers:

@@ -70,6 +70,9 @@ def _looks_valid(step: str, data: Any) -> bool:
         return (set(data) == {"pending"}
                 and (data["pending"] is None or
                      isinstance(data["pending"], str) and data["pending"] in {"asr", "translate"}))
+    if step == "source_review":
+        return (_valid_review_models("asr", data)
+                and _valid_review_models("gender", data))
     if step in ("asr", "translate", "gender", "analyze"):
         return _valid_review_models(step, data)
     if step == "fetch":
@@ -185,6 +188,11 @@ def invalidate_from(job_dir: Path, project, step: str) -> None:
     stale = STEPS[STEPS.index(step):]
     for name in stale:
         stage_path(job_dir, name).unlink(missing_ok=True)
+    # Source review is an input to gender estimation, not a completed stage.
+    # Keep it while retrying gender, but discard it when ASR or an earlier
+    # stage is rebuilt because its speaker/segment IDs may no longer match.
+    if STEPS.index(step) <= STEPS.index("asr"):
+        stage_path(job_dir, "source_review").unlink(missing_ok=True)
     if "tts" in stale:
         stage_path(job_dir, "tts_meta").unlink(missing_ok=True)
     project.stages_done = [name for name in project.stages_done
