@@ -21,6 +21,10 @@ This scan covers the desktop workflow, nine-step orchestrator, persisted job/che
 
 The source-review merge action currently combines adjacent transcript text while retaining the first segment's speaker and audience. Merging lines from different speakers or audiences can silently change who the transcript says spoke and who they addressed. The existing-feature team is implementing a compatibility guard and clear feedback.
 
+### P2 — Keep related review checkpoints in sync
+
+Source review writes the transcript and speaker checkpoints separately; translation review writes translated segments and video metadata separately. If a later write fails, one part may already be on disk. The UI keeps the unsaved screen open, but the on-disk pair is not transactional. Handle this in a later integrity pass with a staged snapshot or rollback strategy.
+
 ### P1 — Process multiple videos without parallel-job risk
 
 Batch processing is the largest documented product gap for overnight work. Build a sequential queue that reuses the one-job orchestrator contract, shows per-item status, and respects review, pause, cancel, and failure behavior. Queue restart behavior must be explicit; an overnight mode must not imply recovery unless its queue manifest is durable.
