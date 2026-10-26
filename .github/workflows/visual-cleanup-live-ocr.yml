@@ -37,3 +37,11 @@ jobs:
           VIETDUB_LIVE_OCR: "1"
           PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: "True"
         run: pytest -q -s tests/test_visual_cleanup_live_ocr.py
+      - name: Upload screenshot evidence (source / OCR / tracking / blur)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-cleanup-real-ocr-evidence
+          path: evidence/visual-cleanup-live/
+          if-no-files-found: warn
+          retention-days: 30
