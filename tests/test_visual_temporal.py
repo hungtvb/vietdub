@@ -177,3 +177,21 @@ def test_flat_strip_requires_unoccluded_donor_rows(tmp_path):
        "donor_rows":[145,173]}  # overlaps subtitle
     with pytest.raises(TemporalPlanError):
         TemporalCleanPlate(video,[r],10,320,180,24)
+
+
+def test_temporal_rejects_reference_frames_from_different_scenes(tmp_path):
+    """A correct-looking timestamp is not proof of same-scene donor frames."""
+    src=tmp_path/"hard_cut.mp4"
+    writer=cv2.VideoWriter(str(src),cv2.VideoWriter_fourcc(*"mp4v"),10,(320,180))
+    assert writer.isOpened()
+    for i in range(24):
+        frame=np.full((180,320,3),(15,45,80) if i<12 else (80,230,35),np.uint8)
+        cv2.rectangle(frame,(i*3%270,20),(i*3%270+38,55),(240,40,30),-1)
+        if 5<=i<18:
+            cv2.putText(frame,"CAPTION",(40,150),cv2.FONT_HERSHEY_SIMPLEX,
+                        1,(255,255,255),2)
+        writer.write(frame)
+    writer.release()
+    p=_plan(src)
+    with pytest.raises(TemporalPlanError,match="scene distance"):
+        TemporalCleanPlate(src,p["regions"],10,320,180,24)
