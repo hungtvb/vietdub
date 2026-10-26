@@ -322,6 +322,11 @@ class VisualCleanup:
             fps = float(cap.get(cv2.CAP_PROP_FPS))
             if w != plan["width"] or h != plan["height"] or fps <= 0:
                 raise VisualCleanupError("Plan dimensions don't match video")
+            from media.visual_temporal import TemporalCleanPlate, is_temporal_region
+            reviewed_regions = [r for r in plan["regions"] if is_temporal_region(r)]
+            clean_plate = (TemporalCleanPlate(
+                src, reviewed_regions, fps, w, h,
+                int(cap.get(cv2.CAP_PROP_FRAME_COUNT))) if reviewed_regions else None)
             dst.parent.mkdir(parents=True, exist_ok=True)
             fd, name = tempfile.mkstemp(prefix=".visual-clean-", suffix=".mp4", dir=dst.parent)
             os.close(fd)
@@ -343,25 +348,41 @@ class VisualCleanup:
                     current.append(upcoming[cursor])
                     cursor += 1
                 current = [r for r in current if r["end"] > t]
-                mask = np.zeros((h, w), dtype=np.uint8)
-                for r in current:
-                    rect, selected = pixel_mask(frame, r["box"], r["kind"],
-                                                padding=min(self.config.padding, 2))
-                    x1, y1, x2, y2 = rect
-                    if selected.size:
-                        mask[y1:y2, x1:x2] = cv2.bitwise_or(mask[y1:y2, x1:x2], selected)
-                if mask.any():
-                    if self.config.mode == "inpaint":
+                if clean_plate is not None:
+                    frame = clean_plate.apply(frame, frame_n)
+                standard = [r for r in current if not is_temporal_region(r)]
+                if standard and self.config.mode == "inpaint":
+                    mask = np.zeros((h, w), dtype=np.uint8)
+                    for r in standard:
+                        rect, selected = pixel_mask(frame, r["box"], r["kind"],
+                                                    padding=min(self.config.padding, 2))
+                        x1, y1, x2, y2 = rect
+                        if selected.size:
+                            mask[y1:y2, x1:x2] = cv2.bitwise_or(
+                                mask[y1:y2, x1:x2], selected)
+                    if mask.any():
                         frame = cv2.inpaint(frame, mask, 3, cv2.INPAINT_TELEA)
-                    else:
-                        # Blur the full frame only as a source of replacement
-                        # pixels. Composite strictly within the tight mask,
-                        # not across the entire tracked OCR rectangle.
-                        blurred = cv2.GaussianBlur(frame, (0, 0), 12)
-                        alpha = cv2.GaussianBlur(mask, (0, 0), 1).astype(np.float32) / 255
-                        frame = np.clip(blurred.astype(np.float32)*alpha[:, :, None] +
-                                        frame.astype(np.float32)*(1-alpha[:, :, None]),
-                                        0, 255).astype(np.uint8)
+                elif standard:
+                    # ROI-only blur: do not allocate multiple whole-frame float32
+                    # arrays when a tiny subtitle/logo occupies 1% of a 4K frame.
+                    for r in standard:
+                        rect, selected = pixel_mask(frame, r["box"], r["kind"],
+                                                    padding=min(self.config.padding, 2))
+                        x1, y1, x2, y2 = rect
+                        if not selected.size or not selected.any():
+                            continue
+                        border = 36  # 3 sigma of Gaussian blur radius 12
+                        bx1, by1 = max(0,x1-border), max(0,y1-border)
+                        bx2, by2 = min(w,x2+border), min(h,y2+border)
+                        surrounding = frame[by1:by2,bx1:bx2]
+                        blurred = cv2.GaussianBlur(surrounding,(0,0),12)
+                        patch = frame[y1:y2,x1:x2].astype(np.float32)
+                        blurred_patch = blurred[y1-by1:y2-by1,
+                                                x1-bx1:x2-bx1].astype(np.float32)
+                        alpha = cv2.GaussianBlur(selected,(0,0),1).astype(np.float32)/255
+                        frame[y1:y2,x1:x2] = np.clip(
+                            patch*(1-alpha[:,:,None]) +
+                            blurred_patch*alpha[:,:,None],0,255).astype(np.uint8)
                 try:
                     proc.stdin.write(frame.tobytes())
                 except BrokenPipeError as exc:
