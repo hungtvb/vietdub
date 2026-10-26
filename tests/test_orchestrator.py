@@ -23,18 +23,30 @@ class StubOrchestrator(Orchestrator):
         self.called.append(step)
         if self.fail_on == step:
             raise RuntimeError(f"boom at {step}")
+        # Checkpoint validation now requires real artifact files, not only
+        # syntactically valid JSON. These are disposable stub bytes: no codec
+        # or model is used by StubOrchestrator.
+        video = self.job.job_dir / "stub-video.mp4"
+        audio = self.job.job_dir / "stub-audio.wav"
+        video.write_bytes(b"stub-video")
+        audio.write_bytes(b"stub-audio")
         shapes = {
-            "fetch": {"video_path": "/tmp/x.mp4"},
-            "extract": {"wav_path": "/tmp/x.wav"},
+            "fetch": {"video_path": str(video)},
+            "extract": {"wav_path": str(audio)},
             "asr": {"segments": []},
             "gender": {"speakers": []},
             "analyze": {"speakers": []},
             "translate": {"segments": []},
             "tts": {"segments": []},
-            "mix": {"mixed_wav": "/tmp/x.wav"},
-            "render": {"video_out": "/tmp/x.mp4"},
+            "mix": {"mixed_wav": str(audio)},
+            "render": {"video_out": str(video)},
         }
         cp.save_step(self.job.job_dir, step, shapes[step])
+        if step == "tts":
+            cp.save_step(self.job.job_dir, "tts_meta", {
+                "dub_track": str(audio),
+                "tts_config": self._tts_config(),
+            })
 
 
 def _job(tmp_path, monkeypatch, **proj_kw):
