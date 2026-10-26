@@ -223,36 +223,38 @@ class BatchQueueWindow(QDialog):
                     entry.message = entry.blocked_reason
                 else:
                     try:
-                        record = self.job_store.load(item.job_id)
+                        record = None if inspection.legacy else self.job_store.load(item.job_id)
                     except (JobRecordError, OSError, ValueError) as exc:
                         entry.state = "failed"
                         entry.blocked_reason = f"Không thể đọc trạng thái job: {exc}"
                         entry.message = entry.blocked_reason
                     else:
-                        entry.progress = int(record.progress)
+                        entry.progress = int(record.progress) if record else 0
+                        saved_status = record.status if record else inspection.display_status
                         entry.job = Job(
                             job_id=item.job_id, project=inspection.project,
-                            status=record.status,
-                            resume_from=inspection.resume_from)
-                        if record.status == DONE:
+                            status=REVIEW if inspection.can_open_review else saved_status,
+                            resume_from=(inspection.review_resume_from if inspection.can_open_review
+                                         else inspection.resume_from))
+                        if saved_status == DONE:
                             entry.state = "done"
                             entry.progress = 100
                             entry.message = "Job đã hoàn tất; hàng đợi sẽ đối chiếu trạng thái."
-                        elif record.status == REVIEW:
+                        elif inspection.pending_review:
                             entry.state = "review" if self._review_checkpoint_valid(
                                 inspection, record) else "interrupted"
                             entry.message = ("Đang chờ duyệt." if entry.state == "review"
                                              else "Checkpoint duyệt không còn hợp lệ; cần dựng lại.")
-                        elif record.status == PAUSED:
+                        elif saved_status == PAUSED:
                             entry.state = "paused"
                             entry.message = "Job đã tạm dừng; cần xác nhận tiếp tục."
-                        elif record.status == FAILED:
+                        elif saved_status == FAILED:
                             entry.state = "failed"
                             entry.message = record.last_error or "Job thất bại; cần xác nhận chạy lại."
-                        elif record.status == CANCELLED:
+                        elif saved_status == CANCELLED:
                             entry.state = "cancelled"
                             entry.message = "Job đã hủy; cần xác nhận tiếp tục."
-                        elif record.status == RUNNING:
+                        elif saved_status in {RUNNING, "interrupted"}:
                             entry.state = "interrupted"
                             entry.message = "Ứng dụng đã đóng khi job đang chạy."
                         else:
@@ -311,14 +313,8 @@ class BatchQueueWindow(QDialog):
 
     @staticmethod
     def _review_checkpoint_valid(inspection: JobInspection,
-                                 record: JobRecord) -> bool:
-        if inspection.source_changed or inspection.blocked_reason:
-            return False
-        if not inspection.project or not inspection.project.effective_review_stops():
-            return False
-        expected = {"asr": "gender", "translate": "tts"}.get(record.last_stage)
-        return bool(expected and record.resume_from == expected
-                    and inspection.resume_from == expected)
+                                 record: JobRecord | None = None) -> bool:
+        return inspection.can_open_review
 
     def add_files(self) -> None:
         if self._started or self._restored_unfinished:
@@ -788,23 +784,24 @@ class BatchQueueWindow(QDialog):
             entry.blocked_reason = (inspection.blocked_reason
                                     if not inspection.source_changed else None)
             try:
-                review_record = self.job_store.load(entry.job_id)
+                review_record = None if inspection.legacy else self.job_store.load(entry.job_id)
             except (JobRecordError, OSError, ValueError) as exc:
                 entry.blocked_reason = f"Không thể đọc trạng thái job: {exc}"
                 self.status.setText(entry.blocked_reason)
                 self._update_controls()
                 return
-            entry.job.status = review_record.status
+            entry.job.status = review_record.status if review_record else "idle"
         if entry.blocked_reason or (inspection and inspection.blocked_reason
                                     and not inspection.source_changed):
             message = entry.blocked_reason or inspection.blocked_reason
             self.status.setText(message or "Không thể tiếp tục job này.")
             return
-        show_review = (entry.job.status == REVIEW
-                       and (inspection is None
-                            or (review_record is not None
-                                and self._review_checkpoint_valid(
-                                    inspection, review_record))))
+        show_review = (inspection.can_open_review if inspection is not None
+                       else entry.job.status == REVIEW)
+        if show_review:
+            entry.job.status = REVIEW
+            if inspection:
+                entry.job.resume_from = inspection.review_resume_from
         if inspection and inspection.rebuild_steps and not show_review:
             first = inspection.resume_from or inspection.rebuild_steps[0]
             labels = ", ".join(STEP_LABEL.get(step, step)
@@ -829,6 +826,7 @@ class BatchQueueWindow(QDialog):
             # invalid stage; Orchestrator will stop at review again.
             entry.job.resume_from = (inspection.resume_from if inspection
                                      else entry.job.resume_from)
+            entry.job.status = "idle"
         if not self._persist_queue(active_entry_id=entry.entry_id):
             return
         self._blocked = False

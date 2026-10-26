@@ -12,7 +12,7 @@ from typing import Any
 
 from core.job import JOBS_ROOT, Job
 from core.json_io import atomic_write_json, quarantine_file
-from core.checkpoint import STEPS
+from core.checkpoint import STEPS, has_step, load_step
 
 SCHEMA_VERSION = 1
 STATUSES = {"idle", "running", "paused", "review", "done", "failed", "cancelled"}
@@ -74,7 +74,7 @@ class JobStore:
                   else prior.source_identity)
         record = JobRecord(SCHEMA_VERSION, job.job_id,
                            prior.created_at if prior else now, now,
-                           job.status, job.resume_from, last_stage, float(progress),
+                           job.status, job.resume_from, last_stage, progress,
                            source, last_error)
         _validate(asdict(record), job_id=job.job_id)
         atomic_write_json(path, asdict(record))
@@ -90,7 +90,7 @@ class JobStore:
             _validate(payload, job_id=job_id)
             return JobRecord(**payload)
         except (UnicodeError, json.JSONDecodeError, TypeError,
-                KeyError, JobRecordError, ValueError) as exc:
+                KeyError, JobRecordError, ValueError, OverflowError) as exc:
             reason = str(exc)
             corrupt = path.with_name(path.name + ".corrupt")
             try:
@@ -119,6 +119,11 @@ class JobStore:
             if not project.video_in:
                 return None
             path = Path(project.video_in).expanduser()
+            # Explicit resume may be the first save of a legacy job whose
+            # original was moved. Use the same validated input as execution.
+            job_dir = self.root / job.job_id
+            if not path.exists() and has_step(job_dir, "fetch"):
+                path = Path(load_step(job_dir, "fetch")["video_path"])
         path = path.expanduser().resolve()
         stat = path.stat()
         return {"kind": "file", "path": os.path.normcase(str(path)),
@@ -137,7 +142,7 @@ def _validate(value: Any, *, job_id: str) -> None:
               "resume_from", "last_stage", "progress", "source_identity", "last_error"}
     if set(value) != fields:
         raise JobRecordError("record fields do not match schema version 1")
-    if value["schema_version"] != SCHEMA_VERSION:
+    if type(value["schema_version"]) is not int or value["schema_version"] != SCHEMA_VERSION:
         raise JobRecordError("unsupported schema version")
     if value["job_id"] != job_id or not JOB_ID_RE.fullmatch(job_id):
         raise JobRecordError("invalid job_id")
@@ -154,19 +159,22 @@ def _validate(value: Any, *, job_id: str) -> None:
         if value[key] is not None and (not isinstance(value[key], str) or value[key] not in STEPS):
             raise JobRecordError(f"invalid {key}")
     progress = value["progress"]
-    if isinstance(progress, bool) or not isinstance(progress, (int, float)) or not math.isfinite(progress) or not 0 <= progress <= 100:
+    # Check the range before float conversion: math.isfinite(huge_int) raises.
+    if (isinstance(progress, bool) or not isinstance(progress, (int, float))
+            or not 0 <= progress <= 100 or not math.isfinite(progress)):
         raise JobRecordError("progress must be finite and between 0 and 100")
     source = value["source_identity"]
     if source is not None:
-        if not isinstance(source, dict) or source.get("kind") not in {"file", "url"}:
+        if (not isinstance(source, dict) or not isinstance(source.get("kind"), str)
+                or source["kind"] not in {"file", "url"}):
             raise JobRecordError("invalid source_identity")
         if source["kind"] == "url":
             if set(source) != {"kind", "url"} or not isinstance(source["url"], str):
                 raise JobRecordError("invalid URL source identity")
         elif (set(source) != {"kind", "path", "size_bytes", "mtime_ns"}
               or not isinstance(source["path"], str)
-              or (source["size_bytes"] is not None and (isinstance(source["size_bytes"], bool) or not isinstance(source["size_bytes"], int)))
-              or (source["mtime_ns"] is not None and (isinstance(source["mtime_ns"], bool) or not isinstance(source["mtime_ns"], int)))):
+              or type(source["size_bytes"]) is not int
+              or type(source["mtime_ns"]) is not int):
             raise JobRecordError("invalid file source identity")
     if value["last_error"] is not None and not isinstance(value["last_error"], str):
         raise JobRecordError("invalid last_error")

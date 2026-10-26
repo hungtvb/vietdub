@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QBoxLayout, QDialog, QFrame, QHeaderView,
                                QWidget)
 
 from core.job import REVIEW, Job
-from core.job_recovery import JobInspection, discover_jobs
+from core.job_recovery import JobInspection, discover_jobs, inspect_job
 from core.job_store import JobStore
 from core.queue_store import QueueStore, QueueStoreError
 from core.orchestrator import STEP_LABEL
@@ -34,7 +34,6 @@ _STATUS_LABELS = {
     "cancelled": "Đã hủy",
     "damaged": "Không đọc được",
 }
-_REVIEW_RESUME = {"asr": "gender", "translate": "tts"}
 
 
 class JobHistoryDialog(QDialog):
@@ -241,13 +240,7 @@ class JobHistoryDialog(QDialog):
 
     @staticmethod
     def _valid_review(inspection: JobInspection) -> bool:
-        if (inspection.display_status != "review" or inspection.damaged
-                or inspection.blocked_reason or inspection.source_changed
-                or inspection.project is None
-                or not inspection.project.effective_review_stops()):
-            return False
-        expected = _REVIEW_RESUME.get(inspection.last_stage or "")
-        return bool(expected and inspection.resume_from == expected)
+        return inspection.can_open_review
 
     @classmethod
     def _can_continue(cls, inspection: JobInspection) -> bool:
@@ -272,6 +265,8 @@ class JobHistoryDialog(QDialog):
             details.append(f"Không thể tiếp tục: {inspection.blocked_reason}")
         elif inspection.source_changed:
             details.append("Nguồn đã thay đổi; cần xác nhận chạy lại từ bước lấy video.")
+        elif inspection.can_open_review:
+            details.append("Mở lại bước duyệt; nội dung đã lưu vẫn chờ bạn xác nhận.")
         elif inspection.rebuild_steps and inspection.resume_from:
             details.append(
                 f"Tiếp tục từ {STEP_LABEL.get(inspection.resume_from, inspection.resume_from)}; "
@@ -289,6 +284,8 @@ class JobHistoryDialog(QDialog):
         self.detail.setText("\n".join(details))
 
         self.btn_continue.setEnabled(self._can_continue(inspection))
+        self.btn_continue.setText("Mở lại bước duyệt" if inspection.can_open_review
+                                  else "Tiếp tục / chạy lại")
         output_exists = bool(inspection.output_path and
                              inspection.output_path.is_file())
         log_exists = bool(inspection.run_log_path and
@@ -297,7 +294,13 @@ class JobHistoryDialog(QDialog):
 
     def _continue_selected(self) -> None:
         inspection = self._selected_inspection()
-        if inspection is None or not self._can_continue(inspection):
+        if inspection is None:
+            return
+        inspection = inspect_job(self.job_store, inspection.job_id,
+                                 sub_mode=self.settings.get("sub_mode", "burn"))
+        if not self._can_continue(inspection):
+            error_box(self, "Không thể tiếp tục", inspection.blocked_reason or
+                      "Trạng thái job đã thay đổi. Hãy mở lại lịch sử.")
             return
 
         show_review = self._valid_review(inspection)
@@ -327,7 +330,7 @@ class JobHistoryDialog(QDialog):
             if not confirm_box(self, "Xác nhận tiếp tục job", explanation):
                 return
         else:
-            first = inspection.resume_from
+            first = inspection.review_resume_from
 
         job = Job(
             job_id=inspection.job_id,

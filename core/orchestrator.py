@@ -25,6 +25,8 @@ from typing import Dict, List, Optional
 from core import checkpoint as cp
 from core.job import CANCELLED, DONE, FAILED, PAUSED, REVIEW, RUNNING, Job
 from core.job_store import JobStore
+from core.job_recovery import inspect_job
+from core.review_state import REVIEW_NEXT, save_pending_review
 from core.logger import activate_job_logger, close_job_logger, setup_job_logger
 from core.settings import Settings
 from project import io as pio
@@ -69,6 +71,13 @@ class Orchestrator:
         job.status = RUNNING
         step = resume_from or job.resume_from or "fetch"
         try:
+            inspection = inspect_job(self.job_store, job.job_id,
+                                     sub_mode=self.settings.get("sub_mode", proj.sub_mode))
+            if inspection.can_open_review:
+                job.status = REVIEW
+                job.resume_from = inspection.review_resume_from
+                self._save_state(last_stage=inspection.pending_review, last_error="")
+                return REVIEW
             self._save_state(last_error="")
             if not resume_from and not job.resume_from and all(
                     self._has_step(s) for s in STEPS):
@@ -123,10 +132,6 @@ class Orchestrator:
                 cp.invalidate_from(job.job_dir, proj, step)
                 self._run_step(step)
                 if (proj.effective_review_stops() and step in REVIEW_AFTER):
-                    job.status = REVIEW
-                    job.resume_from = STEPS[STEPS.index(step) + 1]
-                    pio.save_project(job.job_dir, proj)
-                    self._save_state(last_error="")
                     self.logger.info("dừng ở điểm duyệt sau %s, chờ duyệt tay",
                                      STEP_LABEL[step])
                     return REVIEW
@@ -190,15 +195,20 @@ class Orchestrator:
         t0 = time.time()
         self.logger.info("--- %s ---", STEP_LABEL[step])
         try:
+            review_after = job.project.effective_review_stops() and step in REVIEW_AFTER
+            if review_after:
+                save_pending_review(job.job_dir, step)
             handler = getattr(self, f"_step_{step}")
             handler()
             cp.mark_done(job.job_dir, job.project, step)
+            if review_after:
+                job.status = REVIEW
+                job.resume_from = REVIEW_NEXT[step]
             self._save_state(
                 last_stage=step,
                 progress=(STEPS.index(step) + 1) * 100.0 / len(STEPS),
                 last_error="",
-                refresh_source_identity=(step == "fetch" and
-                                         job.project.video_source == "url"))
+                refresh_source_identity=(step == "fetch"))
         finally:
             dt = time.time() - t0
             self.timings[step] = dt

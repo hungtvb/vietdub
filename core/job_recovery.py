@@ -8,6 +8,7 @@ from pathlib import Path
 
 from core import checkpoint
 from core.job_store import JOB_ID_RE, JobRecord, JobRecordError, JobStore
+from core.review_state import REVIEW_NEXT, pending_review
 from project.io import load_project
 from project.schema import Project
 
@@ -28,6 +29,18 @@ class JobInspection:
     blocked_reason: str | None = None
     legacy: bool = False
     damaged: bool = False
+    pending_review: str | None = None
+    review_inputs_valid: bool = False
+
+    @property
+    def can_open_review(self) -> bool:
+        return bool(self.pending_review and self.review_inputs_valid
+                    and not self.damaged and not self.blocked_reason
+                    and not self.source_changed)
+
+    @property
+    def review_resume_from(self) -> str | None:
+        return REVIEW_NEXT.get(self.pending_review)
 
 
 def discover_jobs(store: JobStore, *, sub_mode: str | None = None) -> list[JobInspection]:
@@ -38,14 +51,26 @@ def discover_jobs(store: JobStore, *, sub_mode: str | None = None) -> list[JobIn
         return []
     result = []
     for child in children:
-        if child.is_symlink() or not child.is_dir():
-            continue
-        result.append(inspect_job(store, child.name, sub_mode=sub_mode))
+        try:
+            if child.is_symlink() or not child.is_dir():
+                continue
+            result.append(inspect_job(store, child.name, sub_mode=sub_mode))
+        except Exception as exc:  # one damaged/unreadable entry cannot hide its siblings
+            result.append(JobInspection(child.name, damaged=True,
+                                        blocked_reason=f"Cannot inspect job: {exc}"))
     return sorted(result, key=lambda item: item.updated_at or "", reverse=True)
 
 
 def inspect_job(store: JobStore, job_id: str, *, sub_mode: str | None = None) -> JobInspection:
     """Validate a saved job without resuming it or changing its project/record."""
+    try:
+        return _inspect_job(store, job_id, sub_mode=sub_mode)
+    except Exception as exc:  # also isolate direct queue inspection
+        return JobInspection(job_id, damaged=True,
+                             blocked_reason=f"Cannot inspect job: {exc}")
+
+
+def _inspect_job(store: JobStore, job_id: str, *, sub_mode: str | None = None) -> JobInspection:
     result = JobInspection(job_id=job_id, damaged=True, blocked_reason="Invalid job directory")
     if not JOB_ID_RE.fullmatch(job_id):
         return result
@@ -123,6 +148,15 @@ def inspect_job(store: JobStore, job_id: str, *, sub_mode: str | None = None) ->
         else:
             result.display_status = "idle"
 
+    result.pending_review = pending_review(job_dir, project, record, valid)
+    result.review_inputs_valid = result.pending_review in valid
+    if result.pending_review:
+        result.display_status = ("review" if result.review_inputs_valid
+                                 else "interrupted")
+    elif result.display_status == "review":
+        # Approval was saved before the next lifecycle transition.
+        result.display_status = "interrupted"
+
     if record and record.source_identity and record.source_identity["kind"] == "file":
         source = record.source_identity
         path = Path(source["path"])
@@ -130,8 +164,10 @@ def inspect_job(store: JobStore, job_id: str, *, sub_mode: str | None = None) ->
             try:
                 stat = path.stat()
                 current = os.path.normcase(str(path.resolve()))
-                project_path_value = (os.path.normcase(str(Path(project.video_in).expanduser().resolve()))
-                                      if project.video_in else current)
+                effective_path = Path(project.video_in).expanduser() if project.video_in else path
+                if not effective_path.exists() and "fetch" in valid:
+                    effective_path = Path(checkpoint.load_step(job_dir, "fetch")["video_path"])
+                project_path_value = os.path.normcase(str(effective_path.resolve()))
                 if (current != source["path"] or project_path_value != current
                         or stat.st_size != source["size_bytes"]
                         or stat.st_mtime_ns != source["mtime_ns"]):
