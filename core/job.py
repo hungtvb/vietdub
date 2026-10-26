@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from project.schema import Project
+from core.paths import user_data_dir
 
 # Job states
 IDLE = "idle"
@@ -21,7 +22,7 @@ DONE = "done"
 FAILED = "failed"
 CANCELLED = "cancelled"  # user cancelled mid-run (Wave 2 UI)
 
-JOBS_ROOT = Path(__file__).resolve().parents[1] / "jobs"
+JOBS_ROOT = user_data_dir() / "jobs"
 
 
 @dataclass

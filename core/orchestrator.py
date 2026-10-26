@@ -68,12 +68,17 @@ class Orchestrator:
         step = resume_from or job.resume_from or "fetch"
         try:
             if not resume_from and not job.resume_from and all(
-                    cp.has_step(job.job_dir, s) for s in STEPS):
+                    self._has_step(s) for s in STEPS):
                 self.logger.info("job %s: mọi bước đã có checkpoint -> DONE",
                                  job.job_id)
                 job.status = DONE
                 return DONE
-            start_from = resume_from or job.resume_from or self._first_missing_step()
+            requested = resume_from or job.resume_from
+            first_missing = self._first_missing_step()
+            start_from = requested or first_missing
+            if (requested in STEPS
+                    and STEPS.index(first_missing) < STEPS.index(requested)):
+                start_from = first_missing
             if proj.overnight and proj.review_stops:
                 self.logger.info("chế độ qua đêm: tự TẮT điểm dừng duyệt "
                                  "(không treo chờ người giữa đêm)")
@@ -104,7 +109,7 @@ class Orchestrator:
                                      STEP_LABEL[step])
                     job.emit_progress("paused", 100.0, "Đã tạm dừng")
                     return PAUSED
-                if cp.has_step(job.job_dir, step) and step != start_from:
+                if self._has_step(step) and step != start_from:
                     self.logger.info("%s: đã có checkpoint, bỏ qua",
                                      STEP_LABEL[step])
                     continue
@@ -139,9 +144,14 @@ class Orchestrator:
                 job.emit_progress("done", 100.0, job.status)
                 close_job_logger(job.job_id)
 
+    def _has_step(self, step: str) -> bool:
+        sub_mode = (self.settings.get("sub_mode", self.job.project.sub_mode)
+                    or self.job.project.sub_mode or "burn")
+        return cp.has_step(self.job.job_dir, step, sub_mode=sub_mode)
+
     def _first_missing_step(self) -> str:
         for step in STEPS:
-            if not cp.has_step(self.job.job_dir, step):
+            if not self._has_step(step):
                 return step
         return "render"
 
@@ -360,7 +370,7 @@ class Orchestrator:
         providers = self._translators()
         # step [4] already analyzed (checkpoint exists) -> do NOT analyze
         # a second time inside translate_with_fallback
-        analyze_done = cp.has_step(job.job_dir, "analyze")
+        analyze_done = self._has_step("analyze")
         video_metadata = pio.load_video_metadata(job.job_dir) or {}
         segments, used = translate_with_fallback(
             providers, segments, speakers, skip_analyze=analyze_done,
@@ -482,13 +492,18 @@ class Orchestrator:
         srt_path = msubs.write_srt(segments, job.stages_dir / "subs.vi.srt")
         out_name = Path(proj.video_in).stem + "_vidub.mp4"
         out_mp4 = Path(proj.video_out or str(job.job_dir / out_name))
-        mrender.render(fetch_data.get("video_path") or proj.video_in,
-                       mix_data["mixed_wav"], srt_path, out_mp4,
-                       sub_mode=self.settings.get("sub_mode", proj.sub_mode) or "burn",
-                       crf=int(self.settings.get("crf", 20)),
-                       font=(self.settings.get("sub_font", "") or "").strip(),
-                       font_size=int(self.settings.get("sub_font_size", 0) or 0),
-                       font_color=(self.settings.get("sub_font_color", "") or "").strip())
-        proj.video_out = str(out_mp4)
-        cp.save_step(job.job_dir, "render",
-                     {"video_out": str(out_mp4), "srt": str(srt_path)})
+        sub_mode = (self.settings.get("sub_mode", proj.sub_mode)
+                    or proj.sub_mode or "burn")
+        rendered = mrender.render(
+            fetch_data.get("video_path") or proj.video_in,
+            mix_data["mixed_wav"], srt_path, out_mp4,
+            sub_mode=sub_mode,
+            crf=int(self.settings.get("crf", 20)),
+            font=(self.settings.get("sub_font", "") or "").strip(),
+            font_size=int(self.settings.get("sub_font_size", 0) or 0),
+            font_color=(self.settings.get("sub_font_color", "") or "").strip())
+        proj.video_out = str(rendered)
+        render_data = {"video_out": str(rendered), "srt": str(srt_path)}
+        if sub_mode == "srt":
+            render_data["srt_out"] = str(rendered.with_suffix(".srt"))
+        cp.save_step(job.job_dir, "render", render_data)

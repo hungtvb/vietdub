@@ -1,78 +1,78 @@
 """Editor controls using the same light surfaces as the rest of the app."""
 
-from ui.theme import APP_BACKGROUND
+from ui.theme import control_states, render_stylesheet
 
-EDITOR_STYLESHEET = """
+EDITOR_STYLESHEET = render_stylesheet("""
 QWidget#editorRoot {
-    background: @app-background@;
-    color: #1d1d1f;
+    background: @canvas@;
+    color: @text@;
 }
 QWidget#editorRoot QWidget {
-    color: #1d1d1f;
-    font-size: 13px;
+    color: @text@;
+    font-size: @type-body@;
 }
 QWidget#editorRoot QLabel {
     background: transparent;
 }
 QWidget#editorRoot QLabel#editorEyebrow {
-    color: #6e6e73;
-    font-size: 10px;
+    color: @secondary_text@;
+    font-size: @type-caption@;
     font-weight: 700;
 }
 QWidget#editorRoot QLabel#editorTitle {
-    color: #1d1d1f;
-    font-size: 23px;
+    color: @text@;
+    font-size: @type-title@;
     font-weight: 700;
 }
 QWidget#editorRoot QLabel#editorProject {
-    color: #6e6e73;
-    font-size: 12px;
+    color: @secondary_text@;
+    font-size: @type-caption@;
 }
 QWidget#editorRoot QLabel#editorSection {
-    color: #223047;
-    font-size: 13px;
+    color: @text@;
+    font-size: @type-body@;
     font-weight: 700;
 }
 QWidget#editorRoot QLabel#editorHint,
 QWidget#editorRoot QLabel[role="secondary"] {
-    color: #6e6e73;
-    font-size: 11px;
+    color: @secondary_text@;
+    font-size: @type-caption@;
 }
 QWidget#editorRoot QLabel#editorTime {
-    color: #1d1d1f;
-    font-size: 12px;
+    color: @text@;
+    font-size: @type-caption@;
     font-weight: 600;
 }
 QWidget#editorRoot QLabel#editorBadge {
-    color: #1258a6;
-    background: #e8f2ff;
-    border: 1px solid #c8e0ff;
+    color: @primary@;
+    background: @selection@;
+    border: 1px solid @border@;
     border-radius: 10px;
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: @type-caption@;
     font-weight: 600;
 }
 QWidget#editorRoot QLabel#editorMark {
-    color: #1258a6;
-    background: #dcecff;
+    color: @primary@;
+    background: @selection@;
     border-radius: 10px;
-    font-size: 13px;
+    font-size: @type-body@;
     font-weight: 800;
 }
 QWidget#editorRoot QFrame#editorCard,
 QWidget#editorRoot QWidget#editorCard {
-    background: #ffffff;
-    border: 1px solid #e1e6ee;
-    border-radius: 15px;
+    background: @canvas@;
+    border: 1px solid @border@;
+    border-radius: @layout-panel_radius@;
 }
 QWidget#editorRoot QFrame#editorToolbar {
-    background: #ffffff;
-    border: 1px solid #e1e6ee;
-    border-radius: 12px;
+    background: @canvas@;
+    border: 1px solid @border@;
+    border-radius: @layout-panel_radius@;
 }
 QWidget#editorRoot QGraphicsView {
-    background: #10141c;
-    border: 1px solid #e1e6ee;
+    background: @media@;
+    border: 1px solid @border@;
     border-radius: 10px;
 }
 QWidget#editorRoot QScrollArea {
@@ -83,74 +83,74 @@ QWidget#editorRoot QScrollArea > QWidget > QWidget {
     background: transparent;
 }
 QWidget#editorRoot QSplitter::handle {
-    background: @app-background@;
+    background: @canvas@;
     width: 10px;
     height: 10px;
 }
 QWidget#editorRoot QPushButton {
-    color: #1d1d1f;
-    background: #ffffff;
-    border: 1px solid #d2d2d7;
-    border-radius: 9px;
+    color: @text@;
+    background: @control@;
+    border: 1px solid @border@;
+    border-radius: @layout-control_radius@;
     padding: 7px 12px;
     min-height: 22px;
     font-weight: 600;
 }
 QWidget#editorRoot QPushButton:hover {
-    background: #f9f9fb;
-    border-color: #b8b8be;
+    background: @control_hover@;
+    border-color: @border_hover@;
 }
 QWidget#editorRoot QPushButton:pressed {
-    background: #e9e9ee;
+    background: @control_pressed@;
 }
 QWidget#editorRoot QPushButton:disabled {
-    color: #8e8e93;
-    background: #e5e5ea;
-    border-color: #e5e5ea;
+    color: @disabled_text@;
+    background: @disabled_surface@;
+    border-color: @disabled_surface@;
 }
 QWidget#editorRoot QPushButton[role="primary"] {
-    color: #ffffff;
-    background: #007aff;
-    border-color: #007aff;
+    color: @control@;
+    background: @primary@;
+    border-color: @primary@;
     font-weight: 600;
 }
 QWidget#editorRoot QPushButton[role="primary"]:hover {
-    background: #147ce5;
-    border-color: #147ce5;
+    background: @primary_hover@;
+    border-color: @primary_hover@;
 }
 QWidget#editorRoot QPushButton[role="primary"]:disabled {
-    color: #8e8e93;
-    background: #d1d1d6;
-    border-color: #d1d1d6;
+    color: @disabled_text@;
+    background: @disabled_surface@;
+    border-color: @disabled_surface@;
 }
 QWidget#editorRoot QPushButton[role="quiet"] {
-    background: #ffffff;
-    border-color: #d2d2d7;
+    background: @control@;
+    border-color: @border@;
 }
 QWidget#editorRoot QPushButton[role="danger"] {
-    color: #c73229;
-    background: #fff2f1;
-    border-color: #ffd3d0;
+    color: @danger@;
+    background: @control@;
+    border-color: @danger@;
 }
 QWidget#editorRoot QLineEdit,
 QWidget#editorRoot QPlainTextEdit,
 QWidget#editorRoot QDoubleSpinBox,
 QWidget#editorRoot QComboBox,
 QWidget#editorRoot QListWidget {
-    color: #1d1d1f;
-    background: #ffffff;
-    border: 1px solid #d2d2d7;
-    border-radius: 8px;
+    color: @text@;
+    background: @control@;
+    border: 1px solid @border@;
+    border-radius: @layout-control_radius@;
     padding: 7px 9px;
-    selection-background-color: #e8f2ff;
-    selection-color: #1d1d1f;
+    selection-background-color: @selection@;
+    selection-color: @text@;
 }
 QWidget#editorRoot QLineEdit:focus,
 QWidget#editorRoot QPlainTextEdit:focus,
 QWidget#editorRoot QDoubleSpinBox:focus,
 QWidget#editorRoot QComboBox:focus,
 QWidget#editorRoot QListWidget:focus {
-    border-color: #007aff;
+    border-color: @primary@;
 }
 QWidget#editorRoot QListWidget::item {
     border-radius: 6px;
@@ -158,15 +158,15 @@ QWidget#editorRoot QListWidget::item {
     padding: 7px 5px;
 }
 QWidget#editorRoot QListWidget::item:selected {
-    background: #e8f2ff;
-    color: #1d1d1f;
+    background: @selection@;
+    color: @text@;
 }
 QWidget#editorRoot QTabWidget::pane {
     border: none;
     background: transparent;
 }
 QWidget#editorRoot QTabBar::tab {
-    color: #6e6e73;
+    color: @secondary_text@;
     background: transparent;
     border: none;
     border-bottom: 2px solid transparent;
@@ -174,24 +174,24 @@ QWidget#editorRoot QTabBar::tab {
     min-width: 68px;
 }
 QWidget#editorRoot QTabBar::tab:selected {
-    color: #007aff;
-    border-bottom-color: #007aff;
+    color: @primary@;
+    border-bottom-color: @primary@;
 }
 QWidget#editorRoot QSlider::groove:horizontal {
     height: 4px;
-    background: #d1d1d6;
+    background: @disabled_surface@;
     border-radius: 2px;
 }
 QWidget#editorRoot QSlider::sub-page:horizontal {
-    background: #007aff;
+    background: @primary@;
     border-radius: 2px;
 }
 QWidget#editorRoot QSlider::handle:horizontal {
-    background: #ffffff;
-    border: 2px solid #007aff;
+    background: @control@;
+    border: 2px solid @primary@;
     width: 13px;
     margin: -6px 0;
-    border-radius: 8px;
+    border-radius: @layout-control_radius@;
 }
 QWidget#editorRoot QScrollBar:vertical,
 QWidget#editorRoot QScrollBar:horizontal {
@@ -201,7 +201,7 @@ QWidget#editorRoot QScrollBar:horizontal {
 }
 QWidget#editorRoot QScrollBar::handle:vertical,
 QWidget#editorRoot QScrollBar::handle:horizontal {
-    background: #c7c7cc;
+    background: @border_hover@;
     border-radius: 5px;
     min-height: 30px;
     min-width: 30px;
@@ -214,8 +214,44 @@ QWidget#editorRoot QScrollBar::sub-page {
     border: none;
 }
 QWidget#editorRoot QToolTip {
-    background: #ffffff;
-    color: #1d1d1f;
-    border: 1px solid #d2d2d7;
+    background: @control@;
+    color: @text@;
+    border: 1px solid @border@;
 }
-""".replace("@app-background@", APP_BACKGROUND)
+
+QWidget#editorRoot QPushButton[role="quiet"]:hover {
+    background: @control_hover@;
+    border-color: @border_hover@;
+}
+QWidget#editorRoot QPushButton[role="quiet"]:pressed {
+    background: @control_pressed@;
+}
+QWidget#editorRoot QPushButton[role="quiet"]:disabled {
+    color: @disabled_text@;
+    background: @disabled_surface@;
+    border-color: @border@;
+}
+
+QWidget#editorRoot QPushButton[role="danger"]:hover {
+    color: @control@;
+    background: @danger_hover@;
+    border-color: @danger_hover@;
+}
+QWidget#editorRoot QTabBar::tab:hover {
+    color: @text@;
+    background: @control_hover@;
+}
+QWidget#editorRoot QSlider::handle:horizontal:hover {
+    background: @selection@;
+}
+QWidget#editorRoot QSlider::handle:horizontal:pressed {
+    background: @primary_pressed@;
+}
+QWidget#editorRoot QSlider::handle:horizontal:disabled {
+    background: @disabled_surface@;
+    border-color: @disabled_text@;
+}
+QWidget#editorRoot QSlider::sub-page:horizontal:disabled {
+    background: @disabled_text@;
+}
+""" + control_states("QWidget#editorRoot"))

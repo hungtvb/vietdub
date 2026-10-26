@@ -13,10 +13,13 @@ Video stream is copied untouched when not burning (fast, lossless).
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 from media import _bin
+from media.output import next_available_output_path, publish_no_replace
 
 log = logging.getLogger("vietdub.render")
 
@@ -45,6 +48,87 @@ def _ass_color(hex_rrggbb: str) -> str:
     return f"&H00{bb}{gg}{rr}"
 
 
+def _temporary_output(parent: Path, suffix: str) -> Path:
+    """Reserve a unique output name in the final destination directory."""
+    fd, name = tempfile.mkstemp(prefix=".vietdub-", suffix=suffix, dir=parent)
+    os.close(fd)
+    return Path(name)
+
+
+def _cleanup_temporary(*paths: Path | None) -> None:
+    for path in paths:
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                log.warning("Could not remove temporary output %s: %s", path, exc)
+
+
+def _remove_our_published_link(source: Path, target: Path) -> None:
+    """Remove a destination only while it still aliases our temp artifact."""
+    try:
+        same_file = os.path.samefile(source, target)
+    except FileNotFoundError:
+        return
+    if same_file:
+        target.unlink(missing_ok=True)
+
+
+def _publish_rendered_mp4(temp_mp4: Path, requested: Path, selected: Path,
+                          temp_srt: Path | None = None) -> Path:
+    """Publish an export, retrying when either member of an SRT pair collides.
+
+    Keep both temporary files until the pair is complete so a sidecar race can
+    roll back the MP4 link and try the next common basename.
+    """
+    paired = (".srt",) if temp_srt is not None else ()
+    while True:
+        # A paired name may have appeared while ffmpeg was rendering. Pick a
+        # fresh pair before publishing the first completed member.
+        if os.path.lexists(selected) or any(
+                os.path.lexists(selected.with_suffix(ext)) for ext in paired):
+            selected = next_available_output_path(requested, paired)
+        if temp_srt is None:
+            try:
+                publish_no_replace(temp_mp4, selected)
+            except FileExistsError:
+                selected = next_available_output_path(requested, paired)
+                continue
+            return selected
+
+        try:
+            os.link(temp_mp4, selected)
+        except FileExistsError:
+            selected = next_available_output_path(requested, paired)
+            continue
+
+        sidecar = selected.with_suffix(".srt")
+        try:
+            os.link(temp_srt, sidecar)
+        except FileExistsError:
+            # Remove the MP4 only while it still refers to our temporary file;
+            # this avoids deleting a path another process replaced meanwhile.
+            try:
+                _remove_our_published_link(temp_mp4, selected)
+            except OSError as exc:
+                raise RenderError(
+                    f"Không thể hoàn tất cặp video/phụ đề; kiểm tra {selected}"
+                ) from exc
+            selected = next_available_output_path(requested, paired)
+            continue
+        except OSError as exc:
+            try:
+                _remove_our_published_link(temp_mp4, selected)
+            except OSError as cleanup_exc:
+                raise RenderError(
+                    f"Không thể xuất phụ đề; video có thể còn tại {selected}"
+                ) from cleanup_exc
+            raise RenderError(
+                f"Không thể xuất phụ đề cạnh video: {selected}"
+            ) from exc
+        return selected
+
+
 def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
            out_mp4: str | Path, sub_mode: str = "burn",
            crf: int = 20, font: str = "",
@@ -57,12 +141,10 @@ def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
             raise RenderError(f"Không tìm thấy {name}: {f}")
 
     if sub_mode == "srt":
-        sidecar = out_mp4.with_suffix(".srt")
-        sidecar.write_bytes(srt_path.read_bytes())
         cmd = [_bin.ffmpeg_cmd(), "-y", "-i", str(video_in), "-i", str(mixed_wav),
                "-map", "0:v", "-map", "1:a",
                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-               "-shortest", str(out_mp4)]
+               "-shortest"]
     elif sub_mode == "burn":
         if not srt_path.exists():
             raise RenderError(f"Không tìm thấy file phụ đề: {srt_path}")
@@ -85,13 +167,25 @@ def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
                "-c:v", "libx264", "-crf", str(crf), "-preset", "medium",
                "-pix_fmt", "yuv420p",
                "-c:a", "aac", "-b:a", "192k",
-               "-shortest", str(out_mp4)]
+               "-shortest"]
     else:
         raise RenderError(f"sub_mode không hợp lệ: {sub_mode} (chọn 'burn' hoặc 'srt')")
 
-    log.debug("render cmd: %s", " ".join(cmd[:6]) + " ...")
-    p = subprocess.run(cmd, capture_output=True, text=True)
-    if p.returncode != 0 or not out_mp4.exists():
-        raise RenderError(f"Ghép video thất bại:\n{p.stderr[-600:]}")
-    log.info("rendered -> %s (sub_mode=%s)", out_mp4, sub_mode)
-    return out_mp4
+    paired = (".srt",) if sub_mode == "srt" else ()
+    selected = next_available_output_path(out_mp4, paired)
+    temp_mp4 = _temporary_output(out_mp4.parent, ".mp4")
+    temp_srt = None
+    try:
+        if sub_mode == "srt":
+            temp_srt = _temporary_output(out_mp4.parent, ".srt")
+            temp_srt.write_bytes(srt_path.read_bytes())
+        cmd.append(str(temp_mp4))
+        log.debug("render cmd: %s", " ".join(cmd[:6]) + " ...")
+        p = subprocess.run(cmd, capture_output=True, text=True)
+        if p.returncode != 0 or not temp_mp4.is_file():
+            raise RenderError(f"Ghép video thất bại:\n{p.stderr[-600:]}")
+        selected = _publish_rendered_mp4(temp_mp4, out_mp4, selected, temp_srt)
+        log.info("rendered -> %s (sub_mode=%s)", selected, sub_mode)
+        return selected
+    finally:
+        _cleanup_temporary(temp_mp4, temp_srt)

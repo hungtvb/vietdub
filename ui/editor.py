@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene,
     QGraphicsTextItem, QGraphicsView, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
-    QSlider, QSplitter, QTabWidget, QVBoxLayout, QWidget,
+    QSizePolicy, QSlider, QSplitter, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core import checkpoint as cp
@@ -31,6 +31,12 @@ from project.schema import Segment
 from ui.common import error_box, fmt_time, info_box
 from ui.editor_style import EDITOR_STYLESHEET
 from ui.poster_loader import PosterLoader
+from ui.theme import UI_COLORS
+
+
+def _valid_trim_interval(start: float, end: float) -> bool:
+    """Keep a tenth of a second, allowing for floating point subtraction."""
+    return end - start >= 0.1 - 1e-8
 
 
 class VideoCanvas(QGraphicsView):
@@ -57,7 +63,12 @@ class Timeline(QWidget):
         self.drag: tuple[str, int, float, float, float] | None = None
         self.setFixedHeight(160)
         self.setMouseTracking(True)
-        self.setToolTip("Kéo mép xanh để cắt video; kéo khối tím để chỉnh phụ đề.")
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName("Dòng thời gian video và phụ đề")
+        self.setAccessibleDescription(
+            "Trái, Phải: tua 1 giây; Shift cùng Trái, Phải: tua 0,1 giây; "
+            "Home: đầu video; End: cuối video. Dùng ô thời gian để chỉnh điểm cắt và phụ đề.")
+        self.setToolTip(self.accessibleDescription())
         self.set_zoom(24)
 
     def set_zoom(self, value: int) -> None:
@@ -76,35 +87,35 @@ class Timeline(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(event.rect(), QColor("#ffffff"))
+        p.fillRect(event.rect(), QColor(UI_COLORS["control"]))
         left = max(0, int(self._time(event.rect().left())) - 1)
         right = min(int(self.duration) + 1, int(self._time(event.rect().right())) + 2)
         tick = 1 if self.px_per_sec >= 55 else (5 if self.px_per_sec >= 18 else 10)
-        p.setPen(QColor("#6e6e73"))
+        p.setPen(QColor(UI_COLORS["secondary_text"]))
         for sec in range(left - left % tick, right + 1, tick):
             x = int(self._x(sec))
             p.drawLine(x, 19, x, 27)
             p.drawText(x + 5, 15, fmt_time(sec))
-            p.setPen(QColor("#e7eaf0"))
+            p.setPen(QColor(UI_COLORS["border"]))
             p.drawLine(x, 29, x, 154)
-            p.setPen(QColor("#6e6e73"))
+            p.setPen(QColor(UI_COLORS["secondary_text"]))
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#eef1f5"))
+        p.setBrush(QColor(UI_COLORS["disabled_surface"]))
         p.drawRoundedRect(QRectF(12, 32, self.duration * self.px_per_sec, 38), 6, 6)
-        p.setBrush(QColor("#007aff"))
+        p.setBrush(QColor(UI_COLORS["primary"]))
         p.drawRoundedRect(QRectF(self._x(self.trim_start), 32,
                                  max(1, (self.trim_end - self.trim_start)
                                      * self.px_per_sec), 38), 6, 6)
-        p.setPen(QColor("#ffffff"))
-        p.drawText(int(self._x(self.trim_start)) + 10, 55, "VIDEO")
+        p.setPen(QColor(UI_COLORS["control"]))
+        p.drawText(int(self._x(self.trim_start)) + 10, 55, "HÌNH ẢNH")
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#b9ddff"))
+        p.setBrush(QColor(UI_COLORS["selection"]))
         for sec in (self.trim_start, self.trim_end):
             p.drawRoundedRect(QRectF(self._x(sec) - 4, 32, 8, 38), 3, 3)
         p.setBrush(QColor("#e5f5f0"))
         p.drawRoundedRect(QRectF(12, 78, self.duration * self.px_per_sec, 28), 5, 5)
         p.setPen(QColor("#167253"))
-        p.drawText(21, 97, "DUB AUDIO")
+        p.drawText(21, 97, "LỒNG TIẾNG")
         p.setPen(Qt.NoPen)
         p.setBrush(QColor("#f1edf9"))
         p.drawRoundedRect(QRectF(12, 114, self.duration * self.px_per_sec, 36), 5, 5)
@@ -123,11 +134,44 @@ class Timeline(QWidget):
         p.setPen(QPen(QColor("#df6f32"), 2))
         x = int(self._x(self.position))
         p.drawLine(x, 27, x, 155)
+        if self.hasFocus():
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor(UI_COLORS["focus"]), 2))
+            p.drawRect(QRectF(self.visibleRegion().boundingRect()).adjusted(1, 1, -2, -2))
         p.end()
+
+    def focusInEvent(self, event) -> None:  # noqa: N802
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802
+        super().focusOutEvent(event)
+        self.update()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        key = event.key()
+        if event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):
+            super().keyPressEvent(event)
+            return
+        if key in (Qt.Key_Left, Qt.Key_Right):
+            step = 0.1 if event.modifiers() & Qt.ShiftModifier else 1.0
+            position = self.position + (-step if key == Qt.Key_Left else step)
+        elif key == Qt.Key_Home:
+            position = 0.0
+        elif key == Qt.Key_End:
+            position = self.duration
+        else:
+            super().keyPressEvent(event)
+            return
+        self.position = max(0.0, min(self.duration, position))
+        self.seek_requested.emit(round(self.position * 1000))
+        self.update()
+        event.accept()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() != Qt.LeftButton:
             return
+        self.setFocus(Qt.MouseFocusReason)
         x, y = event.position().x(), event.position().y()
         if 32 <= y <= 72:
             if abs(x - self._x(self.trim_start)) <= 9:
@@ -175,10 +219,10 @@ class Timeline(QWidget):
         if mode == "seek":
             self.seek_requested.emit(round(t * 1000))
         elif mode == "trim_start":
-            self.trim_start = min(t, self.trim_end - 0.1)
+            self.trim_start = max(0.0, min(t, self.trim_end - 0.1))
             self.trim_changed.emit(self.trim_start, self.trim_end)
         elif mode == "trim_end":
-            self.trim_end = max(t, self.trim_start + 0.1)
+            self.trim_end = min(self.duration, max(t, self.trim_start + 0.1))
             self.trim_changed.emit(self.trim_start, self.trim_end)
         else:
             self.setCursor(Qt.ClosedHandCursor if mode == "sub_move"
@@ -247,6 +291,9 @@ class EditorWindow(QWidget):
         self._save_timer.setInterval(450)
         self._save_timer.timeout.connect(self._save_draft)
         self._ready = False
+        self._draft_error = ""
+        self._media_errors: dict[str, str] = {}
+        self._resetting_media = False
         draft = self._load_draft()
 
         self.setWindowTitle(f"VietDub — Biên tập: {job.project.name}")
@@ -256,16 +303,20 @@ class EditorWindow(QWidget):
         self.setObjectName("editorRoot")
         self.setStyleSheet(EDITOR_STYLESHEET)
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 14, 16, 10)
-        root.setSpacing(11)
+        root.setContentsMargins(16, 16, 16, 12)
+        root.setSpacing(12)
         header_bar = QFrame()
         header_bar.setObjectName("editorToolbar")
-        header = QHBoxLayout(header_bar)
-        header.setContentsMargins(12, 7, 12, 7)
-        header.setSpacing(10)
+        header_layout = QVBoxLayout(header_bar)
+        header_layout.setContentsMargins(12, 8, 12, 8)
+        header_layout.setSpacing(4)
+        header = QHBoxLayout()
+        header.setSpacing(8)
+        header_layout.addLayout(header)
         back = QPushButton("←")
         back.setProperty("role", "quiet")
         back.setToolTip("Về màn thành phẩm")
+        back.setAccessibleName("Về màn thành phẩm")
         back.setFixedWidth(38)
         back.clicked.connect(self.close)
         header.addWidget(back)
@@ -277,7 +328,7 @@ class EditorWindow(QWidget):
         self.brand_mark = mark
         identity = QVBoxLayout()
         identity.setSpacing(0)
-        title = QLabel("VietDub Studio")
+        title = QLabel("VietDub · Biên tập")
         title.setObjectName("editorTitle")
         identity.addWidget(title)
         self.project_label = QLabel(Path(self.source).name)
@@ -287,36 +338,51 @@ class EditorWindow(QWidget):
         identity.addWidget(self.project_label)
         header.addLayout(identity)
         header.addStretch(1)
-        self.draft_badge = QLabel("●  Bản nháp tự lưu")
+        self.draft_badge = QLabel("Chưa lưu bản nháp")
         self.draft_badge.setObjectName("editorBadge")
-        self.draft_badge.setFixedWidth(145)
+        self.draft_badge.setAccessibleName("Trạng thái lưu bản nháp")
         header.addWidget(self.draft_badge)
+        self.btn_save = QPushButton("Lưu nháp")
+        self.btn_save.setToolTip("Lưu ngay hoặc thử lại khi không lưu được bản nháp")
+        self.btn_save.clicked.connect(self._save_draft)
+        header.addWidget(self.btn_save)
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+        actions.addStretch(1)
+        header_layout.addLayout(actions)
         self.btn_tools = QPushButton("Công cụ")
         self.btn_tools.setProperty("role", "quiet")
         self.btn_tools.clicked.connect(self._toggle_tools)
-        header.addWidget(self.btn_tools)
+        actions.addWidget(self.btn_tools)
         choose_output = QPushButton("Nơi lưu…")
         choose_output.setProperty("role", "quiet")
         choose_output.setMaximumWidth(105)
         choose_output.clicked.connect(self._choose_output)
-        header.addWidget(choose_output)
+        actions.addWidget(choose_output)
         self.btn_output = choose_output
         self.btn_export = QPushButton("Xuất MP4")
         self.btn_export.setProperty("role", "primary")
         self.btn_export.setMaximumWidth(125)
         self.btn_export.clicked.connect(self.export)
-        header.addWidget(self.btn_export)
+        actions.addWidget(self.btn_export)
         root.addWidget(header_bar)
 
+        self.workspace_scroll = QScrollArea()
+        self.workspace_scroll.setWidgetResizable(True)
+        self.workspace_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.workspace_scroll.setAccessibleName("Vùng biên tập; cuộn để xem đầy đủ công cụ")
         split = QSplitter(Qt.Vertical)
         split.setChildrenCollapsible(False)
+        self.workspace_split = split
+        self.workspace_scroll.setWidget(split)
         top = QSplitter(Qt.Horizontal)
         top.setChildrenCollapsible(False)
+        top.setMinimumHeight(245)
         preview = QFrame()
         preview.setObjectName("editorCard")
         preview_lay = QVBoxLayout(preview)
-        preview_lay.setContentsMargins(12, 10, 12, 12)
-        preview_lay.setSpacing(9)
+        preview_lay.setContentsMargins(12, 8, 12, 12)
+        preview_lay.setSpacing(8)
         preview_head = QHBoxLayout()
         preview_name = QLabel("XEM TRƯỚC")
         preview_name.setObjectName("editorEyebrow")
@@ -351,14 +417,29 @@ class EditorWindow(QWidget):
         self.scene.addItem(self.logo_item)
         self.canvas = VideoCanvas(self.scene)
         self.canvas.setFrameShape(QFrame.NoFrame)
-        self.canvas.setBackgroundBrush(QColor("#151519"))
+        self.canvas.setBackgroundBrush(QColor(UI_COLORS["media"]))
+        self.canvas.setMinimumSize(120, 72)
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.canvas.setAccessibleName("Xem trước video với phụ đề và logo")
         self.canvas.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.canvas.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         preview_lay.addWidget(self.canvas, 1)
+        media_row = QHBoxLayout()
+        self.media_status = QLabel("Đang tải hình ảnh và lồng tiếng…")
+        self.media_status.setProperty("role", "secondary")
+        self.media_status.setWordWrap(True)
+        self.media_status.setMinimumWidth(0)
+        self.media_status.setAccessibleDescription("Trạng thái xem trước")
+        media_row.addWidget(self.media_status, 1)
+        self.btn_retry_media = QPushButton("Thử tải lại")
+        self.btn_retry_media.clicked.connect(self._retry_media)
+        self.btn_retry_media.hide()
+        media_row.addWidget(self.btn_retry_media)
+        preview_lay.addLayout(media_row)
         transport = QFrame()
         transport.setObjectName("editorToolbar")
         controls = QHBoxLayout(transport)
-        controls.setContentsMargins(8, 5, 8, 5)
+        controls.setContentsMargins(8, 4, 8, 4)
         controls.setSpacing(8)
         self.btn_play = QPushButton("▶  Phát")
         self.btn_play.setProperty("role", "quiet")
@@ -366,7 +447,11 @@ class EditorWindow(QWidget):
         controls.addWidget(self.btn_play)
         self.seek = QSlider(Qt.Horizontal)
         self.seek.setRange(0, round(self.duration * 1000))
-        self.seek.sliderMoved.connect(self._seek)
+        self.seek.setSingleStep(1000)
+        self.seek.setPageStep(5000)
+        self.seek.setAccessibleName("Vị trí phát video")
+        self.seek.setToolTip("Dùng phím Trái hoặc Phải để tua 1 giây")
+        self.seek.valueChanged.connect(self._seek)
         controls.addWidget(self.seek, 1)
         self.time_label = QLabel("00:00 / " + fmt_time(self.duration))
         self.time_label.setObjectName("editorTime")
@@ -385,12 +470,12 @@ class EditorWindow(QWidget):
 
         timeline_panel = QFrame()
         timeline_panel.setObjectName("editorCard")
-        timeline_panel.setMinimumHeight(220)
+        timeline_panel.setMinimumHeight(300)
         timeline_lay = QVBoxLayout(timeline_panel)
-        timeline_lay.setContentsMargins(12, 7, 12, 10)
-        timeline_lay.setSpacing(5)
+        timeline_lay.setContentsMargins(12, 8, 12, 12)
+        timeline_lay.setSpacing(4)
         tools = QHBoxLayout()
-        track_title = QLabel("TIMELINE")
+        track_title = QLabel("DÒNG THỜI GIAN")
         track_title.setObjectName("editorSection")
         tools.addWidget(track_title)
         self.trim_label = QLabel()
@@ -404,6 +489,8 @@ class EditorWindow(QWidget):
         zoom.setRange(8, 160)
         zoom.setValue(24)
         zoom.setMaximumWidth(140)
+        zoom.setAccessibleName("Thu phóng dòng thời gian")
+        zoom_label.setBuddy(zoom)
         self.zoom_slider = zoom
         self._zoom_user_adjusted = False
         zoom.sliderPressed.connect(
@@ -416,6 +503,23 @@ class EditorWindow(QWidget):
         self.timeline.trim_end = max(self.timeline.trim_start + 0.1,
                                      min(float(draft.get("trim_end", self.duration)),
                                          self.duration))
+        trim_controls = QHBoxLayout()
+        self.trim_start_spin = QDoubleSpinBox()
+        self.trim_end_spin = QDoubleSpinBox()
+        for label_text, spin in (("Cắt từ", self.trim_start_spin),
+                                 ("Cắt đến", self.trim_end_spin)):
+            label = QLabel(label_text)
+            label.setBuddy(spin)
+            spin.setAccessibleName(f"{label_text} (giây)")
+            spin.setDecimals(2)
+            spin.setRange(0, self.duration)
+            spin.setSingleStep(0.1)
+            spin.setSuffix(" giây")
+            spin.setMinimumWidth(110)
+            spin.editingFinished.connect(self._numeric_trim_changed)
+            trim_controls.addWidget(label)
+            trim_controls.addWidget(spin, 1)
+        timeline_lay.addLayout(trim_controls)
         self._trim_changed(self.timeline.trim_start, self.timeline.trim_end)
         self.timeline.seek_requested.connect(self._seek)
         self.timeline.subtitle_selected.connect(self._select_from_timeline)
@@ -429,23 +533,42 @@ class EditorWindow(QWidget):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setObjectName("timelineScroll")
         self.timeline_scroll = scroll
-        timeline_lay.addWidget(scroll)
+        timeline_lay.addWidget(scroll, 1)
+        seek_controls = QHBoxLayout()
+        for text, target in (("Về đầu", lambda: 0),
+                             ("−1 giây", lambda: round(self.timeline.position * 1000) - 1000),
+                             ("+1 giây", lambda: round(self.timeline.position * 1000) + 1000),
+                             ("Về cuối", lambda: round(self.duration * 1000))):
+            button = QPushButton(text)
+            button.setAccessibleName(f"Tua video: {text.lower()}")
+            button.clicked.connect(lambda _checked=False, target=target: self._seek(target()))
+            seek_controls.addWidget(button)
+        keyboard_hint = QLabel("← →: 1 giây · Shift: 0,1 giây · Home / End: đầu / cuối video")
+        keyboard_hint.setObjectName("editorHint")
+        keyboard_hint.setWordWrap(True)
+        timeline_lay.addLayout(seek_controls)
+        timeline_lay.addWidget(keyboard_hint)
         split.addWidget(top)
         split.addWidget(timeline_panel)
         split.setStretchFactor(0, 4)
         split.setStretchFactor(1, 1)
-        root.addWidget(split, 1)
+        root.addWidget(self.workspace_scroll, 1)
         footer = QHBoxLayout()
-        self.status = QLabel("●  Sẵn sàng  ·  Kéo mép video để cắt, kéo phụ đề để đổi thời gian")
+        self.status = QLabel("Kéo mép video hoặc nhập điểm cắt; chọn câu để sửa phụ đề.")
+        self.status.setMinimumWidth(0)
+        self.status.setMaximumHeight(58)
+        self.status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.status.setAccessibleDescription("Trạng thái biên tập và xuất video")
         self.status.setProperty("role", "secondary")
         self.status.setWordWrap(True)
         footer.addWidget(self.status, 1)
         self.export_progress = QProgressBar()
         self.export_progress.setRange(0, 0)
         self.export_progress.setMaximumWidth(105)
+        self.export_progress.setAccessibleName("Đang xuất video; chưa có phần trăm tiến độ")
         self.export_progress.hide()
         footer.addWidget(self.export_progress)
-        self.footer_hint = QLabel("VIDEO  /  DUB  /  SUBTITLE")
+        self.footer_hint = QLabel("HÌNH  /  LỒNG TIẾNG  /  PHỤ ĐỀ")
         self.footer_hint.setObjectName("editorEyebrow")
         footer.addWidget(self.footer_hint)
         root.addLayout(footer)
@@ -459,6 +582,10 @@ class EditorWindow(QWidget):
         self.dub_audio: QAudioOutput | None = None
         self.player.positionChanged.connect(self._on_position)
         self.player.playbackStateChanged.connect(self._on_playback)
+        for name, player in (("Hình ảnh", self.player), ("Lồng tiếng", self.dub_player)):
+            player.mediaStatusChanged.connect(lambda _status: self._update_media_status())
+            player.errorOccurred.connect(
+                lambda _error, message, name=name: self._media_failed(name, message))
         self.video_item.nativeSizeChanged.connect(self._video_size_changed)
         self.player.setSource(QUrl.fromLocalFile(self.source))
         self.dub_player.setSource(QUrl.fromLocalFile(self.mixed_wav))
@@ -467,6 +594,9 @@ class EditorWindow(QWidget):
         if self.segments:
             self._select_segment(0)
         self._ready = True
+        self._set_draft_state("Đã mở bản nháp" if draft else "Chưa lưu bản nháp")
+        if self._draft_error:
+            self._set_draft_state("Không đọc được bản nháp", self._draft_error, error=True)
         self._apply_responsive_layout()
         self.poster_loader = PosterLoader(self)
         self.poster_loader.ready.connect(self._poster_ready)
@@ -477,7 +607,7 @@ class EditorWindow(QWidget):
         card.setObjectName("editorCard")
         card.setMinimumWidth(280)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(13, 9, 13, 11)
+        layout.setContentsMargins(12, 8, 12, 12)
         layout.setSpacing(8)
         eyebrow = QLabel("CÔNG CỤ BIÊN TẬP")
         eyebrow.setObjectName("editorEyebrow")
@@ -487,8 +617,8 @@ class EditorWindow(QWidget):
 
         subtitle_page = QWidget()
         sl = QVBoxLayout(subtitle_page)
-        sl.setContentsMargins(2, 6, 2, 4)
-        sl.setSpacing(10)
+        sl.setContentsMargins(4, 8, 4, 4)
+        sl.setSpacing(8)
         list_head = QHBoxLayout()
         list_title = QLabel("Danh sách câu")
         list_title.setObjectName("editorSection")
@@ -499,7 +629,9 @@ class EditorWindow(QWidget):
         list_head.addWidget(self.subtitle_count_label)
         sl.addLayout(list_head)
         self.sub_list = QListWidget()
-        self.sub_list.setMinimumHeight(120)
+        self.sub_list.setMinimumHeight(80)
+        self.sub_list.setMaximumHeight(140)
+        self.sub_list.setAccessibleName("Danh sách câu phụ đề")
         self.sub_list.currentRowChanged.connect(self._select_from_list)
         for i in range(len(self.segments)):
             self.sub_list.addItem(self._segment_label(i))
@@ -511,25 +643,31 @@ class EditorWindow(QWidget):
         self.sub_text.setPlaceholderText("Chọn một câu để chỉnh nội dung…")
         self.sub_text.setToolTip("Sửa chữ phụ đề không đổi lời lồng tiếng đã tạo.")
         self.sub_text.setMaximumHeight(88)
+        self.sub_text.setMinimumHeight(58)
+        self.sub_text.setAccessibleName("Nội dung phụ đề đã chọn")
+        text_label.setBuddy(self.sub_text)
         self.sub_text.textChanged.connect(self._text_changed)
         sl.addWidget(self.sub_text)
         time_label = QLabel("THỜI GIAN HIỂN THỊ")
         time_label.setObjectName("editorEyebrow")
         sl.addWidget(time_label)
         times = QHBoxLayout()
-        times.setSpacing(6)
+        times.setSpacing(8)
         self.start_spin = QDoubleSpinBox()
         self.end_spin = QDoubleSpinBox()
-        for spin in (self.start_spin, self.end_spin):
+        for label_text, spin in (("Bắt đầu", self.start_spin), ("Kết thúc", self.end_spin)):
+            column = QVBoxLayout()
+            label = QLabel(label_text)
+            label.setBuddy(spin)
+            column.addWidget(label)
+            column.addWidget(spin)
+            times.addLayout(column, 1)
+            spin.setAccessibleName(f"{label_text} phụ đề (giây)")
+            spin.setSingleStep(0.1)
             spin.setDecimals(2)
             spin.setRange(0, self.duration)
-            spin.setSuffix(" s")
+            spin.setSuffix(" giây")
             spin.editingFinished.connect(self._time_changed)
-        times.addWidget(self.start_spin, 1)
-        separator = QLabel("→")
-        separator.setObjectName("editorHint")
-        times.addWidget(separator)
-        times.addWidget(self.end_spin, 1)
         sl.addLayout(times)
         actions = QHBoxLayout()
         add = QPushButton("＋  Thêm câu")
@@ -540,7 +678,7 @@ class EditorWindow(QWidget):
         actions.addWidget(add, 1)
         actions.addWidget(remove)
         sl.addLayout(actions)
-        note = QLabel("Kéo khối tím trên timeline để đổi vị trí hoặc độ dài.")
+        note = QLabel("Kéo khối tím hoặc nhập thời gian bắt đầu, kết thúc để chỉnh phụ đề.")
         note.setObjectName("editorHint")
         note.setWordWrap(True)
         sl.addWidget(note)
@@ -552,9 +690,9 @@ class EditorWindow(QWidget):
 
         logo_page = QWidget()
         ll = QVBoxLayout(logo_page)
-        ll.setContentsMargins(2, 9, 2, 4)
-        ll.setSpacing(11)
-        logo_title = QLabel("Đóng logo / watermark")
+        ll.setContentsMargins(4, 8, 4, 4)
+        ll.setSpacing(12)
+        logo_title = QLabel("Đóng logo")
         logo_title.setObjectName("editorSection")
         ll.addWidget(logo_title)
         note = QLabel("Ảnh PNG nền trong cho kết quả đẹp nhất.")
@@ -563,6 +701,7 @@ class EditorWindow(QWidget):
         ll.addWidget(note)
         self.logo_edit = QLineEdit(self.logo_path)
         self.logo_edit.setReadOnly(True)
+        self.logo_edit.setAccessibleName("Đường dẫn ảnh logo")
         self.logo_edit.setPlaceholderText("Chưa chọn ảnh logo")
         ll.addWidget(self.logo_edit)
         logo_row = QHBoxLayout()
@@ -578,6 +717,8 @@ class EditorWindow(QWidget):
         position_label.setObjectName("editorEyebrow")
         ll.addWidget(position_label)
         self.corner = QComboBox()
+        self.corner.setAccessibleName("Vị trí logo")
+        position_label.setBuddy(self.corner)
         for label, value in (("Trên trái", "top-left"), ("Trên phải", "top-right"),
                              ("Dưới trái", "bottom-left"),
                              ("Dưới phải", "bottom-right")):
@@ -595,6 +736,8 @@ class EditorWindow(QWidget):
         ll.addLayout(size_row)
         self.logo_size = QSlider(Qt.Horizontal)
         self.logo_size.setRange(5, 50)
+        self.logo_size.setAccessibleName("Kích thước logo theo phần trăm chiều rộng")
+        size_label.setBuddy(self.logo_size)
         self.logo_size.setValue(12)
         self.logo_size.valueChanged.connect(self._update_logo)
         ll.addWidget(self.logo_size)
@@ -609,6 +752,8 @@ class EditorWindow(QWidget):
         ll.addLayout(opacity_row)
         self.logo_opacity = QSlider(Qt.Horizontal)
         self.logo_opacity.setRange(0, 100)
+        self.logo_opacity.setAccessibleName("Độ hiện logo theo phần trăm")
+        opacity_label.setBuddy(self.logo_opacity)
         self.logo_opacity.setValue(85)
         self.logo_opacity.valueChanged.connect(self._update_logo)
         ll.addWidget(self.logo_opacity)
@@ -660,7 +805,7 @@ class EditorWindow(QWidget):
             self._select_segment(i)
         self.timeline.update()
         self._update_subtitle(self.player.position() / 1000)
-        self._save_timer.start()
+        self._schedule_save()
 
     def _time_changed(self) -> None:
         i = self.timeline.selected
@@ -679,7 +824,7 @@ class EditorWindow(QWidget):
             self.sub_list.item(i).setText(self._segment_label(i))
             self.timeline.update()
             self._update_subtitle(self.player.position() / 1000)
-            self._save_timer.start()
+            self._schedule_save()
 
     def _add_segment(self) -> None:
         at = min(self.duration - 0.1, self.player.position() / 1000)
@@ -691,7 +836,7 @@ class EditorWindow(QWidget):
         self.subtitle_count_label.setText(f"{len(self.segments)} câu")
         self._select_segment(len(self.segments) - 1)
         self.timeline.update()
-        self._save_timer.start()
+        self._schedule_save()
 
     def _remove_segment(self) -> None:
         i = self.timeline.selected
@@ -709,11 +854,25 @@ class EditorWindow(QWidget):
             self.sub_text.clear()
         self.timeline.update()
         self._update_subtitle(self.player.position() / 1000)
-        self._save_timer.start()
+        self._schedule_save()
 
     def _trim_changed(self, start: float, end: float) -> None:
+        self.timeline.trim_start, self.timeline.trim_end = start, end
         self.trim_label.setText(f"{fmt_time(start)} → {fmt_time(end)}")
-        self._save_timer.start()
+        for spin, value in ((self.trim_start_spin, start), (self.trim_end_spin, end)):
+            spin.blockSignals(True)
+            spin.setValue(value)
+            spin.blockSignals(False)
+        self.timeline.update()
+        self._schedule_save()
+
+    def _numeric_trim_changed(self) -> None:
+        start, end = self.trim_start_spin.value(), self.trim_end_spin.value()
+        if not _valid_trim_interval(start, end):
+            self.status.setText("Điểm cắt cuối phải sau điểm cắt đầu ít nhất 0,1 giây.")
+            self._trim_changed(self.timeline.trim_start, self.timeline.trim_end)
+            return
+        self._trim_changed(start, end)
 
     def _choose_logo(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -734,8 +893,9 @@ class EditorWindow(QWidget):
             self, "Lưu video đã biên tập", str(self.output_path), "Video MP4 (*.mp4)")
         if path:
             self.output_path = Path(path).with_suffix(".mp4")
-            self.status.setText(f"Nơi lưu: {self.output_path}")
-            self._save_timer.start()
+            self.status.setText("Đã chọn nơi lưu video. Di chuột vào đây để xem đường dẫn.")
+            self.status.setToolTip(str(self.output_path))
+            self._schedule_save()
 
     def _clear_logo(self) -> None:
         self.logo_path = ""
@@ -794,7 +954,7 @@ class EditorWindow(QWidget):
             y = margin if corner.startswith("top") else rect.height() - pix.height() - margin
             self.logo_item.setPos(x, y)
             self.logo_item.show()
-        self._save_timer.start()
+        self._schedule_save()
 
     def _update_subtitle(self, sec: float) -> None:
         text = next((s.text_vi for s in self.segments
@@ -811,11 +971,79 @@ class EditorWindow(QWidget):
         self.sub_back.setRect(QRectF(x, y, width, height))
         self.sub_back.setVisible(bool(text))
 
+    def _media_failed(self, name: str, message: str) -> None:
+        if self._resetting_media:
+            return
+        self._media_errors[name] = message or "Không đọc được tệp xem trước."
+        self.player.pause()
+        self.dub_player.pause()
+        self._update_media_status()
+
+    def _update_media_status(self) -> None:
+        if self._resetting_media:
+            return
+        players = (("Hình ảnh", self.player), ("Lồng tiếng", self.dub_player))
+        for name, player in players:
+            if player.mediaStatus() == QMediaPlayer.InvalidMedia:
+                self._media_errors.setdefault(name, player.errorString() or "Tệp không hợp lệ.")
+        stalled = any(player.mediaStatus() == QMediaPlayer.StalledMedia for _, player in players)
+        self.btn_retry_media.setVisible(bool(self._media_errors) or stalled)
+        if self.width() < 900 and self._tools_open:
+            self.btn_tools.setText("Xem trước · lỗi" if self._media_errors else "Xem trước")
+        self.media_status.setStyleSheet(
+            f"color: {UI_COLORS['danger' if self._media_errors else 'secondary_text']};")
+        if self._media_errors:
+            failed = ", ".join(name.lower() for name in self._media_errors)
+            self.media_status.setText(f"Không tải được {failed}. Thử tải lại; vẫn có thể biên tập.")
+            self.media_status.setToolTip("\n".join(
+                f"{name}: {message}" for name, message in self._media_errors.items()))
+            self.btn_play.setEnabled(False)
+            return
+        loading = any(player.mediaStatus() in (
+            QMediaPlayer.NoMedia, QMediaPlayer.LoadingMedia) for _, player in players)
+        self.btn_play.setEnabled(not loading)
+        if stalled:
+            self.media_status.setText("Tải xem trước bị gián đoạn. Bấm Thử tải lại.")
+        elif loading:
+            self.media_status.setText("Đang tải hình ảnh và lồng tiếng…")
+        elif self.player.mediaStatus() == QMediaPlayer.EndOfMedia:
+            self.media_status.setText("Đã phát hết video. Bấm Phát để xem lại khoảng cắt.")
+        elif self.player.playbackState() == QMediaPlayer.PlayingState:
+            self.media_status.setText(
+                "Đang phát hình ảnh; phiên này không phát âm thanh."
+                if QGuiApplication.platformName() == "offscreen"
+                else "Đang phát hình ảnh và lồng tiếng.")
+        elif self.player.playbackState() == QMediaPlayer.PausedState:
+            self.media_status.setText("Đã tạm dừng xem trước.")
+        else:
+            self.media_status.setText("Đã tải hình ảnh và lồng tiếng. Sẵn sàng xem trước.")
+        self.media_status.setToolTip(self.media_status.text())
+        if not loading and getattr(self, "_retry_position", None) is not None:
+            position, self._retry_position = self._retry_position, None
+            self._seek(position)
+
+    def _retry_media(self) -> None:
+        self._resetting_media = True
+        self._retry_position = round(self.timeline.position * 1000)
+        self.player.stop()
+        self.dub_player.stop()
+        self.player.setSource(QUrl())
+        self.dub_player.setSource(QUrl())
+        self._media_errors.clear()
+        self._resetting_media = False
+        self.player.setSource(QUrl.fromLocalFile(self.source))
+        self.dub_player.setSource(QUrl.fromLocalFile(self.mixed_wav))
+        self._update_media_status()
+        self.poster_loader.request(self.source, str(self.job.stages_dir))
+
     def toggle_play(self) -> None:
         if self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
             self.dub_player.pause()
         else:
+            if self._media_errors:
+                self._retry_media()
+                return
             if self.player.position() / 1000 >= self.timeline.trim_end:
                 self._seek(round(self.timeline.trim_start * 1000))
             # Qt's PipeWire backend can crash when an offscreen session has
@@ -835,8 +1063,10 @@ class EditorWindow(QWidget):
                               else "▶  Phát")
         if state != QMediaPlayer.PlayingState:
             self.dub_player.pause()
+        self._update_media_status()
 
     def _seek(self, ms: int) -> None:
+        ms = max(0, min(round(self.duration * 1000), ms))
         self._show_video_frame()
         self.player.setPosition(ms)
         self.dub_player.setPosition(ms)
@@ -850,7 +1080,12 @@ class EditorWindow(QWidget):
         elif self.player.playbackState() == QMediaPlayer.PlayingState and \
                 abs(self.dub_player.position() - ms) > 500:
             self.dub_player.setPosition(ms)
+        self.seek.blockSignals(True)
         self.seek.setValue(ms)
+        self.seek.blockSignals(False)
+        if self.timeline.hasFocus():
+            self.workspace_scroll.ensureWidgetVisible(self.timeline_scroll)
+            self.timeline_scroll.ensureVisible(int(self.timeline._x(ms / 1000)), 80, 40, 0)
         self.time_label.setText(f"{fmt_time(ms / 1000)} / {fmt_time(self.duration)}")
         self.timeline.position = ms / 1000
         self.timeline.update()
@@ -859,6 +1094,8 @@ class EditorWindow(QWidget):
     def _load_draft(self) -> dict:
         try:
             data = json.loads(self.draft_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("Bản nháp phải chứa dữ liệu biên tập hợp lệ.")
             if data.get("source") != self.source:
                 return {}
             saved = data.get("segments")
@@ -870,12 +1107,32 @@ class EditorWindow(QWidget):
             if output:
                 self.output_path = Path(output)
             return data
-        except (OSError, ValueError, TypeError, KeyError):
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            self._draft_error = str(exc)
             return {}
 
-    def _save_draft(self) -> None:
+    def _set_draft_state(self, text: str, detail: str = "", *, error: bool = False) -> None:
+        self.draft_badge.setText(text)
+        self.draft_badge.setAccessibleName(text)
+        self.draft_badge.setToolTip(detail or text)
+        self.draft_badge.setAccessibleDescription(detail or text)
+        self.draft_badge.setStyleSheet(
+            f"color: {UI_COLORS['danger' if error else 'primary']};")
+        self.btn_save.setText("Thử lưu lại" if error else "Lưu nháp")
+
+    def _schedule_save(self) -> None:
         if not self._ready:
             return
+        self._set_draft_state("Có thay đổi chưa lưu")
+        self._save_timer.start()
+
+    def _save_draft(self) -> bool:
+        if not self._ready:
+            return False
+        self._save_timer.stop()
+        self._set_draft_state("Đang lưu bản nháp…")
         data = {"source": self.source, "output_path": str(self.output_path),
                 "segments": [s.to_dict() for s in self.segments],
                 "trim_start": self.timeline.trim_start,
@@ -890,13 +1147,21 @@ class EditorWindow(QWidget):
                             encoding="utf-8")
             temp.replace(self.draft_path)
         except OSError as exc:
-            self.status.setText(f"Không lưu được bản nháp: {exc}")
+            self._set_draft_state("Lưu bản nháp thất bại", str(exc), error=True)
+            self.status.setText("Không lưu được bản nháp. Bấm Thử lưu lại; giữ cửa sổ mở để bảo toàn thay đổi.")
+            self.status.setToolTip(str(exc))
+            return False
+        self._set_draft_state("Đã lưu bản nháp", str(self.draft_path))
+        if self.status.text().startswith("Không lưu được bản nháp"):
+            self.status.setText("Đã lưu bản nháp. Có thể tiếp tục biên tập hoặc xuất video.")
+            self.status.setToolTip("")
+        return True
 
     def export(self) -> None:
         if self._thread is not None:
             return
         self._save_draft()
-        if self.timeline.trim_end - self.timeline.trim_start < 0.1:
+        if not _valid_trim_interval(self.timeline.trim_start, self.timeline.trim_end):
             error_box(self, "Khoảng cắt quá ngắn", "Cần giữ ít nhất 0,1 giây video.")
             return
         target = self.output_path
@@ -907,7 +1172,8 @@ class EditorWindow(QWidget):
             version += 1
         self.btn_export.setEnabled(False)
         self.export_progress.show()
-        self.status.setText(f"Đang xuất: {target}")
+        self.status.setText("Đang xuất video… Chờ hoàn tất trước khi đóng cửa sổ.")
+        self.status.setToolTip(f"Đang xuất: {target}")
         self.player.pause()
         self.dub_player.pause()
         kwargs = dict(trim_start=self.timeline.trim_start,
@@ -960,10 +1226,12 @@ class EditorWindow(QWidget):
                 self.job.project.video_out = path
                 pio.save_project(self.job.job_dir, self.job.project)
                 self.on_export(path, srt)
-                self.status.setText(f"Đã xuất: {path}")
+                self.status.setText("Đã xuất video. Di chuột vào đây để xem đường dẫn.")
+                self.status.setToolTip(path)
                 info_box(self, "Xuất xong", f"Video đã lưu tại:\n{path}")
             except Exception as exc:  # noqa: BLE001 - video still exists
-                self.status.setText(f"Đã xuất video, nhưng không cập nhật được dự án: {exc}")
+                self.status.setText("Đã xuất video, nhưng không cập nhật được dự án. Xem chi tiết lỗi để khôi phục.")
+                self.status.setToolTip(str(exc))
                 error_box(self, "Không cập nhật được dự án",
                           f"Video đã lưu tại:\n{path}\n\n{exc}")
         elif self._pending_error:
@@ -977,16 +1245,25 @@ class EditorWindow(QWidget):
         self._apply_responsive_layout()
 
     def _apply_responsive_layout(self) -> None:
-        compact = self.width() < 760
+        compact = self.width() < 900
+        short = self.height() < 700
+        self.layout().setContentsMargins(8 if compact else 16, 8 if short else 16,
+                                        8 if compact else 16, 8)
+        self.layout().setSpacing(8 if short else 12)
         self.brand_mark.setVisible(not compact)
         self.project_label.setVisible(not compact)
-        self.draft_badge.setVisible(self.width() >= 900)
+        self.draft_badge.show()
         self.btn_tools.setVisible(compact)
-        self.btn_tools.setText("Xem trước" if self._tools_open else "Công cụ")
+        self.btn_tools.setText(("Xem trước · lỗi" if self._media_errors else "Xem trước")
+                               if self._tools_open else "Công cụ")
+        self.btn_tools.setAccessibleName("Hiện xem trước" if self._tools_open else "Hiện công cụ phụ đề và logo")
         self.btn_output.setText("Lưu…" if compact else "Nơi lưu…")
         self.preview_panel.setVisible(not compact or not self._tools_open)
         self.inspector_panel.setVisible(not compact or self._tools_open)
         self.footer_hint.setVisible(self.width() >= 1040)
+        # Keep both splitter sections usable; the workspace scrolls when the
+        # window is too short instead of squeezing transport or editing tools.
+        self.workspace_split.setMinimumHeight(560 if short else 600)
         if not self._zoom_user_adjusted and self.timeline_scroll.viewport().width() > 200:
             fit_zoom = int(self.timeline_scroll.viewport().width() * .72 /
                            self.duration)
@@ -1004,8 +1281,10 @@ class EditorWindow(QWidget):
             event.ignore()
             return
         self._save_timer.stop()
+        if not self._save_draft():
+            event.ignore()
+            return
         self.poster_loader.stop()
-        self._save_draft()
         self.player.stop()
         self.dub_player.stop()
         super().closeEvent(event)

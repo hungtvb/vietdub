@@ -9,21 +9,55 @@ app vẫn giữ nguyên lựa chọn cũ.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFrame,
                                QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-                               QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout,
-                               QWidget)
+                               QPushButton, QScrollArea, QSizePolicy, QSpinBox,
+                               QTabWidget, QVBoxLayout, QWidget)
 
 from core.settings import DEFAULTS, Settings
-from ui.common import error_box, info_box
+from ui.common import error_box
+from ui.theme import APP_BACKGROUND, UI_COLORS
+
+
+class OllamaCheckWorker(QObject):
+    finished = Signal(bool, str)
+    completed = Signal()
+
+    def __init__(self, url: str):
+        super().__init__()
+        self.url = url
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            import requests
+            response = requests.get(f"{self.url}/api/tags", timeout=8)
+            response.raise_for_status()
+            models = [str(model.get("name", "?"))
+                      for model in response.json().get("models", [])]
+            hint = ("Các mô hình đã tải: " + ", ".join(models)
+                    if models else "Chưa có mô hình. Chạy ollama pull <tên-mô-hình>.")
+            self.finished.emit(True, f"Đã kết nối Ollama. {hint} "
+                               "Nhập tên mô hình bên trên rồi bấm Lưu.")
+        except Exception:  # noqa: BLE001 - hiển thị hướng dẫn, không phơi lỗi thư viện
+            self.finished.emit(False, f"Không kết nối được Ollama tại {self.url}. "
+                               "Mở Ollama (ollama serve), kiểm tra địa chỉ máy chủ "
+                               "và mô hình đã tải, rồi bấm Kiểm tra lại.")
+        finally:
+            self.completed.emit()
 
 
 class SettingsDialog(QDialog):
     def __init__(self, settings: Settings, parent=None):
         super().__init__(parent)
         self.settings = settings
+        self._check_thread: QThread | None = None
+        self._check_worker: OllamaCheckWorker | None = None
+        self._pending_result: int | None = None
+        self.setObjectName("settingsRoot")
+        self.setStyleSheet(f"QWidget#settingsRoot, QWidget#settingsPage {{ background: {APP_BACKGROUND}; }}")
         self.setWindowTitle("Cài đặt VietDub")
         self.resize(820, 760)
         self.setMinimumSize(620, 480)
@@ -31,8 +65,14 @@ class SettingsDialog(QDialog):
         root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(14)
 
+        title = QLabel("Cài đặt VietDub")
+        title.setObjectName("pageTitle")
+        root.addWidget(title)
         self.tabs = QTabWidget()
-        root.addWidget(self.tabs)
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.setElideMode(Qt.ElideNone)
+        self.tabs.tabBar().setExpanding(False)
+        root.addWidget(self.tabs, 1)
         self._build_translate_tab()
         self._build_asr_tab()
         self._build_voice_tab()
@@ -55,6 +95,16 @@ class SettingsDialog(QDialog):
         root.addLayout(row)
 
     def _add_scroll_tab(self, tab: QWidget, label: str) -> None:
+        tab.setObjectName("settingsPage")
+        form = tab.layout()
+        if isinstance(form, QFormLayout):
+            form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        for combo in tab.findChildren(QComboBox):
+            combo.setMinimumContentsLength(12)
+            combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -72,45 +122,52 @@ class SettingsDialog(QDialog):
         self.oa_key = QLineEdit()
         self.oa_key.setEchoMode(QLineEdit.Password)
         self.oa_key.setText(self.settings.get("openai_api_key", ""))
-        f.addRow("OpenAI API key:", self.oa_key)
+        f.addRow("Khóa API OpenAI:", self.oa_key)
         self.oa_model = QLineEdit()
         self.oa_model.setText(self.settings.get("openai_model", "gpt-4.1"))
-        f.addRow("Model OpenAI:", self.oa_model)
+        f.addRow("Mô hình OpenAI:", self.oa_model)
         self.oa_url = QLineEdit()
         self.oa_url.setText(self.settings.get(
             "openai_url", "https://api.openai.com/v1"))
-        f.addRow("Endpoint OpenAI:", self.oa_url)
+        f.addRow("Máy chủ OpenAI:", self.oa_url)
         self.nr_key = QLineEdit()
         self.nr_key.setEchoMode(QLineEdit.Password)
         self.nr_key.setText(self.settings.get("nine_router_key", ""))
-        f.addRow("API key 9Router:", self.nr_key)
+        f.addRow("Khóa API 9Router:", self.nr_key)
         self.nr_model = QLineEdit()
         self.nr_model.setText(self.settings.get("nine_router_model", ""))
-        f.addRow("Model 9Router:", self.nr_model)
+        f.addRow("Mô hình 9Router:", self.nr_model)
         self.nr_url = QLineEdit()
         self.nr_url.setText(self.settings.get("nine_router_url", ""))
-        f.addRow("Endpoint 9Router:", self.nr_url)
+        f.addRow("Máy chủ 9Router:", self.nr_url)
         self.ol_url = QLineEdit()
         self.ol_url.setText(self.settings.get("ollama_url", ""))
-        f.addRow("Endpoint Ollama:", self.ol_url)
+        f.addRow("Máy chủ Ollama:", self.ol_url)
         row = QHBoxLayout()
         self.ol_model = QLineEdit()
         self.ol_model.setText(self.settings.get("ollama_model", ""))
         self.ol_model.setPlaceholderText("vd llama3.1, qwen2.5…")
         row.addWidget(self.ol_model, 1)
-        btn_check = QPushButton("Kiểm tra kết nối")
-        btn_check.clicked.connect(self.check_ollama)
-        row.addWidget(btn_check)
-        f.addRow("Model Ollama:", row)
+        self.btn_check = QPushButton("Kiểm tra kết nối")
+        self.btn_check.clicked.connect(self.check_ollama)
+        row.addWidget(self.btn_check)
+        f.addRow("Mô hình Ollama:", row)
+        self.ollama_status = QLabel("Kiểm tra kết nối sau khi mở Ollama trên máy của bạn.")
+        self.ollama_status.setWordWrap(True)
+        self.ollama_status.setTextFormat(Qt.PlainText)
+        self.ollama_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.ollama_status.setProperty("role", "secondary")
+        f.addRow(self.ollama_status)
+        self.ol_url.textChanged.connect(self._on_ollama_url_changed)
         self.llm_temp = QDoubleSpinBox()
         self.llm_temp.setRange(0.0, 1.0)
         self.llm_temp.setSingleStep(0.05)
         self.llm_temp.setValue(float(self.settings.get("llm_temperature", 0.2)))
-        f.addRow("Temperature LLM:", self.llm_temp)
+        f.addRow("Độ sáng tạo bản dịch:", self.llm_temp)
         self.tr_batch = QSpinBox()
         self.tr_batch.setRange(1, 100)
         self.tr_batch.setValue(int(self.settings.get("translate_batch", 20)))
-        f.addRow("Số câu / request dịch:", self.tr_batch)
+        f.addRow("Số câu mỗi lượt dịch:", self.tr_batch)
         note = QLabel("OpenAI API tính phí riêng, không dùng chung gói ChatGPT. "
                       "Có thể chọn 9Router hoặc Ollama nếu không có API key.")
         note.setWordWrap(True)
@@ -118,26 +175,100 @@ class SettingsDialog(QDialog):
         f.addRow(note)
         self._add_scroll_tab(tab, "Dịch thuật")
 
+    @Slot(str)
+    def _on_ollama_url_changed(self, _text: str) -> None:
+        if self._pending_result is not None:
+            return
+        message = "Địa chỉ Ollama đã thay đổi. Hãy kiểm tra kết nối với địa chỉ mới."
+        if self._check_thread is not None:
+            if self.ol_url.text().strip().rstrip("/") == self._check_url:
+                message = "Đang kết nối Ollama… Bạn vẫn có thể sửa các cài đặt khác."
+            else:
+                message = ("Đang hoàn tất kiểm tra địa chỉ trước. "
+                           "Hãy kiểm tra lại địa chỉ mới sau khi tác vụ kết thúc.")
+        self.ollama_status.setText(message)
+        self.ollama_status.setStyleSheet(f"color: {UI_COLORS['secondary_text']};")
+        QTimer.singleShot(30, self._reveal_ollama_status)
+
     def check_ollama(self) -> None:
-        import requests
+        if self._check_thread is not None:
+            return
         url = self.ol_url.text().strip().rstrip("/")
-        try:
-            r = requests.get(f"{url}/api/tags", timeout=8)
-            r.raise_for_status()
-            models = [m.get("name", "?")
-                      for m in r.json().get("models", [])]
-            hint = ("Các model đã kéo: " + ", ".join(models)
-                    if models else "Chưa kéo model nào.")
-            info_box(self, "Ollama chạy tốt",
-                     f"Kết nối được tới {url}.\n{hint}\n\n"
-                     "Nhập tên model vào ô Model Ollama rồi bấm Lưu.")
-        except Exception as e:  # noqa: BLE001
-            error_box(self, "Không kết nối được Ollama",
-                      f"{e}\n\nCách khắc phục:\n"
-                      "1. Mở Ollama (chạy lệnh: ollama serve)\n"
-                      "2. Kéo model: ollama pull <tên-model> "
-                      "(vd ollama pull llama3.1)\n"
-                      "3. Kiểm tra lại endpoint ở ô trên.")
+        if not url.startswith(("http://", "https://")):
+            self._check_feedback("Nhập địa chỉ Ollama bắt đầu bằng http:// hoặc https://, "
+                                 "ví dụ http://localhost:11434, rồi kiểm tra lại.", False)
+            self.ol_url.setFocus()
+            return
+        self._check_url = url
+        self.btn_check.setEnabled(False)
+        self.btn_check.setText("Đang kiểm tra…")
+        self.ollama_status.setText("Đang kết nối Ollama… Bạn vẫn có thể sửa các cài đặt khác.")
+        self.ollama_status.setStyleSheet(f"color: {UI_COLORS['secondary_text']};")
+        worker = OllamaCheckWorker(url)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_ollama_result)
+        worker.completed.connect(thread.quit)
+        worker.completed.connect(worker.deleteLater)
+        thread.finished.connect(self._on_check_stopped)
+        self._check_worker, self._check_thread = worker, thread
+        thread.start()
+
+    def _check_feedback(self, text: str, success: bool) -> None:
+        self.ollama_status.setText(text)
+        color = UI_COLORS["success" if success else "danger"]
+        self.ollama_status.setStyleSheet(f"color: {color};")
+        QTimer.singleShot(30, self._reveal_ollama_status)
+
+    @Slot()
+    def _reveal_ollama_status(self) -> None:
+        self.tabs.widget(0).ensureWidgetVisible(self.ollama_status, 0, 12)
+
+    @Slot(bool, str)
+    def _on_ollama_result(self, success: bool, message: str) -> None:
+        if self._pending_result is not None:
+            return
+        if self.ol_url.text().strip().rstrip("/") != self._check_url:
+            self._check_feedback("Địa chỉ Ollama đã thay đổi. Bấm Kiểm tra lại để kiểm tra địa chỉ mới.",
+                                 False)
+            return
+        self._check_feedback(message, success)
+
+    @Slot()
+    def _on_check_stopped(self) -> None:
+        thread = self._check_thread
+        self._check_worker = self._check_thread = None
+        thread.deleteLater()
+        self.btn_check.setEnabled(True)
+        self.btn_check.setText("Kiểm tra lại")
+        if self._pending_result is not None:
+            self.setEnabled(True)
+            self.done(self._pending_result)
+
+    def done(self, result: int) -> None:
+        # Keep both QObjects alive until the bounded network operation exits.
+        # Save, Cancel, Escape and the window close button all use this path.
+        if self._check_thread is not None:
+            if self._pending_result is None:
+                self._pending_result = result
+            self.setEnabled(False)
+            self.ollama_status.setText("Đang hoàn tất kiểm tra kết nối trước khi đóng…")
+            return
+        super().done(result)
+
+    def accept(self) -> None:
+        self.done(QDialog.Accepted)
+
+    def reject(self) -> None:
+        self.done(QDialog.Rejected)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self._check_thread is not None:
+            self.done(QDialog.Rejected)
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     # -------------------------------------------------------------- tab ASR
     def _build_asr_tab(self) -> None:
@@ -154,26 +285,26 @@ class SettingsDialog(QDialog):
         backend = self.settings.get("asr_backend", "whisper")
         idx = self.asr_backend.findData(backend)
         self.asr_backend.setCurrentIndex(max(0, idx))
-        f.addRow("Engine STT:", self.asr_backend)
+        f.addRow("Bộ nhận dạng lời nói:", self.asr_backend)
         self.whisper_model = QLineEdit(
             self.settings.get("whisper_model", "large-v3-turbo"))
-        f.addRow("Model Whisper:", self.whisper_model)
+        f.addRow("Mô hình Whisper:", self.whisper_model)
         self.asr_model = QComboBox()
         self.asr_model.setEditable(True)
         self.asr_model.addItem(str(self.settings.get("asr_model")))
         self.asr_model.setCurrentText(str(self.settings.get("asr_model")))
-        f.addRow("Model FunASR (VAD/loa):", self.asr_model)
+        f.addRow("Mô hình FunASR:", self.asr_model)
         self.vad_model = QLineEdit(self.settings.get("vad_model", ""))
-        f.addRow("Model VAD:", self.vad_model)
+        f.addRow("Mô hình phát hiện giọng:", self.vad_model)
         self.punc_model = QLineEdit(self.settings.get("punc_model", ""))
-        f.addRow("Model dấu câu:", self.punc_model)
+        f.addRow("Mô hình dấu câu:", self.punc_model)
         self.spk_model = QLineEdit(self.settings.get("spk_model", ""))
-        f.addRow("Model tách loa:", self.spk_model)
+        f.addRow("Mô hình tách người nói:", self.spk_model)
         self.asr_conf = QDoubleSpinBox()
         self.asr_conf.setRange(0.0, 1.0)
         self.asr_conf.setSingleStep(0.05)
         self.asr_conf.setValue(float(self.settings.get("asr_confidence_low", 0.5)))
-        f.addRow("Ngưỡng confidence thấp:", self.asr_conf)
+        f.addRow("Ngưỡng độ tin cậy thấp:", self.asr_conf)
         confidence_note = QLabel(
             "Câu nào ASR nghe dưới ngưỡng này sẽ được đánh dấu "
             "để bạn kiểm tra kỹ ở màn duyệt.")
@@ -200,12 +331,12 @@ class SettingsDialog(QDialog):
         self.pitch_male = QDoubleSpinBox()
         self.pitch_male.setRange(50, 400)
         self.pitch_male.setValue(float(self.settings.get("pitch_male_max_hz", 160)))
-        f.addRow("Pitch tối đa của nam (Hz):", self.pitch_male)
+        f.addRow("Cao độ tối đa giọng nam (Hz):", self.pitch_male)
         self.pitch_female = QDoubleSpinBox()
         self.pitch_female.setRange(50, 400)
         self.pitch_female.setValue(
             float(self.settings.get("pitch_female_min_hz", 165)))
-        f.addRow("Pitch tối thiểu của nữ (Hz):", self.pitch_female)
+        f.addRow("Cao độ tối thiểu giọng nữ (Hz):", self.pitch_female)
         self.dub_vol = QSpinBox()
         self.dub_vol.setRange(0, 150)
         self.dub_vol.setSuffix(" %")
@@ -227,7 +358,7 @@ class SettingsDialog(QDialog):
         self.tts_conc.setRange(1, 20)
         self.tts_conc.setValue(int(self.settings.get("tts_concurrency", 10)))
         f.addRow("Số câu TTS song song:", self.tts_conc)
-        self._add_scroll_tab(tab, "Giọng lồng tiếng")
+        self._add_scroll_tab(tab, "Giọng nói")
 
     # ------------------------------------------------------------ tab video
     def _build_video_tab(self) -> None:
@@ -270,7 +401,7 @@ class SettingsDialog(QDialog):
         btn_browse.clicked.connect(self.browse_ffmpeg)
         row.addWidget(btn_browse)
         f.addRow("Đường dẫn FFmpeg:", row)
-        self._add_scroll_tab(tab, "Video và phụ đề")
+        self._add_scroll_tab(tab, "Video / phụ đề")
 
     def browse_font(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -339,8 +470,8 @@ class SettingsDialog(QDialog):
 
     def save(self) -> None:
         if self.pitch_male.value() >= self.pitch_female.value():
-            error_box(self, "Ngưỡng pitch không hợp lệ",
-                      "Pitch tối đa của nam phải NHỎ HƠN pitch tối thiểu "
+            error_box(self, "Ngưỡng cao độ không hợp lệ",
+                      "Cao độ tối đa của nam phải nhỏ hơn cao độ tối thiểu "
                       "của nữ (giọng nam trầm hơn giọng nữ).")
             return
         names = [ln.strip() for ln in
@@ -384,5 +515,4 @@ class SettingsDialog(QDialog):
             "proper_nouns": names,
         })
         self.settings.save()
-        info_box(self, "Đã lưu", "Đã lưu cài đặt.")
         self.accept()
