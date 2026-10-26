@@ -30,6 +30,10 @@ def build_command(vsr_root, video, output, *, mode="sttn-det",
             f"VSR backend/main.py not found in {root}; install upstream VSR separately")
     if mode not in MODES:
         raise NeuralCleanupError("Unsupported neural inpainting mode: "+str(mode))
+    # Upstream STTN_AUTO skips detection; with no areas its CLI defaults to
+    # the FULL VIDEO FRAME. Refuse to inpaint every pixel accidentally.
+    if mode == "sttn-auto" and not areas:
+        raise NeuralCleanupError("STTN auto requires at least one reviewed subtitle area")
     cmd = [str(python_exe or sys.executable), str(script),
            "-i", str(Path(video).resolve()), "-o", str(Path(output).resolve()),
            "--inpaint-mode", mode]
