@@ -3,6 +3,10 @@ on:
   pull_request:
     paths:
       - 'media/visual_cleanup.py'
+      - 'media/visual_precise.py'
+      - 'media/visual_temporal.py'
+      - 'media/visual_cleanup_review.py'
+      - 'tests/test_visual_temporal.py'
       - 'media/render.py'
       - 'core/orchestrator.py'
       - 'core/settings.py'
@@ -34,4 +38,4 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest numpy 'opencv-python-headless>=4.8,<5'
       - name: Test synthetic OCR and render (no ASR / OCR weights)
-        run: pytest -q tests/test_visual_cleanup.py tests/test_render.py
+        run: pytest -q tests/test_visual_cleanup.py tests/test_visual_temporal.py tests/test_render.py
