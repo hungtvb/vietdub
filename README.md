@@ -114,7 +114,12 @@ Có 2 cách chạy — chọn 1:
    nhấn **Bắt đầu**. Bật **Chế độ qua đêm** nếu muốn máy tự chạy hết
    9 bước không dừng duyệt (sáng dậy có phim).
 2. Kết quả: `<tên video>_vidub.mp4` + file `.srt` trong thư mục đã chọn.
-   Log chi tiết từng job nằm ở `jobs/<mã job>/run.log`.
+   Log từng job nằm trong thư mục dữ liệu VietDub của tài khoản hiện tại:
+   `%LOCALAPPDATA%\VietDub\jobs\<mã job>\run.log` trên Windows (dùng
+   `%APPDATA%` nếu `%LOCALAPPDATA%` không có),
+   `~/Library/Application Support/VietDub/jobs/<mã job>/run.log` trên macOS,
+   hoặc `$XDG_DATA_HOME/VietDub/jobs/<mã job>/run.log` trên Linux
+   (mặc định `~/.local/share/VietDub/jobs/<mã job>/run.log`).
 3. Tại màn thành phẩm, chọn **Biên tập video** để kéo mép đoạn video cần
    giữ, kéo hoặc chỉnh thời gian và nội dung từng phụ đề, thêm/xóa câu, rồi
    chọn ảnh logo, vị trí, kích thước và độ mờ. Timeline có thanh zoom và
