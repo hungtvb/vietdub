@@ -54,8 +54,8 @@ class ReviewViWindow(QWidget):
             pio.load_segments(job.job_dir, "translate") or []
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 16, 18, 15)
-        root.setSpacing(10)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
         header = QFrame()
         header.setObjectName("workflowHeader")
         header_lay = QVBoxLayout(header)

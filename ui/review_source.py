@@ -174,8 +174,8 @@ class ReviewSourceWindow(QWidget):
         self._close_via_button = False
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 16, 18, 15)
-        root.setSpacing(10)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
         header = QFrame()
         header.setObjectName("workflowHeader")
         header_lay = QVBoxLayout(header)
