@@ -5,6 +5,7 @@ on:
       - 'media/visual_cleanup.py'
       - 'media/visual_precise.py'
       - 'media/visual_temporal.py'
+      - 'media/visual_scene_guard.py'
       - 'media/visual_cleanup_review.py'
       - 'tests/test_visual_temporal.py'
       - 'media/render.py'
@@ -41,5 +42,5 @@ jobs:
           pip install pytest numpy 'opencv-python-headless>=4.8,<5'
       - name: Test synthetic OCR and render (no ASR / OCR weights)
         run: |
-         python -m compileall -q core/orchestrator.py media/editor.py media/visual_cleanup.py media/visual_temporal.py media/visual_cleanup_review.py ui/settings_dialog.py
+         python -m compileall -q core/orchestrator.py media/editor.py media/visual_cleanup.py media/visual_temporal.py media/visual_scene_guard.py media/visual_cleanup_review.py ui/settings_dialog.py
          pytest -q tests/test_visual_cleanup.py tests/test_visual_temporal.py tests/test_render.py tests/test_editor_none.py
