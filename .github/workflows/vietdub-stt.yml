@@ -4,11 +4,15 @@ on:
     paths:
       - 'asr/vietdub_stt_adapter.py'
       - 'asr/factory.py'
+      - 'core/settings.py'
+      - 'ui/settings_dialog.py'
+      - 'requirements.txt'
       - 'tests/test_vietdub_stt_adapter.py'
       - 'tests/test_vietdub_stt_http_e2e.py'
       - '.github/workflows/vietdub-stt.yml'
   push:
     branches:
+      - 'main'
       - 'feat/optional-vietdub-stt'
 jobs:
   stt-adapter:
