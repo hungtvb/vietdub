@@ -12,8 +12,12 @@ Video stream is copied untouched when not burning (fast, lossless).
 """
 from __future__ import annotations
 
+import json
 import logging
+import math
 import os
+import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -26,6 +30,60 @@ log = logging.getLogger("vietdub.render")
 
 class RenderError(Exception):
     pass
+
+
+def _video_duration_seconds(video: Path) -> float:
+    """Get the actual video-stream duration for accurate audio padding.
+
+    Do NOT use -af apad together with -shortest on static FFmpeg 7: the
+    infinite audio stream can cause the mux to hang even after video EOF.
+    Prefer video-stream metadata, with a decoded CFR fallback when the
+    portable FFmpeg distribution has no ffprobe executable.
+    """
+    probe_bin = _bin.ffprobe_cmd()
+    if shutil.which(probe_bin) or Path(probe_bin).is_file():
+        p = subprocess.run(
+            [probe_bin, "-v", "error", "-show_streams", "-show_format",
+             "-of", "json", str(video)], capture_output=True, text=True)
+        if p.returncode == 0:
+            try:
+                info = json.loads(p.stdout)
+                stream = next((x for x in info.get("streams", [])
+                               if x.get("codec_type") == "video"), {})
+                frames = int(stream.get("nb_frames") or 0)
+                rate = stream.get("avg_frame_rate") or stream.get("r_frame_rate") or ""
+                if frames > 0 and "/" in rate:
+                    num, den = map(int, rate.split("/"))
+                    if num > 0 and den > 0:
+                        return frames * den / num
+                duration = float(stream.get("duration") or
+                                 info.get("format", {}).get("duration") or 0)
+                if math.isfinite(duration) and duration > 0:
+                    return duration
+            except (ValueError, TypeError, StopIteration):
+                pass
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(video))
+        try:
+            n = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            if cap.isOpened() and math.isfinite(fps) and fps > 0 and n > 0:
+                return n / fps
+        finally:
+            cap.release()
+    except ImportError:
+        pass
+    # Portable FFmpeg build without ffprobe or optional OpenCV.
+    p = subprocess.run([_bin.ffmpeg_cmd(), "-hide_banner", "-i", str(video)],
+                       capture_output=True, text=True)
+    match = re.search(r"Duration: (\\d{2}):(\\d{2}):(\\d{2}\\.\\d+)", p.stderr)
+    if match:
+        hh, mm, ss = match.groups()
+        duration = int(hh)*3600 + int(mm)*60 + float(ss)
+        if duration > 0:
+            return duration
+    raise RenderError(f"Cannot determine source VIDEO duration for {video}")
 
 
 def _escape_sub_path(srt_path: Path) -> str:
@@ -136,6 +194,7 @@ def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
     video_in, mixed_wav, out_mp4 = Path(video_in), Path(mixed_wav), Path(out_mp4)
     srt_path = Path(srt_path)
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
+    video_duration = _video_duration_seconds(video_in)
     for f, name in ((video_in, "video"), (mixed_wav, "audio đã trộn")):
         if not f.exists():
             raise RenderError(f"Không tìm thấy {name}: {f}")
@@ -144,7 +203,7 @@ def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
         cmd = [_bin.ffmpeg_cmd(), "-y", "-i", str(video_in), "-i", str(mixed_wav),
                "-map", "0:v", "-map", "1:a",
                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-               "-af", "apad", "-shortest"]
+               "-af", "apad", "-t", f"{video_duration:.8f}"]
     elif sub_mode == "burn":
         if not srt_path.exists():
             raise RenderError(f"Không tìm thấy file phụ đề: {srt_path}")
@@ -167,7 +226,7 @@ def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
                "-c:v", "libx264", "-crf", str(crf), "-preset", "medium",
                "-pix_fmt", "yuv420p",
                "-c:a", "aac", "-b:a", "192k",
-               "-af", "apad", "-shortest"]
+               "-af", "apad", "-t", f"{video_duration:.8f}"]
     else:
         raise RenderError(f"sub_mode không hợp lệ: {sub_mode} (chọn 'burn', 'srt' hoặc 'none')")
 
