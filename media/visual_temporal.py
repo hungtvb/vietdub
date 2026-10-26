@@ -91,27 +91,7 @@ class TemporalCleanPlate:
                               "_donor_rows":(ya,yb)}
                     self.items.append(Prepared(adjusted,box,alpha[oy1:oy2,ox1:ox2]))
                     continue
-                if r["source"] == "flat-strip-repaint":
-                x1,y1,x2,y2=r["_effective_box"]
-                donor_a,donor_b=r["_donor_rows"]
-                donor=np.median(frame[donor_a:donor_b].astype(np.float32),axis=0)
-                lefta,leftb=r["_left_samples"]
-                righta,rightb=r["_right_samples"]
-                donor_left=np.median(donor[lefta:leftb],axis=0)
-                donor_right=np.median(donor[righta:rightb],axis=0)
-                weights=np.linspace(0,1,self.w,dtype=np.float32)[x1:x2,None]
-                patch=np.empty((y2-y1,x2-x1,3),np.uint8)
-                for row,y in enumerate(range(y1,y2)):
-                    left=np.median(frame[y,lefta:leftb],axis=0)-donor_left
-                    right=np.median(frame[y,righta:rightb],axis=0)-donor_right
-                    patch[row]=np.clip(donor[x1:x2]+left*(1-weights)+
-                                       right*weights,0,255).astype(np.uint8)
-                original=out[y1:y2,x1:x2]
-                mixed=original.astype(np.float32)*(1-p.alpha[:,:,None])+patch.astype(np.float32)*p.alpha[:,:,None]
-                out[y1:y2,x1:x2]=np.where(p.alpha[:,:,None]>=.0005,
-                                          np.clip(mixed,0,255).astype(np.uint8),original)
-                continue
-            if r["source"] == "exemplar-patch":
+                if r["source"] == "exemplar-patch":
                     donor = _xyxy(r.get("donor_box", ()), self.w, self.h)
                     if (donor[2]-donor[0], donor[3]-donor[1]) != (x2-x1, y2-y1):
                         raise TemporalPlanError("donor and destination sizes differ")
@@ -183,6 +163,26 @@ class TemporalCleanPlate:
         for p in self.items:
             r = p.region
             if not (float(r["start"])*self.fps <= n < float(r["end"])*self.fps):
+                continue
+            if r["source"] == "flat-strip-repaint":
+                x1,y1,x2,y2=r["_effective_box"]
+                donor_a,donor_b=r["_donor_rows"]
+                donor=np.median(frame[donor_a:donor_b].astype(np.float32),axis=0)
+                lefta,leftb=r["_left_samples"]
+                righta,rightb=r["_right_samples"]
+                donor_left=np.median(donor[lefta:leftb],axis=0)
+                donor_right=np.median(donor[righta:rightb],axis=0)
+                weights=np.linspace(0,1,self.w,dtype=np.float32)[x1:x2,None]
+                patch=np.empty((y2-y1,x2-x1,3),np.uint8)
+                for row,y in enumerate(range(y1,y2)):
+                    left=np.median(frame[y,lefta:leftb],axis=0)-donor_left
+                    right=np.median(frame[y,righta:rightb],axis=0)-donor_right
+                    patch[row]=np.clip(donor[x1:x2]+left*(1-weights)+
+                                       right*weights,0,255).astype(np.uint8)
+                original=out[y1:y2,x1:x2]
+                mixed=original.astype(np.float32)*(1-p.alpha[:,:,None])+patch.astype(np.float32)*p.alpha[:,:,None]
+                out[y1:y2,x1:x2]=np.where(p.alpha[:,:,None]>=.0005,
+                                          np.clip(mixed,0,255).astype(np.uint8),original)
                 continue
             if r["source"] == "exemplar-patch":
                 x1,y1,x2,y2=p.box
