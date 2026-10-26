@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -26,3 +27,26 @@ def atomic_write_json(path: Path, payload: dict) -> None:
         except OSError:
             pass
         raise
+
+
+def quarantine_file(path: Path) -> Path:
+    """Preserve a bad JSON file at an exclusive ``.corrupt`` sibling.
+
+    The source is left in place. Linking the temporary copy creates the
+    destination only when no file or symlink already occupies its name.
+    """
+    path = Path(path)
+    corrupt = path.with_name(path.name + ".corrupt")
+    fd, name = tempfile.mkstemp(prefix=f".{corrupt.name}.", suffix=".tmp",
+                                dir=str(path.parent))
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as destination, path.open("rb") as source:
+            shutil.copyfileobj(source, destination)
+        os.link(temporary, corrupt, follow_symlinks=False)
+        return corrupt
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass

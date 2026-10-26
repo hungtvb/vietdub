@@ -5,14 +5,13 @@ import json
 import math
 import os
 import re
-import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from core.job import JOBS_ROOT, Job
-from core.json_io import atomic_write_json
+from core.json_io import atomic_write_json, quarantine_file
 from core.checkpoint import STEPS
 
 SCHEMA_VERSION = 1
@@ -92,28 +91,18 @@ class JobStore:
             return JobRecord(**payload)
         except (UnicodeError, json.JSONDecodeError, TypeError,
                 KeyError, JobRecordError, ValueError) as exc:
-            self._quarantine_copy(path, raw)
-            if isinstance(exc, JobRecordError):
-                raise
-            raise JobRecordError(f"invalid job record for {job_id}: {exc}") from exc
-
-    @staticmethod
-    def _quarantine_copy(path: Path, raw: bytes) -> None:
-        """Copy malformed bytes to an exclusive sibling without replacing anything."""
-        corrupt = path.with_name(path.name + ".corrupt")
-        fd, name = tempfile.mkstemp(prefix=f".{corrupt.name}.", suffix=".tmp",
-                                    dir=str(path.parent))
-        temporary = Path(name)
-        try:
-            with os.fdopen(fd, "wb") as stream:
-                stream.write(raw)
-            # Hard-link creation is atomic and fails if any directory entry,
-            # including a dangling symlink, already occupies the target.
-            os.link(temporary, corrupt, follow_symlinks=False)
-        except FileExistsError:
-            pass
-        finally:
-            temporary.unlink(missing_ok=True)
+            reason = str(exc)
+            corrupt = path.with_name(path.name + ".corrupt")
+            try:
+                quarantine_file(path)
+            except OSError as quarantine_error:
+                raise JobRecordError(
+                    f"invalid job record for {job_id}: {reason}; "
+                    f"could not preserve at {corrupt}: {quarantine_error}"
+                ) from exc
+            raise JobRecordError(
+                f"invalid job record for {job_id}: {reason}; preserved at {corrupt}"
+            ) from exc
 
     def _source_identity(self, job: Job, *, refresh_download: bool = False) -> dict[str, Any] | None:
         project = job.project
