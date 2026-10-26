@@ -350,7 +350,20 @@ class VisualCleanup:
                 current = [r for r in current if r["end"] > t]
                 if clean_plate is not None:
                     frame = clean_plate.apply(frame, frame_n)
-                standard = [r for r in current if not is_temporal_region(r)]
+                # A manually reviewed clean-plate covering an OCR text box
+                # supersedes auto-blur; never erase freshly reconstructed
+                # background by applying the old OCR mask a second time.
+                approved = [r for r in current
+                            if r.get("source") == "temporal-clean-plate"]
+                standard = []
+                for r in current:
+                    if is_temporal_region(r):
+                        continue
+                    area = max(1, (r["box"][2]-r["box"][0]) *
+                                  (r["box"][3]-r["box"][1]))
+                    if any(_overlap(r["box"], q["box"]) > .5*area for q in approved):
+                        continue
+                    standard.append(r)
                 if standard and self.config.mode == "inpaint":
                     mask = np.zeros((h, w), dtype=np.uint8)
                     for r in standard:
