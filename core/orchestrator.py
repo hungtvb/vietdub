@@ -162,6 +162,13 @@ class Orchestrator:
             "backend": str(self.settings.get("visual_cleanup_backend", "cv")),
             "vsr_root": str(self.settings.get("visual_vsr_root", "")),
             "vsr_mode": str(self.settings.get("visual_vsr_mode", "sttn-det")),
+            "lama_weight_path": str(self.settings.get("visual_lama_weight_path", "")),
+            "lama_weight_stat": (
+                (Path(self.settings.get("visual_lama_weight_path")).stat().st_size,
+                 Path(self.settings.get("visual_lama_weight_path")).stat().st_mtime_ns)
+                if self.settings.get("visual_lama_weight_path")
+                and Path(self.settings.get("visual_lama_weight_path")).is_file()
+                else None),
             "mode": str(self.settings.get("visual_cleanup_mode", "blur")),
             "interval": float(self.settings.get("visual_cleanup_interval_sec", 0.65)),
             "min_hits": int(self.settings.get("visual_cleanup_min_hits", 2)),
@@ -574,6 +581,21 @@ class Orchestrator:
                     "reviewed_areas":boxes,"reviewed_windows":reviewed_windows,
                     "note":"External open-source model; validate the rendered result visually"},
                     ensure_ascii=False,indent=2),encoding="utf-8")
+            elif backend == "lama-cpu":
+                from media.visual_lama_cpu import render_lama_cpu
+                if not plan:
+                    raise ValueError("LaMa CPU requires reviewed neural-window regions JSON")
+                windows = [r for r in plan.get("regions",[])
+                           if r.get("source")=="neural-window"]
+                if not windows:
+                    raise ValueError("LaMa CPU plan has no approved neural-window regions")
+                video_for_render = render_lama_cpu(
+                    video_for_render,job.stages_dir/"visual_clean.mp4",
+                    model_path=str(self.settings.get("visual_lama_weight_path","")),
+                    regions=windows,ffmpeg=mbin.ffmpeg_cmd())
+                import json
+                visual_plan.write_text(
+                    json.dumps(plan,ensure_ascii=False,indent=2),encoding="utf-8")
             elif backend == "cv":
                 config = vclean.Config(
                     mode=str(self.settings.get("visual_cleanup_mode", "blur")),
