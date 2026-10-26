@@ -549,18 +549,29 @@ class Orchestrator:
                 from media.visual_neural import run_vsr
                 mode = str(self.settings.get("visual_vsr_mode", "sttn-det"))
                 root = str(self.settings.get("visual_vsr_root", "") or "")
-                boxes = [r["box"] for r in (plan or {}).get("regions", [])
-                         if r.get("kind") in ("subtitle", "text") and "box" in r]
-                video_for_render = run_vsr(
-                    root, video_for_render, job.stages_dir / "visual_clean.mp4",
-                    mode=mode, areas=boxes)
+                reviewed_windows = [r for r in (plan or {}).get("regions", [])
+                                    if r.get("source")=="neural-window"]
+                if reviewed_windows:
+                    from media.visual_neural_window import run_windowed_vsr
+                    video_for_render = run_windowed_vsr(
+                        root, video_for_render, job.stages_dir / "visual_clean.mp4",
+                        regions=reviewed_windows, mode=mode,
+                        ffmpeg=mbin.ffmpeg_cmd())
+                else:
+                    boxes = [r["box"] for r in (plan or {}).get("regions", [])
+                             if r.get("kind") in ("subtitle", "text") and "box" in r]
+                    video_for_render = run_vsr(
+                        root, video_for_render, job.stages_dir / "visual_clean.mp4",
+                        mode=mode, areas=boxes)
+                boxes = [r.get("box") for r in (plan or {}).get("regions", [])
+                         if r.get("box")]
                 # External model does its own OCR detection. Do not present
                 # this metadata as though it were PaddleOCR tracking boxes.
                 import json
                 visual_plan.write_text(json.dumps({
                     "backend": "vsr", "model": mode,
                     "source": str(Path(fetch_data.get("video_path") or proj.video_in).resolve()),
-                    "reviewed_areas":boxes,
+                    "reviewed_areas":boxes,"reviewed_windows":reviewed_windows,
                     "note":"External open-source model; validate the rendered result visually"},
                     ensure_ascii=False,indent=2),encoding="utf-8")
             elif backend == "cv":
