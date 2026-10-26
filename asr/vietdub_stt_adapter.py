@@ -14,7 +14,6 @@ from urllib.parse import urlsplit
 import requests
 
 from asr.funasr_adapter import ASRError, FunASRAdapter, _wav_duration_sec
-from asr.whisper_adapter import _speaker_for_interval
 from project.schema import Segment
 
 log = logging.getLogger("vietdub.asr.stt")
@@ -69,6 +68,8 @@ class VietDubSTTAdapter:
             raise ASRError("VietDub STT thiếu danh sách lời thoại.")
 
         segments: list[Segment] = []
+        unknown_speaker: list[int] = []
+        original_review: list[bool] = []
         for i, raw in enumerate(raw_segments):
             if not isinstance(raw, dict) or not isinstance(raw.get("text"), str):
                 raise ASRError(f"VietDub STT segment {i}: lỗi text.")
@@ -85,6 +86,9 @@ class VietDubSTTAdapter:
             if sid is not None and (isinstance(sid, bool)
                                     or not isinstance(sid, int) or sid < 0):
                 raise ASRError(f"VietDub STT segment {i}: speaker_id không hợp lệ.")
+            if sid is None:
+                unknown_speaker.append(len(segments))
+            original_review.append(bool(raw.get("needs_review")))
             segments.append(Segment(
                 index=len(segments), start=start, end=end,
                 speaker=sid if sid is not None else 0,
@@ -99,23 +103,26 @@ class VietDubSTTAdapter:
                 return []
             raise ASRError("VietDub STT không có câu nói mặc dù báo hoàn tất.")
 
-        if any(s.needs_review for s in segments):
-            # Reuse existing VietDub FunASR+CAM++ speaker labels, instead of
-            # fabricating all unknown speakers as one actor.
+        if unknown_speaker and self._diarizer:
+            # Reuse VietDub's CAM++ diarizer. Require majority coverage from
+            # speech turns; never map speakers by nearest turn in music/silence.
             try:
-                if self._diarizer:
-                    turns = self._diarizer.transcribe(source)
-                    for segment in segments:
-                        if segment.needs_review and turns:
-                            segment.speaker = _speaker_for_interval(
-                                segment.start, segment.end, turns)
-                            # Label from CAM++; transcript still needs human QA
-                            # when upstream marked a timing or transcription issue.
-                            segment.needs_review = bool(
-                                next((r.get("needs_review") for r in raw_segments
-                                      if r.get("text", "").strip() == segment.text_src
-                                      and abs(float(r["start"]) - segment.start) < 0.001), False))
-                # A missing diarizer is review-required, never silent success.
+                turns = self._diarizer.transcribe(source)
+                for index in unknown_speaker:
+                    segment = segments[index]
+                    overlaps: dict[int, float] = {}
+                    for turn in turns:
+                        overlap = max(0.0, min(segment.end, turn.end)
+                                      - max(segment.start, turn.start))
+                        if overlap > 0:
+                            overlaps[turn.speaker] = overlaps.get(turn.speaker, 0.0) + overlap
+                    if overlaps:
+                        best_id = max(overlaps, key=overlaps.get)
+                        if overlaps[best_id] >= (segment.end - segment.start) * 0.5:
+                            segment.speaker = best_id
+                            segment.needs_review = original_review[index]
+                # If no coverage, speaker 0 is a required compatibility
+                # placeholder and the segment stays needs_review=True.
             except Exception as exc:  # noqa: BLE001
                 log.warning("CAM++ unable to label STT speakers: %s", exc)
         return segments
