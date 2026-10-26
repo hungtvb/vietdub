@@ -11,7 +11,10 @@ from typing import Sequence
 
 from media import _bin
 from media.extract import probe
-from media.render import RenderError, _ass_color, _escape_sub_path
+from media.output import next_available_output_path
+from media.render import (RenderError, _ass_color, _cleanup_temporary,
+                          _escape_sub_path, _publish_rendered_mp4,
+                          _temporary_output)
 from media.subs import write_srt
 from project.schema import Segment
 
@@ -40,16 +43,17 @@ def export_edit(video_in: str | Path, mixed_wav: str | Path,
         raise RenderError("Kích thước hoặc độ mờ logo không hợp lệ.")
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    temp = target.with_name(target.stem + ".partial.mp4")
-    temp_srt = temp.with_suffix(".srt")
-    target_srt = target.with_suffix(".srt")
+    selected = next_available_output_path(target, (".srt",))
     # Preserve the editor's absolute timeline; the exported file begins at 0.
     clipped = [replace(s, start=max(s.start, trim_start) - trim_start,
                        end=min(s.end, trim_end) - trim_start)
                for s in segments if s.text_vi.strip()
                and s.end > trim_start and s.start < trim_end]
-    srt = write_srt(clipped, temp_srt)
+    temp = _temporary_output(target.parent, ".mp4")
+    temp_srt = None
     try:
+        temp_srt = _temporary_output(target.parent, ".srt")
+        srt = write_srt(clipped, temp_srt)
         filters = [
             f"[0:v]trim=start={trim_start:.3f}:end={trim_end:.3f},"
             "setpts=PTS-STARTPTS[v0]",
@@ -98,9 +102,6 @@ def export_edit(video_in: str | Path, mixed_wav: str | Path,
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0 or not temp.is_file():
             raise RenderError(f"Xuất video thất bại:\n{result.stderr[-900:]}")
-        temp.replace(target)
-        temp_srt.replace(target_srt)
-        return target
+        return _publish_rendered_mp4(temp, target, selected, temp_srt)
     finally:
-        temp.unlink(missing_ok=True)
-        temp_srt.unlink(missing_ok=True)
+        _cleanup_temporary(temp, temp_srt)

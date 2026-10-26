@@ -494,15 +494,16 @@ class Orchestrator:
         out_mp4 = Path(proj.video_out or str(job.job_dir / out_name))
         sub_mode = (self.settings.get("sub_mode", proj.sub_mode)
                     or proj.sub_mode or "burn")
-        mrender.render(fetch_data.get("video_path") or proj.video_in,
-                       mix_data["mixed_wav"], srt_path, out_mp4,
-                       sub_mode=sub_mode,
-                       crf=int(self.settings.get("crf", 20)),
-                       font=(self.settings.get("sub_font", "") or "").strip(),
-                       font_size=int(self.settings.get("sub_font_size", 0) or 0),
-                       font_color=(self.settings.get("sub_font_color", "") or "").strip())
-        proj.video_out = str(out_mp4)
-        render_data = {"video_out": str(out_mp4), "srt": str(srt_path)}
+        rendered = mrender.render(
+            fetch_data.get("video_path") or proj.video_in,
+            mix_data["mixed_wav"], srt_path, out_mp4,
+            sub_mode=sub_mode,
+            crf=int(self.settings.get("crf", 20)),
+            font=(self.settings.get("sub_font", "") or "").strip(),
+            font_size=int(self.settings.get("sub_font_size", 0) or 0),
+            font_color=(self.settings.get("sub_font_color", "") or "").strip())
+        proj.video_out = str(rendered)
+        render_data = {"video_out": str(rendered), "srt": str(srt_path)}
         if sub_mode == "srt":
-            render_data["srt_out"] = str(out_mp4.with_suffix(".srt"))
+            render_data["srt_out"] = str(rendered.with_suffix(".srt"))
         cp.save_step(job.job_dir, "render", render_data)
