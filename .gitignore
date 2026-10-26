@@ -11,4 +11,5 @@ build/
 dist/
 hidden_files/
 jobs/
+.worktrees/
 wireframe/
