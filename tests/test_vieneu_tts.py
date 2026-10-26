@@ -106,3 +106,92 @@ def test_invalid_engine_config_rejected():
         VieNeuTTS(backend="banana")
     with pytest.raises(ValueError, match="precision"):
         VieNeuTTS(precision="fp16")
+
+def test_provider_uses_pinned_job_options_over_modified_globals(tmp_path):
+    settings = Settings(path=tmp_path / "s.json")
+    settings.update({
+        "tts_provider": "vieneu",
+        "vieneu_backend": "pytorch",
+        "vieneu_precision": "int8",
+        "tts_rate": "+40%",
+        "tts_pitch": "+20Hz",
+    })
+    local = create_tts(
+        settings, provider="vieneu", vieneu_backend="onnx",
+        vieneu_precision="fp32", voice_male="Hải Đăng")
+    assert local.backend == "onnx"
+    assert local.precision == "fp32"
+    edge = create_tts(
+        settings, provider="edge", rate="-10%", pitch="+0Hz")
+    assert edge.rate == "-10%"
+    assert edge.pitch == "+0Hz"
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_fitted_wav_cannot_be_reused_as_original_tts_cache(tmp_path):
+    from tts.duration_fit import apply_plan
+    fake = FakeVieNeu()
+    tts = VieNeuTTS(engine_factory=lambda *args: fake)
+    seg = sample()
+    tts.synthesize([seg], tmp_path)
+    manifest = tmp_path / "seg_0001.md5"
+    assert manifest.is_file()
+    apply_plan([(seg, "atempo", 1.25)])
+    assert not manifest.exists()
+    fresh = sample()
+    tts.synthesize([fresh], tmp_path)
+    assert len(fake.calls) == 2
+    assert manifest.is_file()
+    assert sf.info(fresh.audio_vi).frames == 44100
+
+
+def test_tts_checkpoint_invalidated_for_pinned_voice_and_model_changes(tmp_path, monkeypatch):
+    import core.job as jobmod
+    from core import checkpoint as cp
+    from core.job import Job
+    from core.orchestrator import Orchestrator
+
+    monkeypatch.setattr(jobmod, "JOBS_ROOT", tmp_path / "jobs")
+    job = Job(project=Project(
+        tts_provider="vieneu", voice_male="Hải Đăng",
+        voice_female="Mai Anh", vieneu_backend="onnx",
+        vieneu_precision="fp32"))
+    settings = Settings(path=tmp_path / "s.json")
+    orch = Orchestrator(job, settings)
+    wav = job.stages_dir / "tts" / "dub_track.wav"
+    wav.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(wav), np.zeros(4410, dtype=np.float32), 44100)
+    cp.save_step(job.job_dir, "tts", {"segments": []})
+    cp.save_step(job.job_dir, "tts_meta", {
+        "dub_track": str(wav), "tts_config": orch._tts_config()})
+    assert orch._has_step("tts")
+
+    # Global config edits must NOT alter the output of an already created job.
+    settings.set("vieneu_backend", "pytorch")
+    settings.set("vieneu_precision", "int8")
+    assert orch._has_step("tts")
+    assert orch._tts_config()["backend"] == "onnx"
+
+    job.project.vieneu_backend = "pytorch"
+    assert not orch._has_step("tts")
+    job.project.vieneu_backend = "onnx"
+    job.project.voice_male = "Thiện Minh"
+    assert not orch._has_step("tts")
+
+
+def test_legacy_edge_tts_checkpoint_is_still_readable(tmp_path, monkeypatch):
+    import core.job as jobmod
+    from core import checkpoint as cp
+    from core.job import Job
+    from core.orchestrator import Orchestrator
+
+    monkeypatch.setattr(jobmod, "JOBS_ROOT", tmp_path / "jobs")
+    job = Job(project=Project())
+    orch = Orchestrator(job, Settings(path=tmp_path / "s.json"))
+    wav = job.stages_dir / "old-track.wav"
+    sf.write(str(wav), np.zeros(4410, dtype=np.float32), 44100)
+    cp.save_step(job.job_dir, "tts", {"segments": []})
+    cp.save_step(job.job_dir, "tts_meta", {"dub_track": str(wav)})
+    assert orch._has_step("tts")
+    job.project.tts_provider = "vieneu"
+    assert not orch._has_step("tts")
