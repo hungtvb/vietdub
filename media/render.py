@@ -140,7 +140,7 @@ def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
         if not f.exists():
             raise RenderError(f"Không tìm thấy {name}: {f}")
 
-    if sub_mode == "srt":
+    if sub_mode in {"srt", "none"}:
         cmd = [_bin.ffmpeg_cmd(), "-y", "-i", str(video_in), "-i", str(mixed_wav),
                "-map", "0:v", "-map", "1:a",
                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
@@ -169,7 +169,7 @@ def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
                "-c:a", "aac", "-b:a", "192k",
                "-shortest"]
     else:
-        raise RenderError(f"sub_mode không hợp lệ: {sub_mode} (chọn 'burn' hoặc 'srt')")
+        raise RenderError(f"sub_mode không hợp lệ: {sub_mode} (chọn 'burn', 'srt' hoặc 'none')")
 
     paired = (".srt",) if sub_mode == "srt" else ()
     selected = next_available_output_path(out_mp4, paired)
