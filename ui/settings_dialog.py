@@ -397,6 +397,9 @@ class SettingsDialog(QDialog):
         self.visual_cleanup_enabled = QCheckBox("Tự động làm mờ chữ/logo gốc (cần PaddleOCR)")
         self.visual_cleanup_enabled.setChecked(bool(self.settings.get("visual_cleanup_enabled", False)))
         f.addRow(self.visual_cleanup_enabled)
+        self.visual_cleanup_auto_logo = QCheckBox("Thử nhận diện logo cố định (nguy cơ nhầm vùng; cần kiểm duyệt)")
+        self.visual_cleanup_auto_logo.setChecked(bool(self.settings.get("visual_cleanup_auto_logo", False)))
+        f.addRow(self.visual_cleanup_auto_logo)
         self.visual_cleanup_mode = QComboBox()
         self.visual_cleanup_mode.addItem("Làm mờ Gaussian (nhanh)", "blur")
         self.visual_cleanup_mode.addItem("Inpaint Telea (xóa và lấp nền)", "inpaint")
@@ -484,6 +487,7 @@ class SettingsDialog(QDialog):
         self.tts_conc.setValue(int(DEFAULTS["tts_concurrency"]))
         self.sub_mode.setCurrentIndex(max(0, self.sub_mode.findData(DEFAULTS["sub_mode"])))
         self.visual_cleanup_enabled.setChecked(bool(DEFAULTS["visual_cleanup_enabled"]))
+        self.visual_cleanup_auto_logo.setChecked(bool(DEFAULTS["visual_cleanup_auto_logo"]))
         self.visual_cleanup_mode.setCurrentIndex(max(0,
             self.visual_cleanup_mode.findData(DEFAULTS["visual_cleanup_mode"])))
         self.visual_cleanup_interval.setValue(float(DEFAULTS["visual_cleanup_interval_sec"]))
@@ -534,6 +538,7 @@ class SettingsDialog(QDialog):
             "tts_concurrency": self.tts_conc.value(),
             "sub_mode": self.sub_mode.currentData(),
             "visual_cleanup_enabled": self.visual_cleanup_enabled.isChecked(),
+            "visual_cleanup_auto_logo": self.visual_cleanup_auto_logo.isChecked(),
             "visual_cleanup_mode": self.visual_cleanup_mode.currentData(),
             "visual_cleanup_interval_sec": self.visual_cleanup_interval.value(),
             "sub_font": self.sub_font.text().strip(),
