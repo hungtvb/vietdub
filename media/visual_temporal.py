@@ -12,6 +12,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from media.visual_scene_guard import validate_clean_plate_shot
+
 
 class TemporalPlanError(ValueError):
     pass
@@ -114,6 +116,14 @@ class TemporalCleanPlate:
                 flow_height = int(r.get("flow_height", y1-2))
                 if not 40 <= flow_height <= y1:
                     raise TemporalPlanError("flow_height must lie above overlay and >=40")
+                # A clean reference pair may be valid geometrically but
+                # belong to entirely different shots. Reject before any
+                # frame is modified; the user must re-annotate or choose
+                # another reviewed restoration method.
+                try:
+                    validate_clean_plate_shot(cap, a, b, flow_height)
+                except ValueError as exc:
+                    raise TemporalPlanError(str(exc)) from exc
                 refs = []
                 for idx in (a, b):
                     cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
