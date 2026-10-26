@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import requests
+from requests_toolbelt.multipart.encoder import MultipartEncoder
 
 from asr.funasr_adapter import ASRError, FunASRAdapter, _wav_duration_sec
 from project.schema import Segment
@@ -35,22 +36,33 @@ class VietDubSTTAdapter:
         self.url = url + "/v1/transcribe"
         self.quality = quality
         self.language = source_language or "zh"
-        self.proper_nouns = list(proper_nouns or [])
+        self.proper_nouns = [name.strip()[:100] for name in (proper_nouns or [])
+                             if isinstance(name, str) and name.strip()][:30]
         self._diarizer = diarizer
 
     def transcribe(self, wav_path: str | Path) -> list[Segment]:
         source = Path(wav_path)
         duration = _wav_duration_sec(source)
-        # Read source from a file handle; requests may still buffer multipart\n        # encoding, so memory usage needs E2E measurement on long films.
+        # Match server upload limit before opening/streaming the request.
+        if source.stat().st_size > 512 * 1024 * 1024:
+            raise ASRError("Audio lớn hơn giới hạn VietDub STT 512 MiB.")
         try:
             with source.open("rb") as fp:
-                response = requests.post(
-                    self.url,
-                    files={"file": (source.name, fp, "audio/wav")},
-                    data={"language": self.language, "quality": self.quality,
-                          "proper_nouns": json.dumps(self.proper_nouns, ensure_ascii=False)},
-                    timeout=(5, 7200),
-                )
+                encoder = MultipartEncoder(fields={
+                    "file": (source.name, fp, "audio/wav"),
+                    "language": self.language,
+                    "quality": self.quality,
+                    "proper_nouns": json.dumps(self.proper_nouns, ensure_ascii=False),
+                })
+                # Do not buffer complete long-film WAV files in RAM.
+                # Ignore environment proxies for loopback-only requests.
+                with requests.Session() as session:
+                    session.trust_env = False
+                    response = session.post(
+                        self.url, data=encoder,
+                        headers={"Content-Type": encoder.content_type},
+                        timeout=(5, 7200),
+                    )
             response.raise_for_status()
             payload = response.json()
         except (requests.RequestException, OSError, ValueError) as exc:
@@ -67,6 +79,11 @@ class VietDubSTTAdapter:
         if not isinstance(raw_segments, list):
             raise ASRError("VietDub STT thiếu danh sách lời thoại.")
 
+        if payload["status"] == "no_speech":
+            # Do not advance the dubbing pipeline as if ASR had succeeded.
+            raise ASRError(
+                "VietDub STT không phát hiện thoại. Hãy kiểm tra audio/ASR "
+                "trước khi tiếp tục lồng tiếng.")
         segments: list[Segment] = []
         unknown_speaker: list[int] = []
         original_review: list[bool] = []
@@ -88,19 +105,27 @@ class VietDubSTTAdapter:
                 raise ASRError(f"VietDub STT segment {i}: speaker_id không hợp lệ.")
             if sid is None:
                 unknown_speaker.append(len(segments))
-            original_review.append(bool(raw.get("needs_review")))
+            raw_confidence = raw.get("confidence")
+            if raw_confidence is not None:
+                if isinstance(raw_confidence, bool) or not isinstance(
+                        raw_confidence, (int, float)):
+                    raise ASRError(f"VietDub STT segment {i}: confidence không hợp lệ.")
+                confidence = float(raw_confidence)
+                if not math.isfinite(confidence) or not 0 <= confidence <= 1:
+                    raise ASRError(f"VietDub STT segment {i}: confidence ngoài [0,1].")
+            else:
+                # The engine returns null until calibrated scores exist.
+                confidence = 0.0
+            review = bool(raw.get("needs_review")) or raw_confidence is None
+            original_review.append(review)
             segments.append(Segment(
                 index=len(segments), start=start, end=end,
                 speaker=sid if sid is not None else 0,
-                text_src=raw["text"].strip(), confidence=1.0,
-                # No credible score supplied: never invent certainty.
-                needs_review=bool(raw.get("needs_review")) or sid is None,
+                text_src=raw["text"].strip(), confidence=confidence,
+                needs_review=review or sid is None,
             ))
 
         if not segments:
-            if payload["status"] == "no_speech":
-                log.warning("VietDub STT reports no speech, check input audio.")
-                return []
             raise ASRError("VietDub STT không có câu nói mặc dù báo hoàn tất.")
 
         if unknown_speaker and self._diarizer:
