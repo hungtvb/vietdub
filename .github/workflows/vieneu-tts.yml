@@ -28,7 +28,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest numpy soundfile PySide6
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
+          sudo apt-get install -y -qq ffmpeg libegl1 libopengl0 libxkbcommon-x11-0 libdbus-1-3
           ffmpeg -version
       - name: Compile touched Python modules
         run: python -m compileall -q core project tts ui tests/test_vieneu_tts.py tests/test_vieneu_ui.py
