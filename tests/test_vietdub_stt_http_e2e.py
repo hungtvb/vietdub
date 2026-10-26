@@ -10,7 +10,6 @@ import threading
 import wave
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
