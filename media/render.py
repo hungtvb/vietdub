@@ -64,9 +64,23 @@ def _cleanup_temporary(*paths: Path | None) -> None:
                 log.warning("Could not remove temporary output %s: %s", path, exc)
 
 
+def _remove_our_published_link(source: Path, target: Path) -> None:
+    """Remove a destination only while it still aliases our temp artifact."""
+    try:
+        same_file = os.path.samefile(source, target)
+    except FileNotFoundError:
+        return
+    if same_file:
+        target.unlink(missing_ok=True)
+
+
 def _publish_rendered_mp4(temp_mp4: Path, requested: Path, selected: Path,
                           temp_srt: Path | None = None) -> Path:
-    """Retry MP4 name collisions while no final member has been published."""
+    """Publish an export, retrying when either member of an SRT pair collides.
+
+    Keep both temporary files until the pair is complete so a sidecar race can
+    roll back the MP4 link and try the next common basename.
+    """
     paired = (".srt",) if temp_srt is not None else ()
     while True:
         # A paired name may have appeared while ffmpeg was rendering. Pick a
@@ -74,20 +88,44 @@ def _publish_rendered_mp4(temp_mp4: Path, requested: Path, selected: Path,
         if os.path.lexists(selected) or any(
                 os.path.lexists(selected.with_suffix(ext)) for ext in paired):
             selected = next_available_output_path(requested, paired)
+        if temp_srt is None:
+            try:
+                publish_no_replace(temp_mp4, selected)
+            except FileExistsError:
+                selected = next_available_output_path(requested, paired)
+                continue
+            return selected
+
         try:
-            publish_no_replace(temp_mp4, selected)
+            os.link(temp_mp4, selected)
         except FileExistsError:
             selected = next_available_output_path(requested, paired)
             continue
-        if temp_srt is not None:
+
+        sidecar = selected.with_suffix(".srt")
+        try:
+            os.link(temp_srt, sidecar)
+        except FileExistsError:
+            # Remove the MP4 only while it still refers to our temporary file;
+            # this avoids deleting a path another process replaced meanwhile.
             try:
-                publish_no_replace(temp_srt, selected.with_suffix(".srt"))
+                _remove_our_published_link(temp_mp4, selected)
             except OSError as exc:
-                # The completed MP4 is now final. Deleting it could remove a
-                # replacement installed by another process after publication.
                 raise RenderError(
-                    f"Không thể xuất phụ đề cạnh video đã lưu: {selected}"
+                    f"Không thể hoàn tất cặp video/phụ đề; kiểm tra {selected}"
                 ) from exc
+            selected = next_available_output_path(requested, paired)
+            continue
+        except OSError as exc:
+            try:
+                _remove_our_published_link(temp_mp4, selected)
+            except OSError as cleanup_exc:
+                raise RenderError(
+                    f"Không thể xuất phụ đề; video có thể còn tại {selected}"
+                ) from cleanup_exc
+            raise RenderError(
+                f"Không thể xuất phụ đề cạnh video: {selected}"
+            ) from exc
         return selected
 
 
