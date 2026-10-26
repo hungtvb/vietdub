@@ -484,9 +484,11 @@ Chạy end-to-end trên clip test 55s (phóng viên + ông Lý):
 
 **Wave 3 — đóng gói + test:** 11. PyInstaller .exe → 12. test end-to-end theo mục 12.
 
-## Future: batch queue (Tony dặn 2026-10-08 — KHÔNG code trong 3 wave hiện tại)
+## Batch queue (phased follow-up; originally deferred on 2026-10-08)
 
 Ý tưởng: hàng đợi chạy nhiều video lần lượt tự động (xếp N video, đi ngủ, sáng dậy có N video đã lồng tiếng).
+
+Ngày 2026-10-26, người dùng yêu cầu bắt đầu phát triển tính năng mới theo phase. Phase đầu giới hạn ở video local, xử lý tuần tự trong phiên app hiện tại. Không quảng bá đây là chế độ khôi phục qua đêm sau khi khởi động lại cho đến khi manifest hàng đợi được lưu bền vững. Lộ trình hiện tại nằm trong `docs/superpowers/specs/2026-10-26-vietdub-functional-roadmap.md`.
 
 Yêu cầu kiến trúc ngay từ bây giờ (để sau này không phải đập đi làm lại):
 
