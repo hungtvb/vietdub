@@ -26,7 +26,7 @@ def main(argv=None):
     plan = json.loads(args.plan.read_text(encoding="utf-8"))
     if str(args.video.resolve()) != plan.get("source"):
         raise VisualCleanupError("The review plan belongs to another source video")
-    if not any(r.get("source") in ("temporal-clean-plate", "exemplar-patch")
+    if not any(r.get("source") in ("temporal-clean-plate", "exemplar-patch", "flat-strip-repaint")
                for r in plan.get("regions", [])):
         raise VisualCleanupError("Plan lacks operator-reviewed clean-plate regions")
     output = VisualCleanup(Config(mode=args.mode,auto_logo=False)).render(
