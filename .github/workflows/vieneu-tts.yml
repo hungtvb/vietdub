@@ -35,4 +35,4 @@ jobs:
       - name: VieNeu provider + GUI smoke tests (no actual model download)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q -rs tests/test_vieneu_tts.py tests/test_vieneu_ui.py
+        run: python -m pytest -q -rs tests/test_vieneu_tts.py tests/test_vieneu_ui.py tests/test_duration_fit.py tests/test_checkpoint.py tests/test_edge_tts.py tests/test_orchestrator.py
