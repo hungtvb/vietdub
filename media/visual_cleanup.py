@@ -13,6 +13,8 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from media.visual_precise import pixel_mask, tight_box, refine_subtitle_bounds
+
 
 class VisualCleanupError(RuntimeError):
     pass
@@ -195,6 +197,19 @@ class VisualCleanup:
             quick_frames = max(1, round(fps * .18))
             last_sample_frame = -quick_frames
             subtitle_needs_check = False
+            def finish_track(track, end_limit):
+                box = tight_box(track.get("boxes", [track["box"]]), width, height)
+                if track["kind"] == "subtitle":
+                    start, end = refine_subtitle_bounds(
+                        path, track["first_frame"], track["last_frame"],
+                        track["first_box"], track["last_box"],
+                        fps, end_limit, self.config.sample_sec)
+                else:
+                    margin = min(.15, step/fps/2)
+                    start, end = max(0, track["first"]-margin), min(end_limit, track["last"]+margin)
+                if end > start:
+                    regions.append(Region(start, end, box, track["kind"],
+                                          track["score"]/track["hits"]))
             while True:
                 ok, frame = cap.read()
                 if not ok:
@@ -215,10 +230,7 @@ class VisualCleanup:
                     tracks = [r for r in tracks if sampled - r["sample"] <= 1]
                     for r in expired:
                         if r["hits"] >= self.config.min_hits:
-                            margin = min(.15, step / fps / 2)
-                            regions.append(Region(max(0, r["first"]-margin),
-                                r["last"]+margin, r["box"], r["kind"],
-                                r["score"]/r["hits"]))
+                            finish_track(r, t)
                     used = set()
                     for raw, score in detector.detect(frame):
                         if score < self.config.threshold:
@@ -247,15 +259,19 @@ class VisualCleanup:
                                 best, best_score = i, match
                         if best is None:
                             tracks.append({"box":box, "kind":kind, "sample":sampled,
-                                           "first":t, "last":t, "hits":1, "score":score})
+                                           "first":t, "last":t, "hits":1, "score":score,
+                                           "boxes":[box], "first_box":box, "last_box":box,
+                                           "first_frame":frame_n, "last_frame":frame_n})
                             used.add(len(tracks)-1)
                         else:
                             r = tracks[best]
                             a = r["box"]
                             r["box"] = (min(a[0],box[0]), min(a[1],box[1]),
                                         max(a[2],box[2]), max(a[3],box[3]))
+                            r["boxes"].append(box)
                             r.update(last=t, sample=sampled, hits=r["hits"]+1,
-                                     score=r["score"]+score)
+                                     score=r["score"]+score, last_box=box,
+                                     last_frame=frame_n)
                             used.add(best)
                     sampled += 1
                     last_sample_frame = frame_n
@@ -266,10 +282,7 @@ class VisualCleanup:
             duration = frame_n/fps
             for r in tracks:
                 if r["hits"] >= self.config.min_hits:
-                    margin = min(.15, step / fps / 2)
-                    regions.append(Region(max(0,r["first"]-margin),
-                        min(duration,r["last"]+margin), r["box"], r["kind"],
-                        r["score"]/r["hits"]))
+                    finish_track(r, duration)
             if self.config.auto_logo and "logo" in self.config.categories:
                 for item in _static_logos(logo_frames, duration, width, height):
                     if any(_overlap(item.box, e) >= .15*(item.box[2]-item.box[0])*(item.box[3]-item.box[1])
@@ -332,19 +345,23 @@ class VisualCleanup:
                 current = [r for r in current if r["end"] > t]
                 mask = np.zeros((h, w), dtype=np.uint8)
                 for r in current:
-                    x1,y1,x2,y2 = _clip(r["box"], w, h, self.config.padding)
-                    if x2 > x1 and y2 > y1:
-                        mask[y1:y2,x1:x2] = 255
+                    rect, selected = pixel_mask(frame, r["box"], r["kind"],
+                                                padding=min(self.config.padding, 2))
+                    x1, y1, x2, y2 = rect
+                    if selected.size:
+                        mask[y1:y2, x1:x2] = cv2.bitwise_or(mask[y1:y2, x1:x2], selected)
                 if mask.any():
                     if self.config.mode == "inpaint":
                         frame = cv2.inpaint(frame, mask, 3, cv2.INPAINT_TELEA)
                     else:
-                        # Work only inside affected rectangles, not whole frames.
-                        for r in current:
-                            x1,y1,x2,y2 = _clip(r["box"], w, h, self.config.padding)
-                            if x2 > x1 and y2 > y1:
-                                roi = frame[y1:y2,x1:x2]
-                                frame[y1:y2,x1:x2] = cv2.GaussianBlur(roi,(0,0),12)
+                        # Blur the full frame only as a source of replacement
+                        # pixels. Composite strictly within the tight mask,
+                        # not across the entire tracked OCR rectangle.
+                        blurred = cv2.GaussianBlur(frame, (0, 0), 12)
+                        alpha = cv2.GaussianBlur(mask, (0, 0), 1).astype(np.float32) / 255
+                        frame = np.clip(blurred.astype(np.float32)*alpha[:, :, None] +
+                                        frame.astype(np.float32)*(1-alpha[:, :, None]),
+                                        0, 255).astype(np.uint8)
                 try:
                     proc.stdin.write(frame.tobytes())
                 except BrokenPipeError as exc:
