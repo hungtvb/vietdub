@@ -413,6 +413,16 @@ class SettingsDialog(QDialog):
         self.visual_cleanup_interval.setSuffix(" giây")
         self.visual_cleanup_interval.setValue(float(self.settings.get("visual_cleanup_interval_sec", 0.65)))
         f.addRow("Lấy mẫu OCR mỗi:", self.visual_cleanup_interval)
+        manual_row = QHBoxLayout()
+        self.visual_cleanup_review_plan = QLineEdit(
+            self.settings.get("visual_cleanup_review_plan", "") or "")
+        self.visual_cleanup_review_plan.setPlaceholderText(
+            "Tuỳ chọn: JSON clean-plate đã duyệt")
+        manual_row.addWidget(self.visual_cleanup_review_plan, 1)
+        browse_review = QPushButton("Chọn…")
+        browse_review.clicked.connect(self.browse_visual_plan)
+        manual_row.addWidget(browse_review)
+        f.addRow("Plan clean-plate:", manual_row)
         note_visual = QLabel("Tính năng thử nghiệm: xem lại các vùng trong visual_regions.json. "
                              "Logo trong suốt/di chuyển có thể không phát hiện được; "
                              "video VFR cần chuyển CFR trước. Mặc định tắt.")
@@ -434,6 +444,13 @@ class SettingsDialog(QDialog):
             "", "Font (*.ttf *.otf *.ttc);;Tất cả (*.*)")
         if path:
             self.sub_font.setText(path)
+
+    def browse_visual_plan(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn plan clean-plate đã duyệt",
+            "", "JSON (*.json);;Tất cả (*.*)")
+        if path:
+            self.visual_cleanup_review_plan.setText(path)
 
     def browse_ffmpeg(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Chọn ffmpeg")
@@ -491,6 +508,7 @@ class SettingsDialog(QDialog):
         self.visual_cleanup_mode.setCurrentIndex(max(0,
             self.visual_cleanup_mode.findData(DEFAULTS["visual_cleanup_mode"])))
         self.visual_cleanup_interval.setValue(float(DEFAULTS["visual_cleanup_interval_sec"]))
+        self.visual_cleanup_review_plan.setText(str(DEFAULTS["visual_cleanup_review_plan"]))
         self.sub_font.setText(str(DEFAULTS["sub_font"]))
         self.sub_font_size.setValue(int(DEFAULTS["sub_font_size"]))
         self.sub_font_color.setText(str(DEFAULTS["sub_font_color"]))
@@ -541,6 +559,7 @@ class SettingsDialog(QDialog):
             "visual_cleanup_auto_logo": self.visual_cleanup_auto_logo.isChecked(),
             "visual_cleanup_mode": self.visual_cleanup_mode.currentData(),
             "visual_cleanup_interval_sec": self.visual_cleanup_interval.value(),
+            "visual_cleanup_review_plan": self.visual_cleanup_review_plan.text().strip(),
             "sub_font": self.sub_font.text().strip(),
             "sub_font_size": self.sub_font_size.value(),
             "sub_font_color": self.sub_font_color.text().strip().lstrip("#"),
