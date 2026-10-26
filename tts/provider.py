@@ -6,7 +6,8 @@ from __future__ import annotations
 
 
 def create_tts(settings, *, provider=None, voice_male=None, voice_female=None,
-               vieneu_backend=None, vieneu_precision=None):
+               vieneu_backend=None, vieneu_precision=None,
+               rate=None, pitch=None):
     selected = provider or settings.get("tts_provider", "edge")
     if selected == "vieneu":
         from tts.vieneu_tts import VieNeuTTS
@@ -20,7 +21,7 @@ def create_tts(settings, *, provider=None, voice_male=None, voice_female=None,
         return EdgeTTS(
             voice_male=voice_male or settings.get("voice_male", "vi-VN-NamMinhNeural"),
             voice_female=voice_female or settings.get("voice_female", "vi-VN-HoaiMyNeural"),
-            rate=settings.get("tts_rate", "+0%"),
-            pitch=settings.get("tts_pitch", "+0Hz"),
+            rate=rate if rate is not None else settings.get("tts_rate", "+0%"),
+            pitch=pitch if pitch is not None else settings.get("tts_pitch", "+0Hz"),
             concurrency=int(settings.get("tts_concurrency", 10)))
     raise ValueError(f"Không hỗ trợ TTS provider: {selected}")
