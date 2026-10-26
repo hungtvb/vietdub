@@ -18,7 +18,15 @@ jobs:
           python-version: "3.11"
       - name: Install FFmpeg and PaddlePaddle CPU
         run: |
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          python -m pip install imageio-ffmpeg
+          python - <<'PY'
+          import imageio_ffmpeg, os
+          from pathlib import Path
+          link = Path(os.environ["RUNNER_TEMP"]) / "ffmpeg"
+          link.symlink_to(imageio_ffmpeg.get_ffmpeg_exe())
+          with open(os.environ["GITHUB_PATH"], "a") as out:
+              out.write(str(link.parent) + "\n")
+          PY
           python -m pip install --upgrade pip
           python -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
       - name: Install PaddleOCR and smoke dependencies
