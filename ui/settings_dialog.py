@@ -10,7 +10,7 @@ app vẫn giữ nguyên lựa chọn cũ.
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFrame,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame,
                                QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
                                QPushButton, QScrollArea, QSizePolicy, QSpinBox,
@@ -370,8 +370,9 @@ class SettingsDialog(QDialog):
         self.sub_mode = QComboBox()
         self.sub_mode.addItem("Gắn cứng vào video", "burn")
         self.sub_mode.addItem("Xuất file .srt rời", "srt")
+        self.sub_mode.addItem("Không thêm phụ đề vào video", "none")
         cur = self.settings.get("sub_mode", "burn")
-        self.sub_mode.setCurrentIndex(0 if cur == "burn" else 1)
+        self.sub_mode.setCurrentIndex(max(0, self.sub_mode.findData(cur)))
         f.addRow("Chế độ phụ đề:", self.sub_mode)
         row_font = QHBoxLayout()
         self.sub_font = QLineEdit(self.settings.get("sub_font", "") or "")
@@ -393,6 +394,27 @@ class SettingsDialog(QDialog):
         self.crf.setRange(18, 28)
         self.crf.setValue(int(self.settings.get("crf", 20)))
         f.addRow("Chất lượng video (CRF):", self.crf)
+        self.visual_cleanup_enabled = QCheckBox("Tự động làm mờ chữ/logo gốc (cần PaddleOCR)")
+        self.visual_cleanup_enabled.setChecked(bool(self.settings.get("visual_cleanup_enabled", False)))
+        f.addRow(self.visual_cleanup_enabled)
+        self.visual_cleanup_mode = QComboBox()
+        self.visual_cleanup_mode.addItem("Làm mờ Gaussian (nhanh)", "blur")
+        self.visual_cleanup_mode.addItem("Inpaint Telea (xóa và lấp nền)", "inpaint")
+        self.visual_cleanup_mode.setCurrentIndex(max(0, self.visual_cleanup_mode.findData(
+            self.settings.get("visual_cleanup_mode", "blur"))))
+        f.addRow("Xử lý chữ/logo:", self.visual_cleanup_mode)
+        self.visual_cleanup_interval = QDoubleSpinBox()
+        self.visual_cleanup_interval.setRange(0.15, 3.0)
+        self.visual_cleanup_interval.setDecimals(2)
+        self.visual_cleanup_interval.setSingleStep(0.1)
+        self.visual_cleanup_interval.setSuffix(" giây")
+        self.visual_cleanup_interval.setValue(float(self.settings.get("visual_cleanup_interval_sec", 0.65)))
+        f.addRow("Lấy mẫu OCR mỗi:", self.visual_cleanup_interval)
+        note_visual = QLabel("Tính năng thử nghiệm: xem lại các vùng trong visual_regions.json. "
+                             "Logo trong suốt/di chuyển có thể không phát hiện được; "
+                             "video VFR cần chuyển CFR trước. Mặc định tắt.")
+        note_visual.setWordWrap(True)
+        f.addRow(note_visual)
         f.addRow(QLabel("CRF càng nhỏ video càng nét (file càng nặng)."))
         row = QHBoxLayout()
         self.ffmpeg_path = QLineEdit(self.settings.get("ffmpeg_path", "ffmpeg"))
@@ -460,7 +482,11 @@ class SettingsDialog(QDialog):
         self.tts_rate.setText(str(DEFAULTS["tts_rate"]))
         self.tts_pitch.setText(str(DEFAULTS["tts_pitch"]))
         self.tts_conc.setValue(int(DEFAULTS["tts_concurrency"]))
-        self.sub_mode.setCurrentIndex(0 if DEFAULTS["sub_mode"] == "burn" else 1)
+        self.sub_mode.setCurrentIndex(max(0, self.sub_mode.findData(DEFAULTS["sub_mode"])))
+        self.visual_cleanup_enabled.setChecked(bool(DEFAULTS["visual_cleanup_enabled"]))
+        self.visual_cleanup_mode.setCurrentIndex(max(0,
+            self.visual_cleanup_mode.findData(DEFAULTS["visual_cleanup_mode"])))
+        self.visual_cleanup_interval.setValue(float(DEFAULTS["visual_cleanup_interval_sec"]))
         self.sub_font.setText(str(DEFAULTS["sub_font"]))
         self.sub_font_size.setValue(int(DEFAULTS["sub_font_size"]))
         self.sub_font_color.setText(str(DEFAULTS["sub_font_color"]))
@@ -507,6 +533,9 @@ class SettingsDialog(QDialog):
             "tts_pitch": self.tts_pitch.text().strip() or "+0Hz",
             "tts_concurrency": self.tts_conc.value(),
             "sub_mode": self.sub_mode.currentData(),
+            "visual_cleanup_enabled": self.visual_cleanup_enabled.isChecked(),
+            "visual_cleanup_mode": self.visual_cleanup_mode.currentData(),
+            "visual_cleanup_interval_sec": self.visual_cleanup_interval.value(),
             "sub_font": self.sub_font.text().strip(),
             "sub_font_size": self.sub_font_size.value(),
             "sub_font_color": self.sub_font_color.text().strip().lstrip("#"),
