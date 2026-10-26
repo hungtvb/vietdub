@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from PySide6.QtCore import QObject, QThread, Signal, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QFrame, QHeaderView, QHBoxLayout, QLabel,
                                QMessageBox, QPlainTextEdit, QProgressBar,
                                QPushButton, QSplitter, QTableWidget,
@@ -24,6 +25,7 @@ from core.job import CANCELLED, DONE, FAILED, PAUSED, REVIEW, Job
 from core.orchestrator import STEP_LABEL, STEPS, Orchestrator
 from core.settings import Settings
 from ui.common import confirm_box, error_box, info_box
+from ui.theme import UI_COLORS
 
 MAX_LOG_LINES = 2000
 
@@ -86,19 +88,32 @@ class ProgressWindow(QWidget):
         header_lay.addWidget(eyebrow)
         self.lbl_title = QLabel(f"Đang xử lý · {job.project.name}")
         self.lbl_title.setObjectName("pageTitle")
+        self.lbl_title.setWordWrap(True)
         header_lay.addWidget(self.lbl_title)
 
         self.lbl_step = QLabel("Chuẩn bị…")
-        self.lbl_step.setObjectName("statusText")
-        header_lay.addWidget(self.lbl_step)
+        self.lbl_step.setWordWrap(True)
+        self.lbl_step.setStyleSheet(
+            f"color: {UI_COLORS['text']}; font-size: 11pt; font-weight: 600;")
+        status_row = QHBoxLayout()
+        status_row.addWidget(self.lbl_step, 1)
+        self.lbl_overall = QLabel("0%")
+        self.lbl_overall.setObjectName("pageTitle")
+        self.lbl_overall.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        status_row.addWidget(self.lbl_overall)
+        header_lay.addLayout(status_row)
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
+        self.bar.setTextVisible(False)
         header_lay.addWidget(self.bar)
         root.addWidget(header)
 
         self.body_split = QSplitter(Qt.Horizontal)
+        self.body_split.setChildrenCollapsible(False)
+        self.body_split.setHandleWidth(8)
         steps_card = QFrame()
         steps_card.setObjectName("workflowCard")
+        steps_card.setMinimumSize(0, 110)
         steps_lay = QVBoxLayout(steps_card)
         steps_lay.setContentsMargins(12, 10, 12, 11)
         steps_title = QLabel("CÁC CÔNG ĐOẠN")
@@ -110,6 +125,10 @@ class ProgressWindow(QWidget):
         self.tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tbl.setSelectionMode(QTableWidget.NoSelection)
         self.tbl.setAlternatingRowColors(True)
+        self.tbl.setWordWrap(True)
+        self.tbl.setMinimumSize(0, 60)
+        self.tbl.verticalHeader().setDefaultSectionSize(40)
+        self.tbl.setVerticalScrollMode(QTableWidget.ScrollPerPixel)
         for i, step in enumerate(STEPS):
             self.tbl.setItem(i, 0, QTableWidgetItem(STEP_LABEL[step]))
             self.tbl.setItem(i, 1, QTableWidgetItem("Chờ"))
@@ -121,6 +140,7 @@ class ProgressWindow(QWidget):
 
         log_card = QFrame()
         log_card.setObjectName("workflowCard")
+        log_card.setMinimumSize(0, 110)
         log_lay = QVBoxLayout(log_card)
         log_lay.setContentsMargins(12, 10, 12, 11)
         log_title = QLabel("NHẬT KÝ XỬ LÝ")
@@ -130,6 +150,7 @@ class ProgressWindow(QWidget):
         self.log_view.setObjectName("runLog")
         self.log_view.setPlaceholderText("Nhật ký xử lý sẽ xuất hiện ở đây…")
         self.log_view.setReadOnly(True)
+        self.log_view.setMinimumSize(0, 60)
         self.log_view.setMaximumBlockCount(MAX_LOG_LINES)
         log_lay.addWidget(self.log_view, 1)
         self.body_split.addWidget(log_card)
@@ -163,11 +184,20 @@ class ProgressWindow(QWidget):
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         if hasattr(self, "body_split"):
-            orientation = Qt.Vertical if self.width() < 760 else Qt.Horizontal
+            # Stack when a narrow window has enough height for both panels.
+            # At the minimum height, side by side leaves each panel usable.
+            orientation = (Qt.Vertical if self.width() < 760 and self.height() >= 640
+                           else Qt.Horizontal)
             if self.body_split.orientation() != orientation:
                 self.body_split.setOrientation(orientation)
                 if orientation == Qt.Vertical:
-                    self.body_split.setSizes([165, 120])
+                    self.body_split.setSizes([220, 180])
+                else:
+                    self.body_split.setSizes([360, 500])
+            self.tbl.resizeRowsToContents()
+            current = self.tbl.currentItem()
+            if current is not None:
+                self.tbl.scrollToItem(current)
 
     # ------------------------------------------------------------------ chạy
     def begin(self, resume_from: Optional[str] = None) -> None:
@@ -200,9 +230,14 @@ class ProgressWindow(QWidget):
             idx = STEPS.index(step)
             overall = (idx * 100.0 + max(0.0, min(100.0, pct))) / len(STEPS)
             self.bar.setValue(int(overall))
+            self.lbl_overall.setText(f"{overall:.0f}%")
             self.lbl_step.setText(f"{STEP_LABEL[step]} — {pct:.0f}%")
             status = "Đang chạy" if pct < 100 else "Xong"
             self.tbl.item(idx, 1).setText(status)
+            self.tbl.item(idx, 1).setForeground(
+                QColor(UI_COLORS["primary" if pct < 100 else "success"]))
+            self.tbl.setCurrentCell(idx, 0)
+            self.tbl.scrollToItem(self.tbl.item(idx, 0))
             if pct >= 100:
                 for j in range(idx):
                     if self.tbl.item(j, 1).text() == "Chờ":
@@ -312,8 +347,8 @@ class ProgressWindow(QWidget):
     def _retranslate_with_metadata(self, meta) -> None:
         # Tony sửa metadata tay ở màn duyệt #2 -> dịch lại toàn bộ với
         # metadata mới (chỉ chạy lại bước translate).
-        from project import io as pio
-        pio.save_video_metadata(self.job.job_dir, meta)
+        # ReviewViWindow has already persisted edits and metadata before
+        # invoking this callback, including reporting any write failure.
         if self._review_win:
             self._review_win.close()
             self._review_win = None
