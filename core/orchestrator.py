@@ -144,10 +144,30 @@ class Orchestrator:
                 job.emit_progress("done", 100.0, job.status)
                 close_job_logger(job.job_id)
 
+    def _visual_cleanup_signature(self):
+        """Render checkpoint inputs that must invalidate any stale final MP4."""
+        if not self.settings.get("visual_cleanup_enabled", False):
+            return None
+        return {
+            "enabled": True,
+            "mode": str(self.settings.get("visual_cleanup_mode", "blur")),
+            "interval": float(self.settings.get("visual_cleanup_interval_sec", 0.65)),
+            "min_hits": int(self.settings.get("visual_cleanup_min_hits", 2)),
+            "auto_logo": bool(self.settings.get("visual_cleanup_auto_logo", False)),
+        }
+
     def _has_step(self, step: str) -> bool:
         sub_mode = (self.settings.get("sub_mode", self.job.project.sub_mode)
                     or self.job.project.sub_mode or "burn")
-        return cp.has_step(self.job.job_dir, step, sub_mode=sub_mode)
+        if not cp.has_step(self.job.job_dir, step, sub_mode=sub_mode):
+            return False
+        if step == "render":
+            data = cp.load_step(self.job.job_dir, "render") or {}
+            # Legacy jobs without this field count as cleanup-disabled.
+            # Re-enable/disable/change cleanup => must rerender, never DONE
+            # from an incompatible render checkpoint.
+            return data.get("visual_cleanup_signature") == self._visual_cleanup_signature()
+        return True
 
     def _first_missing_step(self) -> str:
         for step in STEPS:
@@ -522,7 +542,8 @@ class Orchestrator:
             font_size=int(self.settings.get("sub_font_size", 0) or 0),
             font_color=(self.settings.get("sub_font_color", "") or "").strip())
         proj.video_out = str(rendered)
-        render_data = {"video_out": str(rendered), "srt": str(srt_path)}
+        render_data = {"video_out": str(rendered), "srt": str(srt_path),
+                       "visual_cleanup_signature": self._visual_cleanup_signature()}
         if sub_mode == "srt":
             render_data["srt_out"] = str(rendered.with_suffix(".srt"))
         cp.save_step(job.job_dir, "render", render_data)
