@@ -560,6 +560,16 @@ class Orchestrator:
                 video_for_render = engine.process(
                     video_for_render, job.stages_dir / "visual_clean.mp4",
                     plan_path=visual_plan, ffmpeg=mbin.ffmpeg_cmd())
+            if reviewed:
+                from media.visual_acceptance import write_audit
+                qa = write_audit(
+                    job.stages_dir / "visual_acceptance.json",
+                    fetch_data.get("video_path") or proj.video_in,
+                    video_for_render, plan,
+                    required_subtitle_times=plan.get("required_subtitle_times", []))
+                if not qa["pass_structural_checks"]:
+                    raise RuntimeError("Video xử lý chưa đạt kiểm định: "+
+                                       "; ".join(qa["issues"]))
             self.logger.info("Visual cleanup output: %s; review plan: %s",
                              video_for_render, visual_plan)
         rendered = mrender.render(
