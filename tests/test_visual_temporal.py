@@ -41,7 +41,7 @@ def _plan(path):
         "version":1, "source":str(path.resolve()),"width":320,"height":180,
         "fps":10.0,"frames":24,
         "regions":[{
-            "start":0.5,"end":1.8,
+            "start":0.3,"end":1.8,
             "box":[0,114,273,168],
             "kind":"subtitle", "source":"temporal-clean-plate",
             "confidence":1.0,
@@ -108,3 +108,25 @@ def test_exemplar_region_never_modifies_outside_approved_box(tmp_path):
     assert not np.array_equal(out[8:21,10:40],src[8:21,10:40])
     assert np.array_equal(out[40:, :],src[40:, :])
     assert np.array_equal(out[:, 160:],src[:,160:])
+
+
+def test_clean_plate_preroll_avoids_jump_before_first_caption(tmp_path):
+    source=tmp_path/"preroll.mp4"
+    _fixture(source)
+    plan=_plan(source)
+    cleaner=TemporalCleanPlate(source,plan["regions"],10,320,180,24)
+    cap=cv2.VideoCapture(str(source))
+    frames=[]
+    for _ in range(8):
+        ok,f=cap.read()
+        assert ok
+        frames.append(f)
+    cap.release()
+    restored=[cleaner.apply(f,i) for i,f in enumerate(frames)]
+    # The effect must already be prepared before frame 5 (first visible glyph).
+    # It should not introduce a one-frame edit cut when the caption appears.
+    diffs=[float(np.mean(np.abs(restored[i][120:160,20:250].astype(float)-
+                                restored[i-1][120:160,20:250].astype(float))))
+           for i in range(2,8)]
+    assert max(diffs) < 30, diffs
+    assert np.array_equal(restored[2],frames[2])  # before approved interval
