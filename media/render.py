@@ -144,7 +144,7 @@ def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
         cmd = [_bin.ffmpeg_cmd(), "-y", "-i", str(video_in), "-i", str(mixed_wav),
                "-map", "0:v", "-map", "1:a",
                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-               "-shortest"]
+               "-af", "apad", "-shortest"]
     elif sub_mode == "burn":
         if not srt_path.exists():
             raise RenderError(f"Không tìm thấy file phụ đề: {srt_path}")
@@ -167,7 +167,7 @@ def render(video_in: str | Path, mixed_wav: str | Path, srt_path: str | Path,
                "-c:v", "libx264", "-crf", str(crf), "-preset", "medium",
                "-pix_fmt", "yuv420p",
                "-c:a", "aac", "-b:a", "192k",
-               "-shortest"]
+               "-af", "apad", "-shortest"]
     else:
         raise RenderError(f"sub_mode không hợp lệ: {sub_mode} (chọn 'burn', 'srt' hoặc 'none')")
 
