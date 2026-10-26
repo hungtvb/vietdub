@@ -45,12 +45,12 @@ def source(monkeypatch, tmp_path):
     return path
 
 
-def stub_response(monkeypatch, data):
+def stub_response(monkeypatch, expected_payload):
     def fake_post(url, files, data, timeout):
         assert url == "http://127.0.0.1:8768/v1/transcribe"
         assert files["file"][1].read(4) == b"fake"
         assert timeout[0] == 5
-        return FakeResponse(data)
+        return FakeResponse(expected_payload)
     monkeypatch.setattr("asr.vietdub_stt_adapter.requests.post", fake_post)
 
 
