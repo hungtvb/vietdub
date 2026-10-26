@@ -118,3 +118,12 @@ def test_corner_watermark_is_not_subtitle():
     # A lower-right corner watermark can be wider than 6% of the frame;
     # it must still be classified as logo, not subtitle.
     assert _kind((176,106,198,117),200,120) == "logo"
+
+
+def test_static_logo_geometry_rejects_pip_face_regression():
+    # Real-world observation: permanent interview PIP face at right was blurred
+    # when a variance-based watermark detector mistook it for a corner logo.
+    from media.visual_cleanup import _safe_auto_logo_box
+    assert _safe_auto_logo_box((16, 16, 142, 46), 640, 360)
+    assert not _safe_auto_logo_box((518, 40, 586, 86), 640, 360)
+    assert not _safe_auto_logo_box((100, 160, 140, 180), 640, 360)
