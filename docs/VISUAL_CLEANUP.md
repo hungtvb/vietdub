@@ -224,7 +224,7 @@ Source-based regressions found:
   **2,295** in the source because audio remux was done with \`-shortest\`
   while audio ended early. The corrected export uses AAC padding and contains
   2,295 / 2,295 frames, 25fps and 91.80 seconds. VietDub's core renderer
-  now uses \`-af apad -shortest\` to preserve the original picture duration.
+  now uses \`-af apad -t <video_stream_duration>\` (without \`-shortest\`), preserving the original picture duration without the portable FFmpeg 7 hang.
 - The graphic-strip mask previously started at 9.00s; the source layout
   switches to the blue strip at 8.88s, so the sample's reviewed interval
   was corrected to 8.88–88.4s.
@@ -233,3 +233,14 @@ Source-based regressions found:
   both visibly damaged clothing/background. Those experiments were **rejected**
   rather than presented as clean. They still require neural restoration
   and an actual model-run output review.
+
+### Additional real-world regression: portable FFmpeg 7 deadlock
+
+The first frame-loss fix (`-af apad -shortest`) worked on system FFmpeg
+but **deadlocked** on the portable static FFmpeg 7.0.2 used by Actions.
+The stalled CI run was made diagnosable with verbose per-test timeouts
+(4 failed/35 passed, all failures from the render path).
+We reproduced the hang with the exact portable binary. The corrected
+renderer probes the source **video** duration and uses `-af apad -t DURATION`
+(without `-shortest`); the test returned normally and preserved all
+12/12 source frames. Latest smoke CI: **39/39 passed in ~2.5 seconds**.
