@@ -274,6 +274,9 @@ class BatchQueueWindow(QDialog):
 
         self._current_index = next_index
         entry = self.entries[next_index]
+        self.status.setText(
+            f"Đang xử lý video {next_index + 1}/{len(self.entries)} · "
+            f"{Path(entry.path).name}")
         if not Path(entry.path).is_file():
             entry.state = "failed"
             entry.message = "Tệp video không còn tồn tại hoặc không đọc được."
@@ -421,6 +424,9 @@ class BatchQueueWindow(QDialog):
             entry.message = "Đang tiếp tục từ checkpoint đã lưu."
         self._active_job = entry.job
         self._update_entry(self._current_index)
+        self.status.setText(
+            f"{'Mở lại bước duyệt' if show_review else 'Đang tiếp tục'} · "
+            f"{Path(entry.path).name}")
         self._launch_progress(show_review=show_review)
 
     def skip_current(self) -> None:
@@ -436,6 +442,7 @@ class BatchQueueWindow(QDialog):
         entry.state = "skipped"
         entry.message = f"Bỏ qua sau trạng thái {entry.job.status if entry.job else 'lỗi khởi tạo'}."
         self._update_entry(self._current_index)
+        self.status.setText(f"Đã bỏ qua {Path(entry.path).name}; chuyển video tiếp theo.")
         self._current_index = None
         self._active_job = None
         self._blocked = False
