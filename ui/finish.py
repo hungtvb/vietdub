@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -67,6 +67,7 @@ class FinishWindow(QWidget):
         self.job = job
         self.settings = settings
         self.on_new = on_new
+        self._closing_from_action = False
         self.setWindowTitle(f"VietDub — Hoàn thành: {job.project.name}")
         self.resize(1080, 800)
         self.setMinimumSize(650, 500)
@@ -94,7 +95,7 @@ class FinishWindow(QWidget):
         header.addStretch(1)
         new = QPushButton("Video mới")
         new.setProperty("role", "secondary")
-        new.clicked.connect(self.on_new)
+        new.clicked.connect(self._request_new_video)
         header.addWidget(new)
         root.addLayout(header)
 
@@ -291,5 +292,17 @@ class FinishWindow(QWidget):
             if editor.isVisible():  # background export is still active
                 event.ignore()
                 return
+        if not self._closing_from_action:
+            # Closing the result window should return control to its owner.
+            # This also lets a batch queue advance when the user clicks X.
+            self._closing_from_action = True
+            self._poster_loader.stop()
+            super().closeEvent(event)
+            QTimer.singleShot(0, self.on_new)
+            return
         self._poster_loader.stop()
         super().closeEvent(event)
+
+    def _request_new_video(self) -> None:
+        self._closing_from_action = True
+        self.on_new()

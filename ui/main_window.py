@@ -205,6 +205,7 @@ class MainWindow(QMainWindow):
         self._pv_worker = None
         self._pv_tmps: list = []          # thư mục tạm của [Nghe thử]
         self._progress_win = None
+        self._batch_window = None
         self._tasks: dict[QThread, tuple] = {}
         self._source_generation = 0
         self._active_info = None
@@ -305,6 +306,10 @@ class MainWindow(QMainWindow):
         self.source_status.setTextFormat(Qt.PlainText)
         self.source_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         footer_lay.addWidget(self.source_status, 1)
+        self.btn_batch = QPushButton("Hàng đợi")
+        self.btn_batch.setProperty("role", "secondary")
+        self.btn_batch.clicked.connect(self.open_batch_queue)
+        footer_lay.addWidget(self.btn_batch)
         self.btn_start = QPushButton("Bắt đầu lồng tiếng")
         self.btn_start.setMinimumHeight(48)
         self.btn_start.setMinimumWidth(200)
@@ -764,39 +769,61 @@ class MainWindow(QMainWindow):
                       "Hãy chọn file video (Tệp video) hoặc tải video từ liên kết "
                       "(tab Liên kết) trước khi bắt đầu.")
             return
-        provider = self.provider.currentData()
-        if provider == "openai" and not self.settings.get("openai_api_key"):
-            error_box(self, "Chưa nhập OpenAI API key",
-                      "Mở Cài đặt → tab Dịch thuật để nhập OpenAI API key. "
-                      "API tính phí riêng, không dùng chung gói ChatGPT.")
-            return
-        if provider == "9router" and not self.settings.get("nine_router_key"):
-            if not confirm_box(
-                    self, "Chưa nhập API key 9Router",
-                    "Bạn chưa nhập API key 9Router trong Cài đặt.\n"
-                    "Vẫn bắt đầu? (bước dịch có thể lỗi, hoặc tự chuyển "
-                    "sang Ollama nếu đã cấu hình)"):
-                return
-        if provider == "ollama" and not self.settings.get("ollama_model"):
-            error_box(self, "Chưa cấu hình Ollama",
-                      "Bạn chọn nguồn dịch Ollama nhưng chưa nhập tên model "
-                      "trong Cài đặt.\n\nCách khắc phục: mở Cài đặt → tab Dịch "
-                      "thuật → nhập tên model (vd llama3.1) rồi bấm Lưu.")
+        if not self._validate_provider_choice():
             return
 
         job = self._ensure_job()
+        self._configure_job(job, self.video_path, video_url=self.video_url,
+                            audio_track=self._audio_track_index())
+
+        from ui.progress import ProgressWindow
+        self._progress_win = ProgressWindow(job, self.settings,
+                                            on_close=self._back_to_main)
+        self._progress_win.show()
+        self.hide()
+        self._progress_win.begin()
+
+    def _validate_provider_choice(self, parent=None) -> bool:
+        """Validate the selected translator before starting one or more jobs."""
+        parent = parent or self
+        provider = self.provider.currentData()
+        if provider == "openai" and not self.settings.get("openai_api_key"):
+            error_box(parent, "Chưa nhập OpenAI API key",
+                      "Mở Cài đặt → tab Dịch thuật để nhập OpenAI API key. "
+                      "API tính phí riêng, không dùng chung gói ChatGPT.")
+            return False
+        if provider == "9router" and not self.settings.get("nine_router_key"):
+            if not confirm_box(
+                    parent, "Chưa nhập API key 9Router",
+                    "Bạn chưa nhập API key 9Router trong Cài đặt.\n"
+                    "Vẫn bắt đầu? (bước dịch có thể lỗi, hoặc tự chuyển "
+                    "sang Ollama nếu đã cấu hình)"):
+                return False
+        if provider == "ollama" and not self.settings.get("ollama_model"):
+            error_box(parent, "Chưa cấu hình Ollama",
+                      "Bạn chọn nguồn dịch Ollama nhưng chưa nhập tên model "
+                      "trong Cài đặt.\n\nCách khắc phục: mở Cài đặt → tab Dịch "
+                      "thuật → nhập tên model (vd llama3.1) rồi bấm Lưu.")
+            return False
+        return True
+
+    def _configure_job(self, job: Job, video_path: str, *, video_url: str = "",
+                       audio_track: int = 0) -> Job:
+        """Snapshot the current quick options into one independent job."""
+        provider = self.provider.currentData()
         proj = job.project
-        proj.name = Path(self.video_path).stem
-        if self.video_url:
+        proj.name = Path(video_path).stem
+        if video_url:
             proj.video_source = "url"
-            proj.video_url = self.video_url
-            proj.video_in = self.video_path  # file đã tải (fetch sẽ dùng lại)
+            proj.video_url = video_url
+            proj.video_in = video_path  # file đã tải (fetch sẽ dùng lại)
         else:
             proj.video_source = "file"
-            proj.video_in = self.video_path
+            proj.video_url = ""
+            proj.video_in = video_path
         out_dir = self.out_dir.text().strip()
         if out_dir:
-            out_name = Path(self.video_path).stem + "_vidub.mp4"
+            out_name = Path(video_path).stem + "_vidub.mp4"
             proj.video_out = str(Path(out_dir) / out_name)
         else:
             proj.video_out = ""
@@ -807,7 +834,7 @@ class MainWindow(QMainWindow):
         proj.translate_provider = provider
         proj.review_stops = self.chk_review.isChecked()
         proj.overnight = self.chk_overnight.isChecked()
-        proj.audio_track = self._audio_track_index()
+        proj.audio_track = int(audio_track)
         proj.proper_nouns = list(self.settings.get("proper_nouns", []))
 
         # lưu lựa chọn nhanh vào settings để mở lại app vẫn giữ
@@ -820,13 +847,26 @@ class MainWindow(QMainWindow):
 
         from project import io as pio
         pio.save_project(job.job_dir, proj)
+        return job
 
-        from ui.progress import ProgressWindow
-        self._progress_win = ProgressWindow(job, self.settings,
-                                            on_close=self._back_to_main)
-        self._progress_win.show()
+    def create_batch_job(self, video_path: str) -> Job:
+        """Create a new local-file job using the current quick options."""
+        return self._configure_job(Job(), video_path, audio_track=0)
+
+    def open_batch_queue(self) -> None:
+        from ui.batch_queue import BatchQueueWindow
+        if self._batch_window is not None and self._batch_window.isVisible():
+            self._batch_window.raise_()
+            self._batch_window.activateWindow()
+            return
+        self._batch_window = BatchQueueWindow(
+            self, self.settings, on_close=self._batch_queue_closed)
+        self._batch_window.show()
         self.hide()
-        self._progress_win.begin()
+
+    def _batch_queue_closed(self) -> None:
+        self._batch_window = None
+        self.show()
 
     def _back_to_main(self) -> None:
         self.job = None
