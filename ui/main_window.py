@@ -559,7 +559,21 @@ class MainWindow(QMainWindow):
             self.chk_review.setChecked(bool(self.settings.get("review_stops", True)))
             self.chk_overnight.setChecked(bool(self.settings.get("overnight", False)))
 
+    def _transient_workers_running(self) -> bool:
+        return any(thread is not None and thread.isRunning()
+                   for thread in (self._dl_thread, self._pv_thread))
+
     def closeEvent(self, e) -> None:  # noqa: N802
+        if self._transient_workers_running():
+            e.ignore()
+            info_box(self, "Vui lòng đợi",
+                     "Đang tải video hoặc tạo giọng mẫu. "
+                     "Hãy đợi hoàn tất rồi đóng ứng dụng.")
+            return
+
+        if self._player is not None:
+            self._player.stop()
+            self._player.setSource(QUrl())
         # Dọn thư mục tạm của [Nghe thử] khi đóng app.
         for tmp in self._pv_tmps:
             try:
