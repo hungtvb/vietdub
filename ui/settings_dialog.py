@@ -158,6 +158,7 @@ class SettingsDialog(QDialog):
         self.ollama_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.ollama_status.setProperty("role", "secondary")
         f.addRow(self.ollama_status)
+        self.ol_url.textChanged.connect(self._on_ollama_url_changed)
         self.llm_temp = QDoubleSpinBox()
         self.llm_temp.setRange(0.0, 1.0)
         self.llm_temp.setSingleStep(0.05)
@@ -173,6 +174,21 @@ class SettingsDialog(QDialog):
         note.setProperty("role", "secondary")
         f.addRow(note)
         self._add_scroll_tab(tab, "Dịch thuật")
+
+    @Slot(str)
+    def _on_ollama_url_changed(self, _text: str) -> None:
+        if self._pending_result is not None:
+            return
+        message = "Địa chỉ Ollama đã thay đổi. Hãy kiểm tra kết nối với địa chỉ mới."
+        if self._check_thread is not None:
+            if self.ol_url.text().strip().rstrip("/") == self._check_url:
+                message = "Đang kết nối Ollama… Bạn vẫn có thể sửa các cài đặt khác."
+            else:
+                message = ("Đang hoàn tất kiểm tra địa chỉ trước. "
+                           "Hãy kiểm tra lại địa chỉ mới sau khi tác vụ kết thúc.")
+        self.ollama_status.setText(message)
+        self.ollama_status.setStyleSheet(f"color: {UI_COLORS['secondary_text']};")
+        QTimer.singleShot(30, self._reveal_ollama_status)
 
     def check_ollama(self) -> None:
         if self._check_thread is not None:
