@@ -1,6 +1,7 @@
 # VietDub Functional Upgrade Plan
 
-**Source design:** [Functional upgrade roadmap](../specs/2026-10-26-vietdub-functional-roadmap.md)  
+**Source design:** [Functional upgrade roadmap](../specs/2026-10-26-vietdub-functional-roadmap.md)
+
 **Execution:** phase-by-phase; Phase 1 and Phase 2 are active in separate worktrees.
 
 ## Global constraints

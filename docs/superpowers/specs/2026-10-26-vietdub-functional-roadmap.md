@@ -1,6 +1,7 @@
 # VietDub Functional Upgrade Roadmap
 
-**Date:** 2026-10-26  
+**Date:** 2026-10-26
+
 **Status:** Active scan; Phase 1 work split across existing-feature and new-feature teams.
 
 ## Scope
