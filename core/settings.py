@@ -68,7 +68,8 @@ DEFAULTS = {
     "visual_cleanup_mode": "blur",        # "blur" | "inpaint"
     "visual_cleanup_interval_sec": 0.65,
     "visual_cleanup_min_hits": 2,
-    "visual_cleanup_auto_logo": False,  # opt-in: static overlays can be faces
+    "visual_cleanup_auto_logo": False,
+    "visual_cleanup_review_plan": "",   # optional operator-approved JSON  # opt-in: static overlays can be faces
     "sub_font": "",                      # đường dẫn file font (.ttf/.otf), "" = mặc định ffmpeg
     "sub_font_size": 0,                  # cỡ chữ phụ đề burn, 0 = tự động
     "sub_font_color": "",                # màu chữ hex RRGGBB (vd "FFFF00"), "" = mặc định
