@@ -2,14 +2,16 @@
 
 Run only with VIETDUB_LIVE_OCR=1. No fake OCR detector is injected.
 """
+import json
 import os
 import shutil
+from pathlib import Path
 
 import pytest
 
 cv2 = pytest.importorskip("cv2")
 np = pytest.importorskip("numpy")
-from media.visual_cleanup import Config, VisualCleanup
+from media.visual_cleanup import Config, VisualCleanup, PaddleDetector
 
 
 @pytest.mark.skipif(os.getenv("VIETDUB_LIVE_OCR") != "1",
@@ -29,8 +31,9 @@ def test_real_paddle_detects_and_blurs_burned_subtitles(tmp_path):
         writer.write(f)
     writer.release()
     assert video.is_file()
+    detector=PaddleDetector()  # Real pretrained PaddleOCR 3.x; no fake/mock detector.
     engine=VisualCleanup(Config(sample_sec=.6,min_hits=2,
-                                categories=("subtitle",),auto_logo=False))
+                                categories=("subtitle",),auto_logo=False),detector=detector)
     plan=engine.analyze(video, tmp_path/"plan.json")
     subtitles=[r for r in plan["regions"] if r["kind"] == "subtitle"]
     assert subtitles, "PaddleOCR found no subtitle regions: "+str(plan["regions"])
@@ -41,3 +44,74 @@ def test_real_paddle_detects_and_blurs_burned_subtitles(tmp_path):
     ok, frame=cap.read()
     cap.release()
     assert ok and frame.shape[:2] == (h,w)
+
+    # Persist actual pixel-level evidence from this very CI run, not a mock.
+    evidence=Path("evidence/visual-cleanup-live")
+    evidence.mkdir(parents=True,exist_ok=True)
+    selected_frame=10   # t = 1.0s, safely inside the tracked text interval.
+    def frame_at(path,index):
+        cap=cv2.VideoCapture(str(path))
+        cap.set(cv2.CAP_PROP_POS_FRAMES,index)
+        ok,result=cap.read()
+        cap.release()
+        assert ok
+        return result
+    before=frame_at(video,selected_frame)
+    after=frame_at(rendered,selected_frame)
+    raw=list(detector.detect(before))
+    assert raw, "Real PaddleOCR did not find the text at evidence timestamp"
+    active=[r for r in plan["regions"]
+            if r["kind"]=="subtitle" and r["start"] <= selected_frame/fps < r["end"]]
+    assert active, "No temporal OCR track active at evidence timestamp"
+    overlay_ocr=before.copy()
+    for box,score in raw:
+        x1,y1,x2,y2=map(int,box)
+        cv2.rectangle(overlay_ocr,(x1,y1),(x2,y2),(0,255,0),3)
+        cv2.putText(overlay_ocr,f"OCR {score:.2f}",(max(0,x1),max(20,y1-6)),
+                    cv2.FONT_HERSHEY_SIMPLEX,.65,(0,255,0),2)
+    overlay_track=before.copy()
+    for r in active:
+        x1,y1,x2,y2=r["box"]
+        cv2.rectangle(overlay_track,(x1,y1),(x2,y2),(0,170,255),3)
+        label=f"TRACK {r['start']:.2f}s - {r['end']:.2f}s"
+        cv2.putText(overlay_track,label,(max(0,x1),max(20,y1-10)),
+                    cv2.FONT_HERSHEY_SIMPLEX,.6,(0,170,255),2)
+    assert cv2.imwrite(str(evidence/"01_original.png"),before)
+    assert cv2.imwrite(str(evidence/"02_live_paddleocr_boxes.png"),overlay_ocr)
+    assert cv2.imwrite(str(evidence/"03_temporal_tracking.png"),overlay_track)
+    assert cv2.imwrite(str(evidence/"04_blurred_result.png"),after)
+    # At the detected text region, the pixels actually changed after blur.
+    x1,y1,x2,y2=active[0]["box"]
+    changed=float(np.mean(np.abs(before[y1:y2,x1:x2].astype(np.float32)-
+                                 after[y1:y2,x1:x2].astype(np.float32))))
+    assert changed > 2, f"Blur did not visibly alter detected text: {changed:.3f}"
+    # Compare the same source/render frame in a contact sheet.
+    panels=[]
+    for title,shot in [
+        ("1  Original",before),("2  PaddleOCR",overlay_ocr),
+        ("3  Tracking",overlay_track),("4  Blur",after)
+    ]:
+        top=np.zeros((48,w,3),np.uint8)
+        cv2.putText(top,title,(20,34),cv2.FONT_HERSHEY_SIMPLEX,1,(255,255,255),2)
+        panels.append(np.vstack((top,shot)))
+    comparison=np.hstack(panels)
+    assert cv2.imwrite(str(evidence/"05_comparison.png"),comparison)
+    report={
+        "real_ocr":True,
+        "detector":"PaddleOCR 3.x via PaddleDetector",
+        "sample_video":"generated moving-scene video with burned-in English text",
+        "frame_number":selected_frame,
+        "timestamp_seconds":selected_frame/fps,
+        "raw_ocr_boxes":[{"box":list(map(int,box)),"confidence":float(score)}
+                         for box,score in raw],
+        "temporal_regions":active,
+        "mean_absolute_pixel_change_in_track":changed,
+        "paths":sorted(p.name for p in evidence.glob("*.png")),
+        "scope_note":"Generated English hard subtitles only; not a real-film/Chinese/logo quality benchmark."
+    }
+    (evidence/"evidence.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
+    (evidence/"full_ocr_plan.json").write_text(json.dumps(plan,indent=2),encoding="utf-8")
+    print("VISUAL_EVIDENCE "+json.dumps({
+        "ocr_boxes":len(raw),"tracks":len(active),
+        "pixel_change":round(changed,2),
+        "files":report["paths"]},sort_keys=True))
