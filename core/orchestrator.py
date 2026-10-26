@@ -505,7 +505,7 @@ class Orchestrator:
                 mode=str(self.settings.get("visual_cleanup_mode", "blur")),
                 sample_sec=float(self.settings.get("visual_cleanup_interval_sec", 0.65)),
                 min_hits=int(self.settings.get("visual_cleanup_min_hits", 2)),
-                auto_logo=bool(self.settings.get("visual_cleanup_auto_logo", True)))
+                auto_logo=bool(self.settings.get("visual_cleanup_auto_logo", False)))
             self.logger.info("Visual cleanup enabled: OCR -> temporal tracking -> %s", config.mode)
             visual_plan = job.stages_dir / "visual_regions.json"
             video_for_render = vclean.VisualCleanup(config).process(
