@@ -70,7 +70,8 @@ class JobStore:
             progress = prior.progress if prior is not None else 0.0
         if last_error is None and prior is not None:
             last_error = prior.last_error
-        source = (self._source_identity(job) if prior is None or refresh_source_identity
+        source = (self._source_identity(job, refresh_download=refresh_source_identity)
+                  if prior is None or refresh_source_identity
                   else prior.source_identity)
         record = JobRecord(SCHEMA_VERSION, job.job_id,
                            prior.created_at if prior else now, now,
@@ -114,9 +115,11 @@ class JobStore:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def _source_identity(self, job: Job) -> dict[str, Any] | None:
+    def _source_identity(self, job: Job, *, refresh_download: bool = False) -> dict[str, Any] | None:
         project = job.project
         if project.video_source == "url" and project.video_url:
+            if not refresh_download:
+                return {"kind": "url", "url": project.video_url}
             local = Path(project.video_in).expanduser() if project.video_in else None
             job_local = (local is not None and local.exists() and
                          local.resolve().is_relative_to((self.root / job.job_id).resolve()))
@@ -127,8 +130,10 @@ class JobStore:
             if not project.video_in:
                 return None
             path = Path(project.video_in).expanduser()
+        path = path.expanduser().resolve()
         stat = path.stat()
-        return {"kind": "file", "path": str(path), "size_bytes": stat.st_size,
+        return {"kind": "file", "path": os.path.normcase(str(path)),
+                "size_bytes": stat.st_size,
                 "mtime_ns": stat.st_mtime_ns}
 
 

@@ -24,6 +24,7 @@ from typing import Dict, List, Optional
 
 from core import checkpoint as cp
 from core.job import CANCELLED, DONE, FAILED, PAUSED, REVIEW, RUNNING, Job
+from core.job_store import JobStore
 from core.logger import activate_job_logger, close_job_logger, setup_job_logger
 from core.settings import Settings
 from project import io as pio
@@ -57,6 +58,7 @@ class Orchestrator:
         self.logger = setup_job_logger(job.job_id, job.job_dir,
                                        log_cb=job.emit_log)
         self.timings: Dict[str, float] = {}
+        self.job_store = JobStore()
         # last failure message (Wave 2 UI shows this in the error dialog).
         self.last_error: Optional[str] = None
 
@@ -67,11 +69,14 @@ class Orchestrator:
         job.status = RUNNING
         step = resume_from or job.resume_from or "fetch"
         try:
+            self._save_state(last_error="")
             if not resume_from and not job.resume_from and all(
                     self._has_step(s) for s in STEPS):
                 self.logger.info("job %s: mọi bước đã có checkpoint -> DONE",
                                  job.job_id)
                 job.status = DONE
+                job.resume_from = None
+                self._save_state(progress=100.0, last_error="")
                 return DONE
             requested = resume_from or job.resume_from
             first_missing = self._first_missing_step()
@@ -95,6 +100,7 @@ class Orchestrator:
                     job.status = CANCELLED
                     job.resume_from = step
                     pio.save_project(job.job_dir, proj)
+                    self._save_state(last_error="")
                     self.logger.info("đã hủy theo yêu cầu, dừng trước %s "
                                      "(checkpoint giữ nguyên, chạy tiếp được)",
                                      STEP_LABEL[step])
@@ -105,6 +111,7 @@ class Orchestrator:
                     job.status = PAUSED
                     job.resume_from = step
                     pio.save_project(job.job_dir, proj)
+                    self._save_state(last_error="")
                     self.logger.info("tạm dừng theo yêu cầu, tiếp tục từ %s",
                                      STEP_LABEL[step])
                     job.emit_progress("paused", 100.0, "Đã tạm dừng")
@@ -119,11 +126,13 @@ class Orchestrator:
                     job.status = REVIEW
                     job.resume_from = STEPS[STEPS.index(step) + 1]
                     pio.save_project(job.job_dir, proj)
+                    self._save_state(last_error="")
                     self.logger.info("dừng ở điểm duyệt sau %s, chờ duyệt tay",
                                      STEP_LABEL[step])
                     return REVIEW
             job.status = DONE
             job.resume_from = None
+            self._save_state(progress=100.0, last_error="")
             self.logger.info("job %s HOÀN THÀNH", job.job_id)
             return DONE
         except Exception as e:  # noqa: BLE001 - logged with traceback, no crash
@@ -133,16 +142,35 @@ class Orchestrator:
             # as retranslation from the review screen.
             job.resume_from = step
             self.last_error = str(e)
-            pio.save_project(job.job_dir, proj)
+            try:
+                pio.save_project(job.job_dir, proj)
+            except Exception as save_error:  # noqa: BLE001 - retain the original failure
+                self.last_error = f"{self.last_error}; không lưu được project: {save_error}"
+            try:
+                self._save_state(last_error=self.last_error)
+            except Exception as save_error:  # noqa: BLE001 - retain the original failure
+                self.last_error = f"{self.last_error}; {save_error}"
             self.logger.error("job %s THẤT BẠI ở bước '%s': %s\n%s",
                               job.job_id, step, e, traceback.format_exc())
             return FAILED
         finally:
+            final_save_failed = False
             try:
                 pio.save_project(job.job_dir, proj)
-            finally:
-                job.emit_progress("done", 100.0, job.status)
-                close_job_logger(job.job_id)
+            except Exception as save_error:  # noqa: BLE001 - worker must report a result
+                final_save_failed = True
+                job.status = FAILED
+                detail = f"Không thể lưu project: {save_error}"
+                self.last_error = f"{self.last_error}; {detail}" if self.last_error else detail
+                try:
+                    self._save_state(last_error=self.last_error)
+                except Exception as state_error:  # noqa: BLE001
+                    self.last_error = f"{self.last_error}; {state_error}"
+                self.logger.error("job %s: %s", job.job_id, self.last_error)
+            job.emit_progress("done", 100.0, job.status)
+            close_job_logger(job.job_id)
+            if final_save_failed:
+                return FAILED
 
     def _has_step(self, step: str) -> bool:
         sub_mode = (self.settings.get("sub_mode", self.job.project.sub_mode)
@@ -165,11 +193,23 @@ class Orchestrator:
             handler = getattr(self, f"_step_{step}")
             handler()
             cp.mark_done(job.job_dir, job.project, step)
+            self._save_state(
+                last_stage=step,
+                progress=(STEPS.index(step) + 1) * 100.0 / len(STEPS),
+                last_error="",
+                refresh_source_identity=(step == "fetch" and
+                                         job.project.video_source == "url"))
         finally:
             dt = time.time() - t0
             self.timings[step] = dt
             self.logger.info("%s xong trong %.1fs", STEP_LABEL[step], dt)
             job.emit_progress(step, 100.0, f"{STEP_LABEL[step]} xong ({dt:.1f}s)")
+
+    def _save_state(self, **changes) -> None:
+        try:
+            self.job_store.save(self.job, **changes)
+        except Exception as exc:
+            raise RuntimeError(f"Không thể lưu trạng thái job: {exc}") from exc
 
     # -- steps ----------------------------------------------------------------
     def _step_fetch(self):

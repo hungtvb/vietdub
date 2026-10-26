@@ -773,8 +773,12 @@ class MainWindow(QMainWindow):
             return
 
         job = self._ensure_job()
-        self._configure_job(job, self.video_path, video_url=self.video_url,
-                            audio_track=self._audio_track_index())
+        try:
+            self._configure_job(job, self.video_path, video_url=self.video_url,
+                                audio_track=self._audio_track_index())
+        except Exception as exc:  # noqa: BLE001 - storage errors must be visible
+            error_box(self, "Không thể lưu job", f"Không thể lưu trạng thái job: {exc}")
+            return
 
         from ui.progress import ProgressWindow
         self._progress_win = ProgressWindow(job, self.settings,
@@ -846,7 +850,9 @@ class MainWindow(QMainWindow):
         self.settings.save()
 
         from project import io as pio
+        from core.job_store import JobStore
         pio.save_project(job.job_dir, proj)
+        JobStore().save(job)
         return job
 
     def create_batch_job(self, video_path: str) -> Job:
