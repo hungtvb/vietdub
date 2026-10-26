@@ -41,7 +41,7 @@ class VietDubSTTAdapter:
     def transcribe(self, wav_path: str | Path) -> list[Segment]:
         source = Path(wav_path)
         duration = _wav_duration_sec(source)
-        # Use a file stream to avoid loading 90-minute audio into Python RAM.
+        # Read source from a file handle; requests may still buffer multipart\n        # encoding, so memory usage needs E2E measurement on long films.
         try:
             with source.open("rb") as fp:
                 response = requests.post(
