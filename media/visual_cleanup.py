@@ -354,7 +354,7 @@ class VisualCleanup:
                 # supersedes auto-blur; never erase freshly reconstructed
                 # background by applying the old OCR mask a second time.
                 approved = [r for r in current
-                            if r.get("source") == "temporal-clean-plate"]
+                            if r.get("source") in ("temporal-clean-plate", "flat-strip-repaint")]
                 standard = []
                 for r in current:
                     if is_temporal_region(r):
