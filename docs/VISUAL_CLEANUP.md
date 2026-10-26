@@ -126,3 +126,49 @@ python -m media.visual_cleanup_review   --video input.mp4 --plan reviewed-plan.j
   insufficient: further multilingual, moving-camera, hard-cut, HDR/VFR,
   and 1080p/4K acceptance is required before treating this as general
   production-quality removal.
+
+
+## Reviewed flat graphic-strip repaint (persistent changing subtitles)
+
+A **different** operator-approved mode handles a video whose changing subtitles
+are printed on top of a *smooth, mostly uniform color/gradient strip*, with
+clean pixels directly beneath the subtitle rows. It reconstructs each caption
+row from nearby unobstructed rows and matches each frame's left and right
+gradient; no OCR confidence or static median is used. It must NOT be used to
+cover dynamic film scenes, complex textures or a speaker's face.
+
+Example review-plan region from a second **91.8s / 25 FPS / 640×360** Chinese
+broadcast sample (again, not a global preset):
+
+```json
+{
+  "start": 9.0,
+  "end": 88.4,
+  "box": [0, 315, 640, 352],
+  "kind": "subtitle",
+  "source": "flat-strip-repaint",
+  "confidence": 1.0,
+  "donor_rows": [352, 359],
+  "left_samples": [15, 120],
+  "right_samples": [530, 635],
+  "feather": 1.4
+}
+```
+
+All coordinate and time ranges require source-video review. The blue/gray
+graphic lower bar was stable between about 9 and 88.4 seconds, but the intro
+uses a different layout and the end is a white credit screen. Those regions
+are **not** automatically touched. Persistent brand logos and the fixed name
+card remain unless separately reviewed; this mode cleans **only the dialog
+subtitle band**.
+
+Actual full-length local render of the second clip was decoded and checked
+at 12, 20, 30, 50, 70 and 82 seconds. A high-value/low-saturation
+white-glyph proxy within the caption ROI dropped to zero at all six checked
+timestamps; screenshots show no visible subtitles and stable clean bar.
+This is not an automated full-clip quality metric. More varied clips and
+logos still require human review.
+
+The editor supports `sub_mode="none"` without writing an unwanted SRT.
+Changing the cleanup settings or modifying an approved plan invalidates
+the final-render checkpoint and forces an updated export.
