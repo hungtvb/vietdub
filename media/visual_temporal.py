@@ -18,7 +18,7 @@ class TemporalPlanError(ValueError):
 
 
 def is_temporal_region(region):
-    return region.get("source") in ("temporal-clean-plate", "exemplar-patch")
+    return region.get("source") in ("temporal-clean-plate", "exemplar-patch", "flat-strip-repaint")
 
 
 def _xyxy(box, w, h):
@@ -67,7 +67,51 @@ class TemporalCleanPlate:
                     continue
                 box = _xyxy(r["box"], self.w, self.h)
                 x1, y1, x2, y2 = box
-                if r["source"] == "exemplar-patch":
+                if r["source"] == "flat-strip-repaint":
+                    donor = r.get("donor_rows", [])
+                    if len(donor) != 2:
+                        raise TemporalPlanError("flat-strip-repaint needs donor_rows")
+                    ya, yb = map(int, donor)
+                    if not (y2 <= ya < yb <= self.h):
+                        raise TemporalPlanError("donor rows must be below the subtitle strip")
+                    left = tuple(map(int,r.get("left_samples",(10,120))))
+                    right = tuple(map(int,r.get("right_samples",(self.w-110,self.w-5))))
+                    if (len(left)!=2 or len(right)!=2 or
+                            not 0<=left[0]<left[1]<=self.w or
+                            not 0<=right[0]<right[1]<=self.w):
+                        raise TemporalPlanError("invalid flat-strip sample intervals")
+                    alpha=np.zeros((self.h,self.w),np.float32)
+                    alpha[y1:y2,x1:x2]=1
+                    alpha=cv2.GaussianBlur(alpha,(0,0),float(r.get("feather",1.4)))
+                    margin=min(12,max(3,int(4*float(r.get("feather",1.4)))))
+                    ox1,oy1=max(0,x1-margin),max(0,y1-margin)
+                    ox2,oy2=min(self.w,x2+margin),min(self.h,y2+margin)
+                    adjusted={**r,"_effective_box":(ox1,oy1,ox2,oy2),
+                              "_left_samples":left,"_right_samples":right,
+                              "_donor_rows":(ya,yb)}
+                    self.items.append(Prepared(adjusted,box,alpha[oy1:oy2,ox1:ox2]))
+                    continue
+                if r["source"] == "flat-strip-repaint":
+                x1,y1,x2,y2=r["_effective_box"]
+                donor_a,donor_b=r["_donor_rows"]
+                donor=np.median(frame[donor_a:donor_b].astype(np.float32),axis=0)
+                lefta,leftb=r["_left_samples"]
+                righta,rightb=r["_right_samples"]
+                donor_left=np.median(donor[lefta:leftb],axis=0)
+                donor_right=np.median(donor[righta:rightb],axis=0)
+                weights=np.linspace(0,1,self.w,dtype=np.float32)[x1:x2,None]
+                patch=np.empty((y2-y1,x2-x1,3),np.uint8)
+                for row,y in enumerate(range(y1,y2)):
+                    left=np.median(frame[y,lefta:leftb],axis=0)-donor_left
+                    right=np.median(frame[y,righta:rightb],axis=0)-donor_right
+                    patch[row]=np.clip(donor[x1:x2]+left*(1-weights)+
+                                       right*weights,0,255).astype(np.uint8)
+                original=out[y1:y2,x1:x2]
+                mixed=original.astype(np.float32)*(1-p.alpha[:,:,None])+patch.astype(np.float32)*p.alpha[:,:,None]
+                out[y1:y2,x1:x2]=np.where(p.alpha[:,:,None]>=.0005,
+                                          np.clip(mixed,0,255).astype(np.uint8),original)
+                continue
+            if r["source"] == "exemplar-patch":
                     donor = _xyxy(r.get("donor_box", ()), self.w, self.h)
                     if (donor[2]-donor[0], donor[3]-donor[1]) != (x2-x1, y2-y1):
                         raise TemporalPlanError("donor and destination sizes differ")
