@@ -5,6 +5,7 @@ on:
       - "media/visual_cleanup.py"
       - "media/visual_precise.py"
       - "media/visual_temporal.py"
+      - "media/visual_scene_guard.py"
       - "media/visual_cleanup_review.py"
       - "tests/test_visual_temporal.py"
       - "tests/test_visual_cleanup_live_ocr.py"
