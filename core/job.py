@@ -45,6 +45,9 @@ class Job:
     # Transient - never saved to disk (a restarted app resumes from checkpoint).
     pause_requested: bool = False
     cancel_requested: bool = False
+    # Force a fresh fetch after the user confirms a changed URL source.
+    # Transient - never persisted in job/project data.
+    force_fetch: bool = False
 
     @property
     def job_dir(self) -> Path:

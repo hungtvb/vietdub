@@ -221,7 +221,9 @@ class Orchestrator:
         path = mfetch.resolve(
             source, job.job_dir,
             progress_cb=lambda pct, spd: job.emit_progress(
-                "fetch", pct, f"Tải video {pct:.0f}% {spd}"))
+                "fetch", pct, f"Tải video {pct:.0f}% {spd}"),
+            force_download=job.force_fetch)
+        job.force_fetch = False
         proj.video_in = str(path)  # resolved local path for later steps
         cp.save_step(job.job_dir, "fetch", {"video_path": str(path)})
 
