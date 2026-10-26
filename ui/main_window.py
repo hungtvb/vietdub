@@ -872,6 +872,8 @@ class MainWindow(QMainWindow):
             proj.video_out = ""
         tts_provider = self.tts_provider.currentData() or "edge"
         proj.tts_provider = tts_provider
+        proj.vieneu_backend = self.settings.get("vieneu_backend", "auto")
+        proj.vieneu_precision = self.settings.get("vieneu_precision", "fp32")
         male_key = "vieneu_voice_male" if tts_provider == "vieneu" else "voice_male"
         female_key = "vieneu_voice_female" if tts_provider == "vieneu" else "voice_female"
         proj.voice_male = self.voice_male.currentText().strip() \
