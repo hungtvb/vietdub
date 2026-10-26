@@ -5,15 +5,16 @@
 from __future__ import annotations
 
 
-def create_tts(settings, *, provider=None, voice_male=None, voice_female=None):
+def create_tts(settings, *, provider=None, voice_male=None, voice_female=None,
+               vieneu_backend=None, vieneu_precision=None):
     selected = provider or settings.get("tts_provider", "edge")
     if selected == "vieneu":
         from tts.vieneu_tts import VieNeuTTS
         return VieNeuTTS(
             voice_male=voice_male or settings.get("vieneu_voice_male", "Hải Đăng"),
             voice_female=voice_female or settings.get("vieneu_voice_female", "Mai Anh"),
-            backend=settings.get("vieneu_backend", "auto"),
-            precision=settings.get("vieneu_precision", "fp32"))
+            backend=vieneu_backend or settings.get("vieneu_backend", "auto"),
+            precision=vieneu_precision or settings.get("vieneu_precision", "fp32"))
     if selected == "edge":
         from tts.edge_tts import EdgeTTS
         return EdgeTTS(
