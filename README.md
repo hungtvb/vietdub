@@ -112,7 +112,9 @@ Có 2 cách chạy — chọn 1:
 
 1. Chọn video (tab File) hoặc dán link Douyin/TikTok/YouTube (tab Link),
    nhấn **Bắt đầu**. Bật **Chế độ qua đêm** nếu muốn máy tự chạy hết
-   9 bước không dừng duyệt (sáng dậy có phim).
+   9 bước không dừng duyệt (sáng dậy có phim). Muốn xử lý nhiều video
+   local lần lượt, bấm **Hàng đợi**; phase hiện tại dùng rãnh âm thanh đầu
+   tiên và danh sách chỉ tồn tại trong phiên app đang mở.
 2. Kết quả: `<tên video>_vidub.mp4` + file `.srt` trong thư mục đã chọn.
    Log từng job nằm trong thư mục dữ liệu VietDub của tài khoản hiện tại:
    `%LOCALAPPDATA%\VietDub\jobs\<mã job>\run.log` trên Windows (dùng
