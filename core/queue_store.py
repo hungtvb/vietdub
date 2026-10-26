@@ -49,9 +49,10 @@ class QueueStoreError(ValueError):
 
 
 def _validate(payload: Any) -> None:
-    if not isinstance(payload, dict) or set(payload) != {
-        "schema_version", "entries", "active_entry_id"
-    }:
+    required = {"schema_version", "entries"}
+    if (not isinstance(payload, dict)
+            or not required <= set(payload)
+            or not set(payload) <= required | {"active_entry_id"}):
         raise QueueStoreError("manifest fields do not match schema version 1")
     if type(payload["schema_version"]) is not int or payload["schema_version"] != SCHEMA_VERSION:
         raise QueueStoreError("unsupported schema version")
@@ -60,9 +61,10 @@ def _validate(payload: Any) -> None:
     ids: set[str] = set()
     paths: set[str] = set()
     for index, entry in enumerate(payload["entries"]):
-        if not isinstance(entry, dict) or set(entry) != {
-            "entry_id", "path", "state", "job_id"
-        }:
+        required_entry = {"entry_id", "path", "state"}
+        if (not isinstance(entry, dict)
+                or not required_entry <= set(entry)
+                or not set(entry) <= required_entry | {"job_id"}):
             raise QueueStoreError(f"invalid entry fields at index {index}")
         entry_id = entry["entry_id"]
         if not isinstance(entry_id, str) or not ENTRY_ID_RE.fullmatch(entry_id):
@@ -84,12 +86,12 @@ def _validate(payload: Any) -> None:
         paths.add(canonical)
         if not isinstance(entry["state"], str) or entry["state"] not in STATES:
             raise QueueStoreError(f"invalid state at index {index}")
-        job_id = entry["job_id"]
+        job_id = entry.get("job_id")
         if job_id is not None and (
             not isinstance(job_id, str) or not JOB_ID_RE.fullmatch(job_id)
         ):
             raise QueueStoreError(f"invalid job_id at index {index}")
-    active = payload["active_entry_id"]
+    active = payload.get("active_entry_id")
     if active is not None and (not isinstance(active, str) or active not in ids):
         raise QueueStoreError("active_entry_id is not in entries")
 
@@ -111,7 +113,7 @@ class QueueStore:
             return QueueManifest(
                 schema_version=payload["schema_version"],
                 entries=[QueueItemRecord(**entry) for entry in payload["entries"]],
-                active_entry_id=payload["active_entry_id"],
+                active_entry_id=payload.get("active_entry_id"),
             )
         except (UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
             corrupt = self.path.with_name(self.path.name + ".corrupt")
