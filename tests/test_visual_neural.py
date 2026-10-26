@@ -76,3 +76,9 @@ def test_neural_models_are_not_silently_faked(tmp_path):
     root=_stub_root(tmp_path)
     with pytest.raises(NeuralCleanupError,match="Unsupported"):
         build_command(root,source,tmp_path/"out.mp4",mode="made-up")
+
+def test_sttn_auto_must_have_approved_area(tmp_path):
+    root = _stub_root(tmp_path)
+    with pytest.raises(NeuralCleanupError,match="requires at least one reviewed"):
+        build_command(root,tmp_path/"input.mp4",tmp_path/"out.mp4",
+                      mode="sttn-auto",areas=())
