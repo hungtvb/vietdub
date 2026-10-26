@@ -127,3 +127,40 @@ def test_static_logo_geometry_rejects_pip_face_regression():
     assert _safe_auto_logo_box((16, 16, 142, 46), 640, 360)
     assert not _safe_auto_logo_box((518, 40, 586, 86), 640, 360)
     assert not _safe_auto_logo_box((100, 160, 140, 180), 640, 360)
+
+
+def test_subtitle_pixel_mask_is_not_full_ocr_rectangle():
+    from media.visual_precise import pixel_mask
+    f=np.full((120,240,3),72,dtype=np.uint8)
+    cv2.putText(f,"SUBTITLE",(38,105),cv2.FONT_HERSHEY_SIMPLEX,.7,
+                (255,255,255),2,cv2.LINE_AA)
+    rect,mask=pixel_mask(f,(30,83,190,111),"subtitle",padding=0)
+    assert rect==(30,83,190,111)
+    assert 0 < np.count_nonzero(mask) < .60*mask.size
+
+
+def test_logo_mask_is_tighter_than_manual_box():
+    from media.visual_precise import pixel_mask
+    f=np.full((100,200,3),55,dtype=np.uint8)
+    f[14:29,24:65]=(0,0,220)
+    rect,mask=pixel_mask(f,(0,0,100,50),"logo",padding=0)
+    assert rect==(0,0,100,50)
+    assert 0 < np.count_nonzero(mask) < .40*mask.size
+
+
+def test_refines_onset_and_disappearance_to_video_frames(tmp_path):
+    from media.visual_precise import refine_subtitle_bounds
+    file=tmp_path/"timed.mp4"
+    wr=cv2.VideoWriter(str(file),cv2.VideoWriter_fourcc(*"mp4v"),10,(240,120))
+    assert wr.isOpened()
+    box=(20,85,205,112)
+    for i in range(34):
+        f=np.full((120,240,3),50,dtype=np.uint8)
+        if 6 <= i <= 23:
+            cv2.putText(f,"SUBTITLE",(25,105),cv2.FONT_HERSHEY_SIMPLEX,
+                        .7,(255,255,255),2,cv2.LINE_AA)
+        wr.write(f)
+    wr.release()
+    start,end=refine_subtitle_bounds(file,10,20,box,box,10,3.4,.5)
+    assert .48 <= start <= .61, (start,end)
+    assert 2.35 <= end <= 2.5, (start,end)
