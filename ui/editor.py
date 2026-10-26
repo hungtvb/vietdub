@@ -34,6 +34,11 @@ from ui.poster_loader import PosterLoader
 from ui.theme import UI_COLORS
 
 
+def _valid_trim_interval(start: float, end: float) -> bool:
+    """Keep a tenth of a second, allowing for floating point subtraction."""
+    return end - start >= 0.1 - 1e-8
+
+
 class VideoCanvas(QGraphicsView):
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -863,7 +868,7 @@ class EditorWindow(QWidget):
 
     def _numeric_trim_changed(self) -> None:
         start, end = self.trim_start_spin.value(), self.trim_end_spin.value()
-        if end - start < 0.1 - 1e-8:
+        if not _valid_trim_interval(start, end):
             self.status.setText("Điểm cắt cuối phải sau điểm cắt đầu ít nhất 0,1 giây.")
             self._trim_changed(self.timeline.trim_start, self.timeline.trim_end)
             return
@@ -1156,7 +1161,7 @@ class EditorWindow(QWidget):
         if self._thread is not None:
             return
         self._save_draft()
-        if self.timeline.trim_end - self.timeline.trim_start < 0.1:
+        if not _valid_trim_interval(self.timeline.trim_start, self.timeline.trim_end):
             error_box(self, "Khoảng cắt quá ngắn", "Cần giữ ít nhất 0,1 giây video.")
             return
         target = self.output_path
