@@ -144,10 +144,36 @@ class Orchestrator:
                 job.emit_progress("done", 100.0, job.status)
                 close_job_logger(job.job_id)
 
+    def _tts_config(self) -> dict:
+        """Audio-defining options pinned to this job, not global UI settings."""
+        p = self.job.project
+        config = {
+            "version": 1,
+            "provider": p.tts_provider,
+            "voice_male": p.voice_male,
+            "voice_female": p.voice_female,
+        }
+        if p.tts_provider == "vieneu":
+            config.update(backend=p.vieneu_backend, precision=p.vieneu_precision,
+                          model="v3turbo")
+        else:
+            config.update(rate=p.tts_rate, pitch=p.tts_pitch)
+        return config
+
     def _has_step(self, step: str) -> bool:
         sub_mode = (self.settings.get("sub_mode", self.job.project.sub_mode)
                     or self.job.project.sub_mode or "burn")
-        return cp.has_step(self.job.job_dir, step, sub_mode=sub_mode)
+        if not cp.has_step(self.job.job_dir, step, sub_mode=sub_mode):
+            return False
+        if step == "tts":
+            meta = cp.load_step(self.job.job_dir, "tts_meta") or {}
+            previous = meta.get("tts_config")
+            # Existing jobs saved before the provider feature used Edge-TTS
+            # and did not record a config fingerprint.
+            if previous is None:
+                return self.job.project.tts_provider == "edge"
+            return previous == self._tts_config()
+        return True
 
     def _first_missing_step(self) -> str:
         for step in STEPS:
@@ -452,7 +478,11 @@ class Orchestrator:
         tts = create_tts(
             s, provider=job.project.tts_provider,
             voice_male=job.project.voice_male,
-            voice_female=job.project.voice_female)
+            voice_female=job.project.voice_female,
+            vieneu_backend=job.project.vieneu_backend,
+            vieneu_precision=job.project.vieneu_precision,
+            rate=job.project.tts_rate,
+            pitch=job.project.tts_pitch)
         segments = self._synthesize_tts(tts, segments, tts_dir)
         segments, decisions = self._fit_and_track(
             segments, tts_dir,
@@ -471,7 +501,8 @@ class Orchestrator:
         dub_track = mfit.build_track(segments, tts_dir / "dub_track.wav", total)
         pio.save_segments(job.job_dir, "tts", segments)
         cp.save_step(job.job_dir, "tts_meta",
-                     {"dub_track": str(dub_track), "total_sec": total})
+                     {"dub_track": str(dub_track), "total_sec": total,
+                      "tts_config": self._tts_config()})
 
     def _step_mix(self):
         from media import mix as mmix
