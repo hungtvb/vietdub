@@ -8,6 +8,7 @@ on:
       - 'media/visual_cleanup_review.py'
       - 'tests/test_visual_temporal.py'
       - 'media/render.py'
+      - 'media/editor.py'
       - 'core/orchestrator.py'
       - 'core/settings.py'
       - 'ui/settings_dialog.py'
