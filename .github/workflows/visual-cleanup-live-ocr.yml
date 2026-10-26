@@ -7,6 +7,8 @@ on:
       - "media/visual_temporal.py"
       - "media/visual_scene_guard.py"
       - "media/visual_acceptance.py"
+      - "media/visual_neural.py"
+      - "tests/test_visual_neural.py"
       - "tests/test_visual_acceptance.py"
       - "media/visual_cleanup_review.py"
       - "tests/test_visual_temporal.py"
