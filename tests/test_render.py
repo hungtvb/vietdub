@@ -87,3 +87,20 @@ def test_bad_sub_mode(tmp_path):
     with pytest.raises(mrender.RenderError) as e:
         mrender.render(v, a, srt, tmp_path / "o.mp4", sub_mode="bogus")
     assert "sub_mode" in str(e.value)
+
+
+def test_no_subtitle_mode_has_no_text_track(tmp_path):
+    """No subtitle track or new burned-in text (old burned-in pixels are separate)."""
+    segs = [Segment(index=0, start=.3, end=1.5, speaker=0, text_vi="Xin chào")]
+    srt = msubs.write_srt(segs, tmp_path / "t.srt")
+    v, a = tmp_path / "v.mp4", tmp_path / "a.wav"
+    _tiny_video(v)
+    _tiny_wav(a)
+    out = mrender.render(v, a, srt, tmp_path / "no_subs.mp4", sub_mode="none")
+    assert out.is_file()
+    assert not out.with_suffix(".srt").exists()
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries",
+         "stream=index", "-of", "csv=p=0", str(out)],
+        capture_output=True, text=True, check=True)
+    assert probe.stdout.strip() == ""
