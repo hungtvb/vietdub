@@ -60,11 +60,15 @@ class ProgressWindow(QWidget):
     """Màn 2. on_close(): quay về màn chính (video khác / đóng job)."""
 
     def __init__(self, job: Job, settings: Settings,
-                 on_close: Callable[[], None]):
+                 on_close: Callable[[], None], *,
+                 on_progress: Callable[[str, float, str], None] | None = None,
+                 on_result: Callable[[Job, str], None] | None = None):
         super().__init__()
         self.job = job
         self.settings = settings
         self.on_close = on_close
+        self.on_progress = on_progress
+        self.on_result = on_result
         self.setWindowTitle(f"VietDub — Đang xử lý: {job.project.name}")
         self.resize(900, 760)
         self.setMinimumSize(650, 500)
@@ -226,6 +230,11 @@ class ProgressWindow(QWidget):
         thread.start()
 
     def _on_progress(self, step: str, pct: float, msg: str) -> None:
+        if self.on_progress is not None:
+            try:
+                self.on_progress(step, pct, msg)
+            except Exception:  # noqa: BLE001 - callback phụ, UI job vẫn tiếp tục
+                pass
         if step in STEPS:
             idx = STEPS.index(step)
             overall = (idx * 100.0 + max(0.0, min(100.0, pct))) / len(STEPS)
@@ -252,6 +261,11 @@ class ProgressWindow(QWidget):
 
     def _on_finished(self, result: str) -> None:
         self._running = False
+        if self.on_result is not None:
+            try:
+                self.on_result(self.job, result)
+            except Exception:  # noqa: BLE001 - callback phụ, UI job vẫn tiếp tục
+                pass
         if result == REVIEW:
             self._open_review()
         elif result == DONE:
@@ -343,6 +357,11 @@ class ProgressWindow(QWidget):
                 on_back=self._back_from_review,
                 on_retranslate=self._retranslate_with_metadata)
         self._review_win.show()
+
+    def show_current_review(self) -> None:
+        """Reopen a saved review stop without advancing its job checkpoint."""
+        if not self._running and self.job.status == REVIEW:
+            self._open_review()
 
     def _retranslate_with_metadata(self, meta) -> None:
         # Tony sửa metadata tay ở màn duyệt #2 -> dịch lại toàn bộ với

@@ -449,9 +449,29 @@ class ReviewSourceWindow(QWidget):
         if not self._read_table():  # đọc sửa tại chỗ trước khi gộp
             return
         a, b = self.segments[r], self.segments[r + 1]
+        if a.speaker != b.speaker:
+            error_box(
+                self, "Không thể gộp hai người nói",
+                f"Câu {r + 1} thuộc loa {a.speaker}, câu {r + 2} thuộc loa "
+                f"{b.speaker}. Hãy sửa nhãn loa trước hoặc giữ hai câu riêng.")
+            return
+        if a.audience != b.audience:
+            error_box(
+                self, "Không thể gộp hai câu có người nghe khác nhau",
+                "Hai câu đang có nhãn 'Nói với ai' khác nhau. Hãy đặt cùng "
+                "một nhãn cho cả hai câu trước khi gộp để không mất lựa chọn "
+                "đã duyệt.")
+            return
+        if a.gender and b.gender and a.gender != b.gender:
+            error_box(
+                self, "Không thể gộp hai câu có giới tính người nói khác nhau",
+                "Hai câu cùng nhãn loa nhưng giới tính đang khác nhau. Hãy "
+                "sửa nhãn giới tính trước khi gộp để không mất lựa chọn đã duyệt.")
+            return
         a.text_src = ((a.text_src or "").rstrip() + " " +
                       (b.text_src or "").lstrip()).strip()
         a.end = max(a.end, b.end)
+        a.gender = a.gender or b.gender
         a.needs_review = a.needs_review or b.needs_review
         a.confidence = min(a.confidence, b.confidence)
         del self.segments[r + 1]
