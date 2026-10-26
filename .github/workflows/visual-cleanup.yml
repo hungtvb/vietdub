@@ -26,6 +26,7 @@ on:
 jobs:
   visual-cleanup:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,8 +44,9 @@ jobs:
               out.write(str(link.parent) + "\n")
           PY
           python -m pip install --upgrade pip
-          pip install pytest numpy 'opencv-python-headless>=4.8,<5'
+          pip install pytest pytest-timeout numpy 'opencv-python-headless>=4.8,<5'
       - name: Test synthetic OCR and render (no ASR / OCR weights)
+        timeout-minutes: 5
         run: |
          python -m compileall -q core/orchestrator.py media/editor.py media/visual_cleanup.py media/visual_temporal.py media/visual_scene_guard.py media/visual_cleanup_review.py ui/settings_dialog.py
-         pytest -q tests/test_visual_cleanup.py tests/test_visual_temporal.py tests/test_render.py tests/test_editor_none.py tests/test_visual_acceptance.py tests/test_visual_neural.py
+         pytest -vv --timeout=35 --timeout-method=signal tests/test_visual_cleanup.py tests/test_visual_temporal.py tests/test_render.py tests/test_editor_none.py tests/test_visual_acceptance.py tests/test_visual_neural.py
