@@ -31,7 +31,13 @@ def main(argv=None):
         raise VisualCleanupError("Plan lacks operator-reviewed clean-plate regions")
     output = VisualCleanup(Config(mode=args.mode,auto_logo=False)).render(
         args.video,args.out,plan,ffmpeg=args.ffmpeg)
+    from media.visual_acceptance import write_audit
+    report = write_audit(str(output)+".audit.json",args.video,output,plan,
+                         required_subtitle_times=plan.get("required_subtitle_times",[]))
+    if not report["pass_structural_checks"]:
+        raise VisualCleanupError("Output verification failed: "+"; ".join(report["issues"]))
     print(output)
+    print("QA:",str(output)+".audit.json")
     return 0
 
 
