@@ -874,6 +874,8 @@ class MainWindow(QMainWindow):
         proj.tts_provider = tts_provider
         proj.vieneu_backend = self.settings.get("vieneu_backend", "auto")
         proj.vieneu_precision = self.settings.get("vieneu_precision", "fp32")
+        proj.tts_rate = self.settings.get("tts_rate", "+0%")
+        proj.tts_pitch = self.settings.get("tts_pitch", "+0Hz")
         male_key = "vieneu_voice_male" if tts_provider == "vieneu" else "voice_male"
         female_key = "vieneu_voice_female" if tts_provider == "vieneu" else "voice_female"
         proj.voice_male = self.voice_male.currentText().strip() \
