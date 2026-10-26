@@ -865,8 +865,23 @@ class MainWindow(QMainWindow):
             self._batch_window.raise_()
             self._batch_window.activateWindow()
             return
+        from core.queue_store import QueueStore, QueueStoreError
+        queue_store = QueueStore()
+        try:
+            manifest = queue_store.load()
+        except (QueueStoreError, OSError, ValueError) as exc:
+            error_box(self, "Không thể khôi phục hàng đợi",
+                      f"Hàng đợi cần được kiểm tra trước khi mở:\n{exc}")
+            return
+        corrupt_path = queue_store.path.with_name(queue_store.path.name + ".corrupt")
+        if manifest is None and (corrupt_path.exists() or corrupt_path.is_symlink()):
+            error_box(self, "Hàng đợi cần được khôi phục",
+                      f"Manifest lỗi đã được giữ tại:\n{corrupt_path}\n\n"
+                      "Không thể tạo hàng đợi mới cho tới khi tệp này được xử lý.")
+            return
         self._batch_window = BatchQueueWindow(
-            self, self.settings, on_close=self._batch_queue_closed)
+            self, self.settings, on_close=self._batch_queue_closed,
+            queue_store=queue_store, manifest=manifest)
         self._batch_window.show()
         self.hide()
 
