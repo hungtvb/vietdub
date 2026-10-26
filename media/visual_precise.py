@@ -102,7 +102,7 @@ def refine_subtitle_bounds(video, start_frame, last_frame, first_box, last_box,
         radius = max(2, round(fps*min(1.5, 2*sample_sec)))
         beginning = start_frame
         for i in range(start_frame-1, max(-1, start_frame-radius-1), -1):
-            if overlap(first_mask, frame_at(i), first_box) < .18:
+            if overlap(first_mask, frame_at(i), first_box) < .35:
                 break
             beginning = i
         ending = last_frame
