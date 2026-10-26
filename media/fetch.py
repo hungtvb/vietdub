@@ -135,12 +135,23 @@ def resolve(source: str, job_dir: str | Path,
             download(source, temporary, progress_cb=progress_cb)
             temporary.replace(dest)
         except Exception:
+            # yt-dlp can leave sidecars such as `.part` or `.ytdl` beside
+            # the requested output when a download fails. This basename is
+            # unique to this refresh, so remove only its own artifacts.
             try:
-                temporary.unlink()
+                artifacts = [temporary, *temporary.parent.glob(
+                    f"{temporary.name}.*")]
             except OSError:
-                # Preserve the download/replace failure as the useful error.
-                log.warning("could not remove temporary fetch %s", temporary,
-                            exc_info=True)
+                artifacts = [temporary]
+                log.warning("could not list temporary fetch artifacts for %s",
+                            temporary, exc_info=True)
+            for artifact in artifacts:
+                try:
+                    artifact.unlink(missing_ok=True)
+                except OSError:
+                    # Preserve the download/replace failure as the useful error.
+                    log.warning("could not remove temporary fetch artifact %s",
+                                artifact, exc_info=True)
             raise
         return dest
     return download(source, dest, progress_cb=progress_cb)
