@@ -33,7 +33,7 @@ def export_edit(video_in: str | Path, mixed_wav: str | Path,
         raise RenderError("Đường dẫn xuất không được ghi đè video hoặc audio gốc.")
     if trim_start < 0 or trim_end <= trim_start:
         raise RenderError("Khoảng cắt video không hợp lệ.")
-    if sub_mode not in {"burn", "srt"}:
+    if sub_mode not in {"burn", "srt", "none"}:
         raise RenderError("Chế độ phụ đề không hợp lệ.")
     if logo_path and not Path(logo_path).is_file():
         raise RenderError(f"Không tìm thấy logo: {logo_path}")
