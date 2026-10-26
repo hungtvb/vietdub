@@ -397,6 +397,28 @@ class SettingsDialog(QDialog):
         self.visual_cleanup_enabled = QCheckBox("Tự động làm mờ chữ/logo gốc (cần PaddleOCR)")
         self.visual_cleanup_enabled.setChecked(bool(self.settings.get("visual_cleanup_enabled", False)))
         f.addRow(self.visual_cleanup_enabled)
+        self.visual_cleanup_backend = QComboBox()
+        self.visual_cleanup_backend.addItem("OpenCV / clean-plate (nhẹ)", "cv")
+        self.visual_cleanup_backend.addItem("AI video inpainting (cần cài VSR riêng)", "vsr")
+        self.visual_cleanup_backend.setCurrentIndex(max(0,
+            self.visual_cleanup_backend.findData(self.settings.get("visual_cleanup_backend","cv"))))
+        f.addRow("Engine xử lý:", self.visual_cleanup_backend)
+        self.visual_vsr_mode = QComboBox()
+        self.visual_vsr_mode.addItem("STTN + OCR (tự phát hiện text)", "sttn-det")
+        self.visual_vsr_mode.addItem("STTN vùng chọn", "sttn-auto")
+        self.visual_vsr_mode.addItem("LaMa", "lama")
+        self.visual_vsr_mode.addItem("ProPainter", "propainter")
+        self.visual_vsr_mode.setCurrentIndex(max(0,
+            self.visual_vsr_mode.findData(self.settings.get("visual_vsr_mode","sttn-det"))))
+        f.addRow("Model AI (VSR):", self.visual_vsr_mode)
+        vsr_row = QHBoxLayout()
+        self.visual_vsr_root = QLineEdit(self.settings.get("visual_vsr_root","") or "")
+        self.visual_vsr_root.setPlaceholderText("Thư mục VSR có backend/main.py")
+        vsr_row.addWidget(self.visual_vsr_root, 1)
+        browse_vsr = QPushButton("Chọn…")
+        browse_vsr.clicked.connect(self.browse_visual_vsr)
+        vsr_row.addWidget(browse_vsr)
+        f.addRow("VSR local:", vsr_row)
         self.visual_cleanup_auto_logo = QCheckBox("Thử nhận diện logo cố định (nguy cơ nhầm vùng; cần kiểm duyệt)")
         self.visual_cleanup_auto_logo.setChecked(bool(self.settings.get("visual_cleanup_auto_logo", False)))
         f.addRow(self.visual_cleanup_auto_logo)
@@ -444,6 +466,11 @@ class SettingsDialog(QDialog):
             "", "Font (*.ttf *.otf *.ttc);;Tất cả (*.*)")
         if path:
             self.sub_font.setText(path)
+
+    def browse_visual_vsr(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Chọn thư mục VSR")
+        if path:
+            self.visual_vsr_root.setText(path)
 
     def browse_visual_plan(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -504,6 +531,11 @@ class SettingsDialog(QDialog):
         self.tts_conc.setValue(int(DEFAULTS["tts_concurrency"]))
         self.sub_mode.setCurrentIndex(max(0, self.sub_mode.findData(DEFAULTS["sub_mode"])))
         self.visual_cleanup_enabled.setChecked(bool(DEFAULTS["visual_cleanup_enabled"]))
+        self.visual_cleanup_backend.setCurrentIndex(max(0,
+            self.visual_cleanup_backend.findData(DEFAULTS["visual_cleanup_backend"])))
+        self.visual_vsr_mode.setCurrentIndex(max(0,
+            self.visual_vsr_mode.findData(DEFAULTS["visual_vsr_mode"])))
+        self.visual_vsr_root.setText(str(DEFAULTS["visual_vsr_root"]))
         self.visual_cleanup_auto_logo.setChecked(bool(DEFAULTS["visual_cleanup_auto_logo"]))
         self.visual_cleanup_mode.setCurrentIndex(max(0,
             self.visual_cleanup_mode.findData(DEFAULTS["visual_cleanup_mode"])))
@@ -556,6 +588,9 @@ class SettingsDialog(QDialog):
             "tts_concurrency": self.tts_conc.value(),
             "sub_mode": self.sub_mode.currentData(),
             "visual_cleanup_enabled": self.visual_cleanup_enabled.isChecked(),
+            "visual_cleanup_backend": self.visual_cleanup_backend.currentData(),
+            "visual_vsr_mode": self.visual_vsr_mode.currentData(),
+            "visual_vsr_root": self.visual_vsr_root.text().strip(),
             "visual_cleanup_auto_logo": self.visual_cleanup_auto_logo.isChecked(),
             "visual_cleanup_mode": self.visual_cleanup_mode.currentData(),
             "visual_cleanup_interval_sec": self.visual_cleanup_interval.value(),
