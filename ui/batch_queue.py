@@ -445,7 +445,12 @@ class BatchQueueWindow(QDialog):
         self.btn_start.setEnabled(editable and bool(self.entries))
         can_act = (self._blocked and self._current_index is not None
                    and self._progress_window is None)
-        self.btn_resume.setEnabled(can_act)
+        can_resume = can_act
+        if can_resume and self._current_index is not None:
+            current = self.entries[self._current_index]
+            if current.job is None and not Path(current.path).is_file():
+                can_resume = False
+        self.btn_resume.setEnabled(can_resume)
         self.btn_skip.setEnabled(can_act)
         self.btn_close.setEnabled(not self._queue_active
                                   and self._progress_window is None)

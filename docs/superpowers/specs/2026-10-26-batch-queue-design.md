@@ -53,5 +53,8 @@ interprets `REVIEW` as a completed job.
 - The queue shows current stage progress and terminal states for every item.
 - `REVIEW` and `PAUSED` hold the queue on the active item. `FAILED` and
   `CANCELLED` require an explicit retry/resume or skip action.
+- If a queued file disappears before its job starts, the row is marked failed
+  and can only be skipped; retry is disabled until the user re-adds a valid
+  file in a new queue.
 - Outputs and checkpoints remain owned by their corresponding jobs.
 - The UI remains usable at the app's compact supported window size.
