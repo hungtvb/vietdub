@@ -282,10 +282,20 @@ class SettingsDialog(QDialog):
         self.asr_backend.addItem("FunASR trực tiếp", "funasr")
         self.asr_backend.addItem(
             "Qwen 1.7B + timestamp + CAM++ (chậm)", "qwen")
+        self.asr_backend.addItem("VietDub STT riêng (local) + CAM++", "vietdub_stt")
         backend = self.settings.get("asr_backend", "whisper")
         idx = self.asr_backend.findData(backend)
         self.asr_backend.setCurrentIndex(max(0, idx))
         f.addRow("Bộ nhận dạng lời nói:", self.asr_backend)
+        self.stt_url = QLineEdit(str(self.settings.get(
+            "stt_url", "http://127.0.0.1:8768")))
+        f.addRow("VietDub STT local URL:", self.stt_url)
+        self.stt_quality = QComboBox()
+        self.stt_quality.addItem("Fast (Qwen 0.6B)", "fast")
+        self.stt_quality.addItem("Quality (Qwen 1.7B)", "quality")
+        self.stt_quality.setCurrentIndex(max(0, self.stt_quality.findData(
+            self.settings.get("stt_quality", "fast"))))
+        f.addRow("VietDub STT chất lượng:", self.stt_quality)
         self.whisper_model = QLineEdit(
             self.settings.get("whisper_model", "large-v3-turbo"))
         f.addRow("Mô hình Whisper:", self.whisper_model)
@@ -447,6 +457,9 @@ class SettingsDialog(QDialog):
         self.tr_batch.setValue(int(DEFAULTS["translate_batch"]))
         self.asr_backend.setCurrentIndex(
             max(0, self.asr_backend.findData(DEFAULTS["asr_backend"])))
+        self.stt_url.setText(str(DEFAULTS["stt_url"]))
+        self.stt_quality.setCurrentIndex(max(
+            0, self.stt_quality.findData(DEFAULTS["stt_quality"])))
         self.whisper_model.setText(str(DEFAULTS["whisper_model"]))
         self.asr_model.setCurrentText(str(DEFAULTS["asr_model"]))
         self.vad_model.setText(str(DEFAULTS["vad_model"]))
@@ -492,6 +505,8 @@ class SettingsDialog(QDialog):
             "llm_temperature": self.llm_temp.value(),
             "translate_batch": self.tr_batch.value(),
             "asr_backend": self.asr_backend.currentData(),
+            "stt_url": self.stt_url.text().strip() or DEFAULTS["stt_url"],
+            "stt_quality": self.stt_quality.currentData(),
             "whisper_model": self.whisper_model.text().strip() or
             DEFAULTS["whisper_model"],
             "asr_model": self.asr_model.currentText().strip(),
