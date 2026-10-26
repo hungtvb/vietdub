@@ -265,6 +265,26 @@ class MainWindow(QMainWindow):
         intro.setWordWrap(True)
         root.addWidget(intro)
 
+        self.queue_notice = QFrame()
+        self.queue_notice.setObjectName("mainRecoveryNotice")
+        self.queue_notice.setStyleSheet(
+            f"QFrame#mainRecoveryNotice {{ background: {UI_COLORS['control']}; "
+            f"border: 1px solid {UI_COLORS['border']}; border-radius: 12px; }}")
+        notice_row = QHBoxLayout(self.queue_notice)
+        notice_row.setContentsMargins(12, 9, 12, 9)
+        self.queue_notice_text = QLabel()
+        self.queue_notice_text.setWordWrap(True)
+        self.queue_notice_text.setTextFormat(Qt.PlainText)
+        self.queue_notice_text.setProperty("role", "secondary")
+        notice_row.addWidget(self.queue_notice_text, 1)
+        self.btn_queue_notice = QPushButton("Khôi phục hàng đợi")
+        self.btn_queue_notice.setProperty("role", "secondary")
+        self.btn_queue_notice.clicked.connect(self._queue_notice_action)
+        notice_row.addWidget(self.btn_queue_notice)
+        self._queue_notice_action_kind = "queue"
+        self.queue_notice.hide()
+        root.addWidget(self.queue_notice)
+
         source_card = QFrame()
         source_card.setObjectName("mainCard")
         source_lay = QVBoxLayout(source_card)
@@ -306,6 +326,11 @@ class MainWindow(QMainWindow):
         self.source_status.setTextFormat(Qt.PlainText)
         self.source_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         footer_lay.addWidget(self.source_status, 1)
+        self.btn_history = QPushButton("Lịch sử")
+        self.btn_history.setProperty("role", "secondary")
+        self.btn_history.setToolTip("Xem job đã lưu và tiếp tục công việc dở")
+        self.btn_history.clicked.connect(self.open_job_history)
+        footer_lay.addWidget(self.btn_history)
         self.btn_batch = QPushButton("Hàng đợi")
         self.btn_batch.setProperty("role", "secondary")
         self.btn_batch.clicked.connect(self.open_batch_queue)
@@ -319,6 +344,9 @@ class MainWindow(QMainWindow):
         footer_lay.addWidget(self.btn_start)
         shell_lay.addWidget(footer)
         self._resize_footer()
+        # Startup inspects only the small queue manifest. Full job history and
+        # checkpoints are loaded only when the user opens the history window.
+        QTimer.singleShot(0, self._check_active_queue_notice)
 
     # ------------------------------------------------------------------ tab
     def _build_file_tab(self) -> None:
@@ -885,8 +913,77 @@ class MainWindow(QMainWindow):
         self._batch_window.show()
         self.hide()
 
+    def _check_active_queue_notice(self) -> None:
+        """Show a non-modal notice from the queue manifest alone."""
+        from core.queue_store import QueueStore, QueueStoreError
+
+        self.queue_notice.hide()
+        queue_store = QueueStore()
+        corrupt_path = queue_store.path.with_name(queue_store.path.name + ".corrupt")
+        try:
+            manifest = queue_store.load()
+        except (QueueStoreError, OSError, ValueError) as exc:
+            preserved = (f" Tệp lỗi được giữ tại {corrupt_path}."
+                         if corrupt_path.exists() or corrupt_path.is_symlink() else "")
+            self.queue_notice_text.setText(
+                f"Không đọc được hàng đợi đã lưu: {exc}.{preserved} "
+                "Lịch sử job vẫn có thể mở.")
+            self.btn_queue_notice.setText("Mở lịch sử")
+            self._queue_notice_action_kind = "history"
+            self.queue_notice.show()
+            return
+
+        if manifest is not None and manifest.entries:
+            self.queue_notice_text.setText(
+                "Có hàng đợi đã lưu. Mở để xem trạng thái; hàng đợi sẽ không "
+                "tự chạy cho tới khi bạn chọn tiếp tục.")
+            self.btn_queue_notice.setText("Khôi phục hàng đợi")
+            self._queue_notice_action_kind = "queue"
+            self.queue_notice.show()
+        elif corrupt_path.exists() or corrupt_path.is_symlink():
+            self.queue_notice_text.setText(
+                f"Manifest hàng đợi lỗi được giữ tại {corrupt_path}. "
+                "Lịch sử công việc vẫn dùng được.")
+            self.btn_queue_notice.setText("Mở lịch sử")
+            self._queue_notice_action_kind = "history"
+            self.queue_notice.show()
+
+    def _queue_notice_action(self) -> None:
+        if self._queue_notice_action_kind == "history":
+            self.open_job_history()
+        else:
+            self.open_batch_queue()
+
+    def open_job_history(self) -> None:
+        """Open lazy history; no discovery runs during application startup."""
+        from ui.job_history import JobHistoryDialog
+
+        dialog = JobHistoryDialog(self.settings, self)
+        dialog.exec()
+        if dialog.restore_queue_requested:
+            self.open_batch_queue()
+        elif dialog.resume_job is not None:
+            self._start_recovered_job(
+                dialog.resume_job, dialog.resume_from,
+                show_review=dialog.resume_review)
+
+    def _start_recovered_job(self, job: Job, resume_from: str | None,
+                             *, show_review: bool) -> None:
+        from ui.progress import ProgressWindow
+
+        self.job = job
+        self._progress_win = ProgressWindow(
+            job, self.settings, on_close=self._back_to_main)
+        self._progress_win.show()
+        self.hide()
+        if show_review:
+            self._progress_win.show_current_review()
+        else:
+            self._progress_win.begin(resume_from=resume_from)
+
     def _batch_queue_closed(self) -> None:
         self._batch_window = None
+        self._check_active_queue_notice()
         self.show()
 
     def _back_to_main(self) -> None:
