@@ -81,6 +81,15 @@ def _looks_valid(step: str, data: Any) -> bool:
     return True
 
 
+def _nonempty_file(path: Any) -> bool:
+    """Return whether an artifact exists as a non-empty regular file."""
+    try:
+        artifact = Path(path)
+        return artifact.is_file() and artifact.stat().st_size > 0
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def mark_done(job_dir: Path, project, step: str) -> None:
     """Record a finished step.
 
@@ -100,9 +109,32 @@ def mark_done(job_dir: Path, project, step: str) -> None:
         json.dumps(project_dict, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-def has_step(job_dir: Path, step: str) -> bool:
-    """True only if the checkpoint exists AND loads valid."""
-    return load_step(job_dir, step) is not None
+def has_step(job_dir: Path, step: str, *, sub_mode: str = "") -> bool:
+    """True only if the checkpoint and its produced artifacts are valid."""
+    data = load_step(job_dir, step)
+    if data is None:
+        return False
+    artifact_key = {"fetch": "video_path", "extract": "wav_path",
+                    "mix": "mixed_wav", "render": "video_out"}.get(step)
+    if artifact_key and not _nonempty_file(data[artifact_key]):
+        return False
+    if step == "tts":
+        for segment in data["segments"]:
+            if not isinstance(segment, dict):
+                return False
+            if segment.get("audio_vi") and not _nonempty_file(segment["audio_vi"]):
+                return False
+        meta = load_step(job_dir, "tts_meta")
+        return bool(meta and _nonempty_file(meta.get("dub_track")))
+    if step == "render" and sub_mode == "srt":
+        srt_out = data.get("srt_out")
+        if srt_out:
+            return _nonempty_file(srt_out)
+        try:
+            return _nonempty_file(Path(data["video_out"]).with_suffix(".srt"))
+        except (OSError, TypeError, ValueError):
+            return False
+    return True
 
 
 def invalidate_from(job_dir: Path, project, step: str) -> None:
