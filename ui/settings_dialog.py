@@ -328,6 +328,38 @@ class SettingsDialog(QDialog):
         f.setContentsMargins(16, 16, 16, 16)
         f.setHorizontalSpacing(16)
         f.setVerticalSpacing(11)
+        self.tts_provider = QComboBox()
+        self.tts_provider.addItem("Edge-TTS (online)", "edge")
+        self.tts_provider.addItem("VieNeu v3 Turbo (trên máy)", "vieneu")
+        self.tts_provider.setCurrentIndex(max(
+            0, self.tts_provider.findData(self.settings.get("tts_provider", "edge"))))
+        f.addRow("Công nghệ TTS:", self.tts_provider)
+        self.vieneu_voice_male = QLineEdit(
+            self.settings.get("vieneu_voice_male", "Hải Đăng"))
+        f.addRow("VieNeu - giọng nam:", self.vieneu_voice_male)
+        self.vieneu_voice_female = QLineEdit(
+            self.settings.get("vieneu_voice_female", "Mai Anh"))
+        f.addRow("VieNeu - giọng nữ:", self.vieneu_voice_female)
+        self.vieneu_backend = QComboBox()
+        for label, value in (("Tự động CPU/GPU", "auto"),
+                             ("ONNX CPU", "onnx"),
+                             ("PyTorch GPU", "pytorch")):
+            self.vieneu_backend.addItem(label, value)
+        self.vieneu_backend.setCurrentIndex(max(
+            0, self.vieneu_backend.findData(self.settings.get("vieneu_backend", "auto"))))
+        f.addRow("VieNeu - backend:", self.vieneu_backend)
+        self.vieneu_precision = QComboBox()
+        self.vieneu_precision.addItem("FP32 (tương thích CPU)", "fp32")
+        self.vieneu_precision.addItem("INT8 (CPU hỗ trợ VNNI)", "int8")
+        self.vieneu_precision.setCurrentIndex(max(
+            0, self.vieneu_precision.findData(self.settings.get("vieneu_precision", "fp32"))))
+        f.addRow("VieNeu - độ chính xác:", self.vieneu_precision)
+        note = QLabel("VieNeu là tùy chọn, cần cài riêng: pip install -r "
+                      "requirements-vieneu.txt. Model tải lần đầu. "
+                      "Tốc độ đọc và cao độ bên dưới chỉ áp dụng cho Edge-TTS.")
+        note.setWordWrap(True)
+        note.setProperty("role", "secondary")
+        f.addRow(note)
         self.pitch_male = QDoubleSpinBox()
         self.pitch_male.setRange(50, 400)
         self.pitch_male.setValue(float(self.settings.get("pitch_male_max_hz", 160)))
@@ -457,6 +489,14 @@ class SettingsDialog(QDialog):
         self.pitch_female.setValue(float(DEFAULTS["pitch_female_min_hz"]))
         self.dub_vol.setValue(int(float(DEFAULTS["dub_volume"]) * 100))
         self.orig_vol.setValue(int(float(DEFAULTS["orig_volume"]) * 100))
+        self.tts_provider.setCurrentIndex(max(
+            0, self.tts_provider.findData(DEFAULTS["tts_provider"])))
+        self.vieneu_voice_male.setText(DEFAULTS["vieneu_voice_male"])
+        self.vieneu_voice_female.setText(DEFAULTS["vieneu_voice_female"])
+        self.vieneu_backend.setCurrentIndex(max(
+            0, self.vieneu_backend.findData(DEFAULTS["vieneu_backend"])))
+        self.vieneu_precision.setCurrentIndex(max(
+            0, self.vieneu_precision.findData(DEFAULTS["vieneu_precision"])))
         self.tts_rate.setText(str(DEFAULTS["tts_rate"]))
         self.tts_pitch.setText(str(DEFAULTS["tts_pitch"]))
         self.tts_conc.setValue(int(DEFAULTS["tts_concurrency"]))
@@ -503,6 +543,13 @@ class SettingsDialog(QDialog):
             "pitch_female_min_hz": self.pitch_female.value(),
             "dub_volume": self.dub_vol.value() / 100.0,
             "orig_volume": self.orig_vol.value() / 100.0,
+            "tts_provider": self.tts_provider.currentData(),
+            "vieneu_voice_male": (self.vieneu_voice_male.text().strip()
+                                  or DEFAULTS["vieneu_voice_male"]),
+            "vieneu_voice_female": (self.vieneu_voice_female.text().strip()
+                                    or DEFAULTS["vieneu_voice_female"]),
+            "vieneu_backend": self.vieneu_backend.currentData(),
+            "vieneu_precision": self.vieneu_precision.currentData(),
             "tts_rate": self.tts_rate.text().strip() or "+0%",
             "tts_pitch": self.tts_pitch.text().strip() or "+0Hz",
             "tts_concurrency": self.tts_conc.value(),
