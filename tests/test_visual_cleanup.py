@@ -86,3 +86,35 @@ def test_render_synthetic(tmp_path,mode):
 def test_validation():
     with pytest.raises(VisualCleanupError):
         VisualCleanup(Config(mode="invalid"))
+
+
+def test_short_subtitle_two_confirmations(tmp_path):
+    """A 350ms caption must be detected with a 650ms regular OCR cadence."""
+    video = tmp_path/"short.mp4"
+    writer = cv2.VideoWriter(str(video),cv2.VideoWriter_fourcc(*"mp4v"),10,(200,120))
+    assert writer.isOpened()
+    for frame_idx in range(30):
+        f = np.full((120,200,3), 35, np.uint8)
+        if 6 <= frame_idx <= 9:  # 0.6s ... 0.9s
+            f[95:107,36:164] = 255
+        writer.write(f)
+    writer.release()
+
+    class ContentAwareDetector:
+        def detect(self, frame):
+            patch = frame[95:107,36:164]
+            return [((36,95,164,107), .98)] if patch.mean() > 190 else []
+
+    plan = VisualCleanup(
+        Config(sample_sec=.65,auto_logo=False),ContentAwareDetector()
+    ).analyze(video)
+    captions = [x for x in plan["regions"] if x["kind"] == "subtitle"]
+    assert len(captions) == 1
+    assert .35 < captions[0]["start"] <= .6
+    assert .8 <= captions[0]["end"] < 1.2
+
+
+def test_corner_watermark_is_not_subtitle():
+    # A lower-right corner watermark can be wider than 6% of the frame;
+    # it must still be classified as logo, not subtitle.
+    assert _kind((176,106,198,117),200,120) == "logo"
