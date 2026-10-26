@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,7 +59,7 @@ class JobStore:
              refresh_source_identity: bool = False) -> JobRecord:
         path = self._path(job.job_id)
         prior: JobRecord | None = None
-        if not path.exists() and path.with_name(path.name + ".corrupt").exists():
+        if not path.exists() and os.path.lexists(path.with_name(path.name + ".corrupt")):
             raise JobRecordError(f"quarantined job record exists for {job.job_id}")
         if path.exists():
             prior = self.load(job.job_id)  # invalid records are never overwritten
@@ -80,22 +82,37 @@ class JobStore:
 
     def load(self, job_id: str) -> JobRecord:
         path = self._path(job_id)
+        # Keep I/O failures distinct from malformed content. A transient
+        # permission or filesystem error must never trigger quarantine.
+        raw = path.read_bytes()
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload = json.loads(raw.decode("utf-8"))
             _validate(payload, job_id=job_id)
             return JobRecord(**payload)
-        except (OSError, UnicodeError, json.JSONDecodeError, TypeError,
+        except (UnicodeError, json.JSONDecodeError, TypeError,
                 KeyError, JobRecordError, ValueError) as exc:
-            if path.exists():
-                corrupt = path.with_name(path.name + ".corrupt")
-                if not corrupt.exists():
-                    try:
-                        path.replace(corrupt)
-                    except OSError:
-                        pass
+            self._quarantine_copy(path, raw)
             if isinstance(exc, JobRecordError):
                 raise
             raise JobRecordError(f"invalid job record for {job_id}: {exc}") from exc
+
+    @staticmethod
+    def _quarantine_copy(path: Path, raw: bytes) -> None:
+        """Copy malformed bytes to an exclusive sibling without replacing anything."""
+        corrupt = path.with_name(path.name + ".corrupt")
+        fd, name = tempfile.mkstemp(prefix=f".{corrupt.name}.", suffix=".tmp",
+                                    dir=str(path.parent))
+        temporary = Path(name)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(raw)
+            # Hard-link creation is atomic and fails if any directory entry,
+            # including a dangling symlink, already occupies the target.
+            os.link(temporary, corrupt, follow_symlinks=False)
+        except FileExistsError:
+            pass
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _source_identity(self, job: Job) -> dict[str, Any] | None:
         project = job.project
@@ -110,11 +127,7 @@ class JobStore:
             if not project.video_in:
                 return None
             path = Path(project.video_in).expanduser()
-        try:
-            stat = path.stat()
-        except OSError:
-            return {"kind": "file", "path": str(path), "size_bytes": None,
-                    "mtime_ns": None}
+        stat = path.stat()
         return {"kind": "file", "path": str(path), "size_bytes": stat.st_size,
                 "mtime_ns": stat.st_mtime_ns}
 
