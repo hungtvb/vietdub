@@ -36,6 +36,18 @@ def main(argv=None):
                          required_subtitle_times=plan.get("required_subtitle_times",[]))
     if not report["pass_structural_checks"]:
         raise VisualCleanupError("Output verification failed: "+"; ".join(report["issues"]))
+    if plan.get("ocr_qa_samples"):
+        from media.visual_ocr_acceptance import audit_rendered_captions
+        qa = audit_rendered_captions(
+            args.video, output, plan["ocr_qa_samples"],
+            lang=plan.get("ocr_qa_lang","chi_sim+eng"))
+        from pathlib import Path
+        Path(str(output)+".ocr_qa.json").write_text(
+            json.dumps(qa,ensure_ascii=False,indent=2),encoding="utf-8")
+        if qa["verdict"] != "no_readable_cjk":
+            raise VisualCleanupError(
+                "Output OCR quality gate not accepted: "+qa["verdict"]+
+                " (see .ocr_qa.json). Review actual frames.")
     print(output)
     print("QA:",str(output)+".audit.json")
     return 0
