@@ -77,7 +77,7 @@ def _video_duration_seconds(video: Path) -> float:
     # Portable FFmpeg build without ffprobe or optional OpenCV.
     p = subprocess.run([_bin.ffmpeg_cmd(), "-hide_banner", "-i", str(video)],
                        capture_output=True, text=True)
-    match = re.search(r"Duration: (\\d{2}):(\\d{2}):(\\d{2}\\.\\d+)", p.stderr)
+    match = re.search(r"Duration: (\d{2}):(\d{2}):(\d{2}\.\d+)", p.stderr)
     if match:
         hh, mm, ss = match.groups()
         duration = int(hh)*3600 + int(mm)*60 + float(ss)
