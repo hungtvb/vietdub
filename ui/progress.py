@@ -358,6 +358,11 @@ class ProgressWindow(QWidget):
                 on_retranslate=self._retranslate_with_metadata)
         self._review_win.show()
 
+    def show_current_review(self) -> None:
+        """Reopen a saved review stop without advancing its job checkpoint."""
+        if not self._running and self.job.status == REVIEW:
+            self._open_review()
+
     def _retranslate_with_metadata(self, meta) -> None:
         # Tony sửa metadata tay ở màn duyệt #2 -> dịch lại toàn bộ với
         # metadata mới (chỉ chạy lại bước translate).

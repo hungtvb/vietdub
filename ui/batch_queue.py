@@ -301,7 +301,7 @@ class BatchQueueWindow(QDialog):
         self._update_entry(next_index)
         self._launch_progress()
 
-    def _launch_progress(self) -> None:
+    def _launch_progress(self, *, show_review: bool = False) -> None:
         if self._active_job is None:
             return
         from ui.progress import ProgressWindow
@@ -311,7 +311,10 @@ class BatchQueueWindow(QDialog):
             on_progress=self._job_progress,
             on_result=self._job_result)
         self._progress_window.show()
-        self._progress_window.begin(resume_from=self._active_job.resume_from)
+        if show_review:
+            self._progress_window.show_current_review()
+        else:
+            self._progress_window.begin(resume_from=self._active_job.resume_from)
         self._update_controls()
 
     def _job_progress(self, step: str, pct: float, msg: str) -> None:
@@ -409,11 +412,16 @@ class BatchQueueWindow(QDialog):
             return
         self._blocked = False
         self._queue_active = True
-        entry.state = "running"
-        entry.message = "Đang tiếp tục từ checkpoint đã lưu."
+        show_review = entry.job.status == REVIEW
+        if show_review:
+            entry.state = "review"
+            entry.message = "Mở lại bước duyệt trước khi tiếp tục."
+        else:
+            entry.state = "running"
+            entry.message = "Đang tiếp tục từ checkpoint đã lưu."
         self._active_job = entry.job
         self._update_entry(self._current_index)
-        self._launch_progress()
+        self._launch_progress(show_review=show_review)
 
     def skip_current(self) -> None:
         if (not self._blocked or self._current_index is None
@@ -451,6 +459,11 @@ class BatchQueueWindow(QDialog):
             if current.job is None and not Path(current.path).is_file():
                 can_resume = False
         self.btn_resume.setEnabled(can_resume)
+        if can_act and self._current_index is not None:
+            current = self.entries[self._current_index]
+            self.btn_resume.setText(
+                "Mở lại bước duyệt" if current.state == "review"
+                else "Tiếp tục / chạy lại video này")
         self.btn_skip.setEnabled(can_act)
         self.btn_close.setEnabled(not self._queue_active
                                   and self._progress_window is None)

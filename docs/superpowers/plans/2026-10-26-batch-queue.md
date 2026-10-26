@@ -39,6 +39,8 @@ single-job orchestrator independent of queue state.
 ## Review focus
 
 - A queue item that reaches `REVIEW` must not trigger the next item.
+- Reopening a queue item in `REVIEW` must show its review UI again, not advance
+  directly from the saved next-step checkpoint.
 - Closing a paused/failed/cancelled progress window must return control to the
   queue without losing the job or its checkpoint.
 - A deliberate skip must be distinguishable from completion.
