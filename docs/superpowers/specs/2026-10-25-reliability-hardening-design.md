@@ -1,7 +1,7 @@
 # VietDub reliability hardening design
 
 - Date: 2026-10-25
-- Status: awaiting user approval; implementation has not started
+- Status: approved by user on 2026-10-26; implementation in progress
 - Selected approach: A — address all four P1 findings with minimal UI changes
 
 ## Intent
