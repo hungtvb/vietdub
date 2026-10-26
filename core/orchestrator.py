@@ -148,12 +148,23 @@ class Orchestrator:
         """Render checkpoint inputs that must invalidate any stale final MP4."""
         if not self.settings.get("visual_cleanup_enabled", False):
             return None
+        review_file = str(self.settings.get("visual_cleanup_review_plan", "") or "").strip()
+        review_hash = ""
+        if review_file:
+            import hashlib
+            path = Path(review_file)
+            # Missing review files invalidate stale output and then fail
+            # explicitly in _step_render, rather than returning DONE.
+            review_hash = (hashlib.sha256(path.read_bytes()).hexdigest()
+                           if path.is_file() else "missing")
         return {
             "enabled": True,
             "mode": str(self.settings.get("visual_cleanup_mode", "blur")),
             "interval": float(self.settings.get("visual_cleanup_interval_sec", 0.65)),
             "min_hits": int(self.settings.get("visual_cleanup_min_hits", 2)),
             "auto_logo": bool(self.settings.get("visual_cleanup_auto_logo", False)),
+            "review_plan": review_file,
+            "review_sha256": review_hash,
         }
 
     def _has_step(self, step: str) -> bool:
@@ -528,9 +539,27 @@ class Orchestrator:
                 auto_logo=bool(self.settings.get("visual_cleanup_auto_logo", False)))
             self.logger.info("Visual cleanup enabled: OCR -> temporal tracking -> %s", config.mode)
             visual_plan = job.stages_dir / "visual_regions.json"
-            video_for_render = vclean.VisualCleanup(config).process(
-                video_for_render, job.stages_dir / "visual_clean.mp4",
-                plan_path=visual_plan, ffmpeg=mbin.ffmpeg_cmd())
+            reviewed = str(self.settings.get("visual_cleanup_review_plan", "") or "").strip()
+            engine = vclean.VisualCleanup(config)
+            if reviewed:
+                # A reviewed temporal plan supersedes OCR auto-analysis.
+                import json
+                review_path = Path(reviewed)
+                if not review_path.is_file():
+                    raise FileNotFoundError(f"Không tìm thấy plan đã duyệt: {review_path}")
+                plan = json.loads(review_path.read_text(encoding="utf-8"))
+                if not any(r.get("source") in ("temporal-clean-plate", "exemplar-patch")
+                           for r in plan.get("regions", [])):
+                    raise ValueError("Plan đã duyệt phải có vùng clean-plate hoặc exemplar")
+                video_for_render = engine.render(
+                    video_for_render, job.stages_dir / "visual_clean.mp4",
+                    plan, ffmpeg=mbin.ffmpeg_cmd())
+                visual_plan.write_text(
+                    json.dumps(plan,ensure_ascii=False,indent=2),encoding="utf-8")
+            else:
+                video_for_render = engine.process(
+                    video_for_render, job.stages_dir / "visual_clean.mp4",
+                    plan_path=visual_plan, ffmpeg=mbin.ffmpeg_cmd())
             self.logger.info("Visual cleanup output: %s; review plan: %s",
                              video_for_render, visual_plan)
         rendered = mrender.render(
