@@ -142,6 +142,11 @@ def _static_logos(frames, duration, width, height):
                 continue
             box = (round((x+x1)*width/target_w), round(y*height/target_h),
                    round((x+x1+w)*width/target_w), round((y+h)*height/target_h))
+            # Static picture-in-picture faces look like logos to edge-variance
+            # heuristics. Only auto-select the narrow uppermost corner strip;
+            # everything lower requires explicit approval/manual boxes.
+            if box[1] > .09*height or box[3] > .18*height or (box[2]-box[0]) > .23*width:
+                continue
             boxes.append(Region(0, duration, box, "logo", .70, "static-heuristic"))
     return boxes
 
