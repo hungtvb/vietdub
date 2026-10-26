@@ -172,3 +172,64 @@ logos still require human review.
 The editor supports `sub_mode="none"` without writing an unwanted SRT.
 Changing the cleanup settings or modifying an approved plan invalidates
 the final-render checkpoint and forces an updated export.
+
+
+## Neural video-inpainting backend for dynamic subtitles (optional)
+
+The OpenCV / clean-plate methods cannot reconstruct arbitrary moving scenery
+hidden under permanently burned-in text. When that real-video visual review
+fails, VietDub now exposes an **optional, locally installed neural backend**
+that invokes the separate open-source
+[YaoFANGUK/video-subtitle-remover](https://github.com/YaoFANGUK/video-subtitle-remover)
+(Apache-2.0). VietDub is NOT bundling, vendoring or training these models.
+
+Install upstream VSR and its pretrained model files separately, following
+its own instructions; choose in Settings > Video:
+- **Engine xử lý:** AI video inpainting
+- **Model AI:** \`sttn-det\` for automatic OCR-driven subtitle masks;
+  \`lama\` for single-frame restoration; \`propainter\` for motion-heavy
+  footage. \`sttn-auto\` is permitted only with explicitly reviewed areas.
+- **VSR local:** path containing \`backend/main.py\`.
+- Review an actual 10–20 second processed sample before a full export.
+  If an optional approved plan is supplied, only its spatial text/subtitle
+  rectangles are passed to VSR. Per-region time ranges are **not applied
+  by upstream VSR**; use the reviewed local method for time-specific edits.
+
+No silent fallback: missing weights/dependencies, subprocess errors,
+timeout, frame loss or changed FPS fail the VietDub job. The original
+source is left untouched; final VietDub render replaces the source audio
+with the mixed Vietnamese dub.
+
+The adapter has **CI-tested argument conversion / frame-count validation only**;
+as of this change, actual **STTN/LaMa/ProPainter model inference has not been
+validated on the real 91.8-second Chinese sample**. Do NOT infer production
+quality from the adapter's passing tests. A model-run screenshot/video and
+per-frame source/output review remain required.
+
+## Structural acceptance reports
+
+\`media.visual_acceptance.audit_video()\` reads and compares every decoded
+source/output frame, checks FPS, missing final frames, unexpected changes
+outside reviewed rectangles and one-frame jumps at mask boundaries. Optional
+\`required_subtitle_times\` in an operator-reviewed plan causes a job to fail
+if known caption frames have no reviewed cleanup coverage.
+
+This audit is a **necessary** structural gate, not proof that every caption
+was removed. OCR on the rendered video, scene-by-scene inspection, and user
+acceptance are additional requirements. It is deliberately possible for a
+video to pass structural checks and still retain captions.
+
+Source-based regressions found:
+- The original second-film V1 MP4 had **2,293** decoded frames versus
+  **2,295** in the source because audio remux was done with \`-shortest\`
+  while audio ended early. The corrected export uses AAC padding and contains
+  2,295 / 2,295 frames, 25fps and 91.80 seconds. VietDub's core renderer
+  now uses \`-af apad -shortest\` to preserve the original picture duration.
+- The graphic-strip mask previously started at 9.00s; the source layout
+  switches to the blue strip at 8.88s, so the sample's reviewed interval
+  was corrected to 8.88–88.4s.
+- The second-film intro (0–8.88s) places subtitles on *live scene pixels*.
+  Spatial OpenCV inpainting and a multi-frame optical-flow donor experiment
+  both visibly damaged clothing/background. Those experiments were **rejected**
+  rather than presented as clean. They still require neural restoration
+  and an actual model-run output review.
