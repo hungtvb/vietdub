@@ -379,7 +379,7 @@ class Orchestrator:
         self.logger.info("dịch xong bằng %s: %d câu", used, len(segments))
 
     def _synthesize_tts(self, tts, segments, tts_dir):
-        """Use Edge-TTS only; surface a failure so the job can be retried."""
+        """Use the configured TTS provider; surface failures for retry."""
         return tts.synthesize(segments, tts_dir)
 
     def _fit_and_track(self, segments, tts_dir, synthesize_fn):
@@ -440,17 +440,19 @@ class Orchestrator:
                 segments = synthesize_fn(segments)
 
     def _step_tts(self):
-        from tts import edge_tts as metts
         from tts import duration_fit as mfit
+        from tts.provider import create_tts
         from media import extract as mextract
         job = self.job
         s = self.settings
         segments = pio.load_segments(job.job_dir, "translate") or []
         tts_dir = job.stages_dir / "tts"
-        tts = metts.EdgeTTS(
-            voice_male=s.get("voice_male"), voice_female=s.get("voice_female"),
-            rate=s.get("tts_rate", "+0%"), pitch=s.get("tts_pitch", "+0Hz"),
-            concurrency=int(s.get("tts_concurrency", 10)))
+        # Pin the provider/voices on each project (including resumes), not
+        # whichever global choice the user made for a different job later.
+        tts = create_tts(
+            s, provider=job.project.tts_provider,
+            voice_male=job.project.voice_male,
+            voice_female=job.project.voice_female)
         segments = self._synthesize_tts(tts, segments, tts_dir)
         segments, decisions = self._fit_and_track(
             segments, tts_dir,
