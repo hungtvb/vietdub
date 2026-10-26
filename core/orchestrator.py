@@ -606,6 +606,21 @@ class Orchestrator:
                         plan_path=visual_plan, ffmpeg=mbin.ffmpeg_cmd())
             else:
                 raise ValueError(f"Visual cleanup backend không hợp lệ: {backend}")
+            if plan and plan.get("ocr_qa_samples"):
+                from media.visual_ocr_acceptance import audit_rendered_captions
+                qa = audit_rendered_captions(
+                    fetch_data.get("video_path") or proj.video_in,
+                    video_for_render,
+                    plan["ocr_qa_samples"],
+                    lang=plan.get("ocr_qa_lang","chi_sim+eng"))
+                import json
+                (job.stages_dir / "visual_ocr_acceptance.json").write_text(
+                    json.dumps(qa,ensure_ascii=False,indent=2),encoding="utf-8")
+                if qa["verdict"] != "no_readable_cjk":
+                    raise RuntimeError(
+                        "Đầu ra chưa đạt kiểm tra phụ đề OCR: "+
+                        qa["verdict"]+
+                        "; xem visual_ocr_acceptance.json")
             self.logger.info("Visual cleanup output: %s; review plan: %s",
                              video_for_render, visual_plan)
         rendered = mrender.render(
