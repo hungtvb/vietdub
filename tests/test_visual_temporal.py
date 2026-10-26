@@ -130,3 +130,50 @@ def test_clean_plate_preroll_avoids_jump_before_first_caption(tmp_path):
            for i in range(2,8)]
     assert max(diffs) < 30, diffs
     assert np.array_equal(restored[2],frames[2])  # before approved interval
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"),reason="ffmpeg unavailable")
+def test_reviewed_flat_strip_removes_changing_captions_without_scene_damage(tmp_path):
+    video=tmp_path/"flatbar.mp4"
+    wr=cv2.VideoWriter(str(video),cv2.VideoWriter_fourcc(*"mp4v"),10,(320,180))
+    assert wr.isOpened()
+    truth=[]
+    for i in range(25):
+        base=np.full((180,320,3),(96,125,160),np.uint8)
+        cv2.rectangle(base,(0,115),(319,179),(225,203,189),-1)
+        truth.append(base.copy())
+        original=base.copy()
+        cv2.putText(original,f"TEXT{i%7}",(68,150),
+                    cv2.FONT_HERSHEY_SIMPLEX,.75,(20,20,20),3,cv2.LINE_AA)
+        cv2.putText(original,f"TEXT{i%7}",(68,150),
+                    cv2.FONT_HERSHEY_SIMPLEX,.75,(250,250,250),1,cv2.LINE_AA)
+        wr.write(original)
+    wr.release()
+    p={"version":1,"source":str(video.resolve()),"width":320,"height":180,
+       "fps":10.0,"frames":25,
+       "regions":[{"source":"flat-strip-repaint","kind":"subtitle",
+                   "start":0.0,"end":2.5,"box":[0,119,320,160],
+                   "donor_rows":[164,178],"left_samples":[5,47],
+                   "right_samples":[273,316],"feather":1.5}]}
+    output=tmp_path/"cleaned.mp4"
+    VisualCleanup(Config(auto_logo=False)).render(video,output,p)
+    cap=cv2.VideoCapture(str(output))
+    for i in range(25):
+        ok,after=cap.read()
+        assert ok
+        area=np.s_[128:153,55:260]
+        err=float(np.mean(np.abs(after[area].astype(float)-truth[i][area].astype(float))))
+        assert err<15,(i,err)
+        assert np.mean(np.abs(after[15:105].astype(float)-
+                              truth[i][15:105].astype(float)))<8
+    cap.release()
+
+
+def test_flat_strip_requires_unoccluded_donor_rows(tmp_path):
+    video=tmp_path/"src.mp4"
+    _fixture(video)
+    r={"source":"flat-strip-repaint","kind":"subtitle",
+       "start":0,"end":2.4,"box":[0,110,320,165],
+       "donor_rows":[145,173]}  # overlaps subtitle
+    with pytest.raises(TemporalPlanError):
+        TemporalCleanPlate(video,[r],10,320,180,24)
