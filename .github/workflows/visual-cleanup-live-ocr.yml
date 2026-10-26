@@ -9,6 +9,8 @@ on:
       - "media/visual_acceptance.py"
       - "media/visual_neural.py"
       - "media/visual_neural_window.py"
+      - "media/visual_lama_cpu.py"
+      - "tests/test_visual_lama_cpu.py"
       - "media/visual_ocr_acceptance.py"
       - "tests/test_visual_ocr_acceptance.py"
       - "tests/test_visual_neural.py"
