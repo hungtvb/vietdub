@@ -1,0 +1,6 @@
+# Optional visual-cleanup engine (only needed when enabled)
+# For PaddleOCR 3.x, first install the platform-appropriate PaddlePaddle runtime
+# following https://www.paddleocr.ai/latest/en/quick_start.html
+opencv-python-headless>=4.8,<5
+numpy>=1.24
+paddleocr>=3.0,<4
