@@ -400,6 +400,7 @@ class SettingsDialog(QDialog):
         self.visual_cleanup_backend = QComboBox()
         self.visual_cleanup_backend.addItem("OpenCV / clean-plate (nhẹ)", "cv")
         self.visual_cleanup_backend.addItem("AI video inpainting (cần cài VSR riêng)", "vsr")
+        self.visual_cleanup_backend.addItem("LaMa CPU trực tiếp (model pretrained)", "lama-cpu")
         self.visual_cleanup_backend.setCurrentIndex(max(0,
             self.visual_cleanup_backend.findData(self.settings.get("visual_cleanup_backend","cv"))))
         f.addRow("Engine xử lý:", self.visual_cleanup_backend)
@@ -419,6 +420,14 @@ class SettingsDialog(QDialog):
         browse_vsr.clicked.connect(self.browse_visual_vsr)
         vsr_row.addWidget(browse_vsr)
         f.addRow("VSR local:", vsr_row)
+        model_row = QHBoxLayout()
+        self.visual_lama_weight = QLineEdit(self.settings.get("visual_lama_weight_path","") or "")
+        self.visual_lama_weight.setPlaceholderText("Đường dẫn big-lama.pt")
+        model_row.addWidget(self.visual_lama_weight, 1)
+        browse_model = QPushButton("Chọn…")
+        browse_model.clicked.connect(self.browse_visual_lama)
+        model_row.addWidget(browse_model)
+        f.addRow("LaMa CPU checkpoint:", model_row)
         self.visual_cleanup_auto_logo = QCheckBox("Thử nhận diện logo cố định (nguy cơ nhầm vùng; cần kiểm duyệt)")
         self.visual_cleanup_auto_logo.setChecked(bool(self.settings.get("visual_cleanup_auto_logo", False)))
         f.addRow(self.visual_cleanup_auto_logo)
@@ -466,6 +475,12 @@ class SettingsDialog(QDialog):
             "", "Font (*.ttf *.otf *.ttc);;Tất cả (*.*)")
         if path:
             self.sub_font.setText(path)
+
+    def browse_visual_lama(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn checkpoint LaMa", "", "TorchScript (*.pt);;Tất cả (*.*)")
+        if path:
+            self.visual_lama_weight.setText(path)
 
     def browse_visual_vsr(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Chọn thư mục VSR")
@@ -536,6 +551,7 @@ class SettingsDialog(QDialog):
         self.visual_vsr_mode.setCurrentIndex(max(0,
             self.visual_vsr_mode.findData(DEFAULTS["visual_vsr_mode"])))
         self.visual_vsr_root.setText(str(DEFAULTS["visual_vsr_root"]))
+        self.visual_lama_weight.setText(str(DEFAULTS["visual_lama_weight_path"]))
         self.visual_cleanup_auto_logo.setChecked(bool(DEFAULTS["visual_cleanup_auto_logo"]))
         self.visual_cleanup_mode.setCurrentIndex(max(0,
             self.visual_cleanup_mode.findData(DEFAULTS["visual_cleanup_mode"])))
@@ -591,6 +607,7 @@ class SettingsDialog(QDialog):
             "visual_cleanup_backend": self.visual_cleanup_backend.currentData(),
             "visual_vsr_mode": self.visual_vsr_mode.currentData(),
             "visual_vsr_root": self.visual_vsr_root.text().strip(),
+            "visual_lama_weight_path": self.visual_lama_weight.text().strip(),
             "visual_cleanup_auto_logo": self.visual_cleanup_auto_logo.isChecked(),
             "visual_cleanup_mode": self.visual_cleanup_mode.currentData(),
             "visual_cleanup_interval_sec": self.visual_cleanup_interval.value(),
