@@ -62,7 +62,13 @@ DEFAULTS = {
     # --- mix / render ---
     "dub_volume": 1.0,
     "orig_volume": 0.15,
-    "sub_mode": "burn",                  # "burn" | "srt"
+    "sub_mode": "burn",                  # "burn" | "srt" | "none"
+    # Visual cleanup is opt-in: PaddleOCR/OpenCV are optional dependencies.
+    "visual_cleanup_enabled": False,
+    "visual_cleanup_mode": "blur",        # "blur" | "inpaint"
+    "visual_cleanup_interval_sec": 0.65,
+    "visual_cleanup_min_hits": 2,
+    "visual_cleanup_auto_logo": True,
     "sub_font": "",                      # đường dẫn file font (.ttf/.otf), "" = mặc định ffmpeg
     "sub_font_size": 0,                  # cỡ chữ phụ đề burn, 0 = tự động
     "sub_font_color": "",                # màu chữ hex RRGGBB (vd "FFFF00"), "" = mặc định
