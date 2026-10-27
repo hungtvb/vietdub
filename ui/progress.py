@@ -21,8 +21,12 @@ from PySide6.QtWidgets import (QFrame, QHeaderView, QHBoxLayout, QLabel,
                                QPushButton, QSplitter, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
-from core.job import CANCELLED, DONE, FAILED, PAUSED, REVIEW, Job
+from core import checkpoint as cp
+from core.job import CANCELLED, DONE, FAILED, IDLE, PAUSED, REVIEW, Job
+from core.job_recovery import inspect_job
+from core.job_store import JobStore
 from core.orchestrator import STEP_LABEL, STEPS, Orchestrator
+from core.review_state import save_pending_review
 from core.settings import Settings
 from ui.common import confirm_box, error_box, info_box
 from ui.theme import UI_COLORS
@@ -208,6 +212,9 @@ class ProgressWindow(QWidget):
         """Bắt đầu (hoặc chạy tiếp) job trong thread mới."""
         if self._running:
             return
+        if self.job.status == REVIEW:
+            self._open_review()
+            return
         self._running = True
         self.btn_pause.setEnabled(True)
         self.btn_resume.setEnabled(False)
@@ -341,22 +348,43 @@ class ProgressWindow(QWidget):
 
     # ------------------------------------------------------------- chuyển màn
     def _open_review(self) -> None:
-        nxt = self.job.resume_from or ""
-        self.hide()
-        if nxt == "gender":
-            from ui.review_source import ReviewSourceWindow
-            self._review_win = ReviewSourceWindow(
-                self.job, self.settings,
-                on_continue=self._resume_after_review,
-                on_back=self._back_from_review)
-        else:
-            from ui.review_vi import ReviewViWindow
-            self._review_win = ReviewViWindow(
-                self.job, self.settings,
-                on_continue=self._resume_after_review,
-                on_back=self._back_from_review,
-                on_retranslate=self._retranslate_with_metadata)
-        self._review_win.show()
+        try:
+            inspection = inspect_job(JobStore(), self.job.job_id,
+                                     sub_mode=self.settings.get("sub_mode", self.job.project.sub_mode))
+            if not inspection.can_open_review:
+                raise ValueError(inspection.blocked_reason or
+                                 "Checkpoint duyệt đã thay đổi. Mở lịch sử hoặc hàng đợi để dựng lại.")
+            self.job.status = REVIEW
+            self.job.resume_from = inspection.review_resume_from
+            # History and restored queues reopen review directly, without
+            # entering Orchestrator.run(). Seed URL artifact identity here as
+            # part of that explicit action, after inspection and before the
+            # review is shown. JobStore preserves any existing file identity.
+            if self.job.project.video_source == "url" and not self.job.force_fetch:
+                JobStore().save(self.job, last_stage=inspection.pending_review,
+                                last_error="", seed_fetched_identity=True)
+            save_pending_review(self.job.job_dir, inspection.pending_review)
+            if inspection.pending_review == "asr":
+                from ui.review_source import ReviewSourceWindow
+                review = ReviewSourceWindow(
+                    self.job, self.settings,
+                    on_continue=self._resume_after_review,
+                    on_back=self._back_from_review)
+            else:
+                from ui.review_vi import ReviewViWindow
+                review = ReviewViWindow(
+                    self.job, self.settings,
+                    on_continue=self._resume_after_review,
+                    on_back=self._back_from_review,
+                    on_retranslate=self._retranslate_with_metadata)
+            self._review_win = review
+            review.show()
+            self.hide()
+        except Exception as exc:
+            self.show()
+            error_box(self, "Không thể mở bước duyệt", str(exc))
+            # closeEvent returns to the main/queue window through on_close.
+            self.close()
 
     def show_current_review(self) -> None:
         """Reopen a saved review stop without advancing its job checkpoint."""
@@ -368,6 +396,12 @@ class ProgressWindow(QWidget):
         # metadata mới (chỉ chạy lại bước translate).
         # ReviewViWindow has already persisted edits and metadata before
         # invoking this callback, including reporting any write failure.
+        try:
+            cp.invalidate_from(self.job.job_dir, self.job.project, "translate")
+        except Exception as exc:
+            error_box(self._review_win or self, "Không thể dịch lại", str(exc))
+            return
+        self.job.status = IDLE
         if self._review_win:
             self._review_win.close()
             self._review_win = None
@@ -375,6 +409,29 @@ class ProgressWindow(QWidget):
         self.begin(resume_from="translate")
 
     def _resume_after_review(self) -> None:
+        try:
+            inspection = inspect_job(JobStore(), self.job.job_id,
+                                     sub_mode=self.settings.get("sub_mode", self.job.project.sub_mode))
+            if not inspection.can_open_review:
+                raise ValueError(inspection.blocked_reason or "Checkpoint duyệt không còn hợp lệ.")
+            resume_from = inspection.review_resume_from or inspection.resume_from
+            if inspection.pending_review == "asr":
+                # Invalidate while the ASR review marker is still pending. A
+                # crash after the marker is cleared will then recover at
+                # gender from the missing checkpoint, even before a worker
+                # thread starts. source_review is deliberately preserved by
+                # invalidate_from("gender") for a safe retry.
+                cp.invalidate_from(self.job.job_dir, self.job.project, "gender")
+                from project import io as pio
+                pio.save_project(self.job.job_dir, self.job.project)
+            save_pending_review(self.job.job_dir, None)
+        except Exception as exc:
+            error_box(self._review_win or self, "Chưa lưu được xác nhận duyệt", str(exc))
+            return
+        # ASR review input is not a completed gender stage. Always run gender
+        # estimation after its approval; translation review continues at TTS.
+        self.job.resume_from = resume_from
+        self.job.status = IDLE
         if self._review_win:
             self._review_win.close()
             self._review_win = None
@@ -387,7 +444,7 @@ class ProgressWindow(QWidget):
             self._review_win.close()
             self._review_win = None
         self.show()
-        self.lbl_step.setText("Đã duyệt — bấm [Tiếp tục] để chạy bước tiếp theo.")
+        self.lbl_step.setText("Chưa xác nhận duyệt — bấm [Tiếp tục] để mở lại bước duyệt.")
         self.btn_resume.setEnabled(True)
         self.btn_pause.setEnabled(False)
 
