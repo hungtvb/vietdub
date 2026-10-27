@@ -1,6 +1,6 @@
 # VietDub Job History and Restart Recovery — Design
 
-**Status:** Draft for user approval
+**Status:** Approved by user
 **Date:** 2026-10-26
 
 ## Intent
