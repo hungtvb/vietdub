@@ -11,6 +11,8 @@ on:
       - "media/visual_neural_window.py"
       - "media/visual_lama_cpu.py"
       - "media/visual_hybrid.py"
+      - "media/visual_dynamic_mask.py"
+      - "tests/test_visual_dynamic_mask.py"
       - "tests/test_visual_hybrid.py"
       - "tests/test_visual_lama_cpu.py"
       - "media/visual_ocr_acceptance.py"
