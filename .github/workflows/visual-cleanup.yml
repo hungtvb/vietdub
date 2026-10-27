@@ -14,7 +14,7 @@ on:
       - 'media/visual_dynamic_mask.py'
       - 'tests/test_visual_dynamic_mask.py'
       - 'tests/test_visual_hybrid.py'
-      - 'tests/test_visual_lama_cpu.py tests/test_visual_hybrid.py tests/test_visual_dynamic_mask.py'
+      - 'tests/test_visual_lama_cpu.py tests/test_visual_hybrid.py tests/test_visual_dynamic_mask.py tests/test_visual_dynamic_mask.py'
       - 'media/visual_ocr_acceptance.py'
       - 'tests/test_visual_ocr_acceptance.py'
       - 'tests/test_visual_neural.py'
