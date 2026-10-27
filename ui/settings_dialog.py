@@ -401,6 +401,7 @@ class SettingsDialog(QDialog):
         self.visual_cleanup_backend.addItem("OpenCV / clean-plate (nhẹ)", "cv")
         self.visual_cleanup_backend.addItem("AI video inpainting (cần cài VSR riêng)", "vsr")
         self.visual_cleanup_backend.addItem("LaMa CPU trực tiếp (model pretrained)", "lama-cpu")
+        self.visual_cleanup_backend.addItem("Kết hợp clean-plate và LaMa (plan đã duyệt)", "hybrid")
         self.visual_cleanup_backend.setCurrentIndex(max(0,
             self.visual_cleanup_backend.findData(self.settings.get("visual_cleanup_backend","cv"))))
         f.addRow("Engine xử lý:", self.visual_cleanup_backend)
