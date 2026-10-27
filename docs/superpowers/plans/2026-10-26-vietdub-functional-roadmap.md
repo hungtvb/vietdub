@@ -1,57 +1,46 @@
-# VietDub Functional Upgrade Plan
+> **Hồ sơ lịch sử:** nội dung này ghi nhận bối cảnh, quyết định và kế hoạch tại thời điểm tạo; không phải hướng dẫn runtime hoặc trạng thái release hiện tại. Dùng [ARCHITECTURE.md](../../ARCHITECTURE.md), [WORKFLOWS.md](../../WORKFLOWS.md) và [mục lục tài liệu](../../README.md) để tra cứu trạng thái hiện hành.
 
-**Source design:** [Functional upgrade roadmap](../specs/2026-10-26-vietdub-functional-roadmap.md)
+# VietDub Functional Upgrade Plan — Execution Record
 
-**Execution:** phase-by-phase; Phase 1 and Phase 2 are active in separate worktrees.
+**Trạng thái:** Phase 1–3 đã hoàn thành và merge; Phase 4–5 chưa triển khai.
+**Roadmap gốc:** [Functional upgrade roadmap](../specs/2026-10-26-vietdub-functional-roadmap.md).
+**Tài liệu runtime hiện hành:** [Kiến trúc](../../ARCHITECTURE.md), [luồng](../../WORKFLOWS.md).
 
-## Global constraints
+Đây là handoff theo giai đoạn, không còn active worktree plan.
 
-- Keep `Orchestrator` responsible for exactly one `Job`.
-- Keep batch scheduling outside the orchestrator and process jobs sequentially.
-- Never bypass review stops or replace a user's existing export.
-- A failed job must retain its checkpoint, status, and useful error text.
-- Scope UI changes to the work being implemented; the production UI pass is already merged.
-- Verification claims must distinguish static inspection from live model/service/media execution.
+## Phase 1 — Existing-feature integrity: hoàn tất
 
-## Phase 1 — Existing-feature integrity
+- Guard source transcript merge để không gộp khác speaker, audience hoặc gender theo cách làm mất metadata.
+- Giữ edit khi merge bị từ chối hoặc persistence lỗi.
+- Review source/translation save và navigation paths.
+- Code được triển khai trong nhánh existing-feature.
 
-1. Guard source transcript merges so incompatible speaker/audience labels cannot be collapsed silently.
-2. Preserve edits when the merge is rejected or saving fails.
-3. Record the behavior and acceptance rules in a short spec and implementation plan.
-4. Review the diff and static checks; no live translation or real-audio claims without evidence.
+## Phase 2 — Sequential batch queue: hoàn tất
 
-## Phase 2 — Sequential batch queue
+- Cho thêm nhiều video local, hiển thị queue item status/progress.
+- Mỗi lúc chỉ chạy một Orchestrator và tách checkpoint/output theo job.
+- Giữ queue tại review, pause, cancel hoặc failure; không tự nhảy item.
+- Bổ sung manifest bền vững và restore flow ở Phase 3.
 
-1. Define queue item lifecycle and its relationship to persisted `Job` and `Project` objects.
-2. Add a queue view that accepts multiple local videos and shows per-item status/progress.
-3. Run one orchestrator at a time and isolate each item's checkpoint/output directory.
-4. Hold the queue at review stops; pause/cancel must not silently advance to another item.
-5. Decide and document restart behavior. Persist a queue manifest before calling the feature overnight-ready.
-6. Review the full flow statically and report any live provider/render behavior not exercised.
+## Phase 3 — Job history và restart recovery: hoàn tất
 
-## Phase 3 — Job history and restart recovery
+- Lưu job lifecycle, source identity và active queue manifest.
+- Tìm stage hợp lệ sớm nhất và xác nhận rebuild khi source/artifact thay đổi.
+- Giữ pending review sau Back/close/crash; Continue là thao tác duyệt rõ ràng.
+- Thêm history actions và startup queue notice; startup không tự chạy model/provider.
 
-1. Discover saved jobs from the per-user data directory without loading malformed entries into the UI.
-2. Offer resume only for jobs with valid project/checkpoint state.
-3. Revalidate source media and downstream artifacts before resuming.
-4. Preserve review states and let the user choose whether to continue or inspect.
+## Phase 4 — Subtitle/audio editing consistency: chưa triển khai
 
-## Phase 4 — Synchronized subtitle editing
+- Chọn giữa tái tạo TTS cho câu đã sửa và mode subtitle-only có nhãn rõ.
+- Giữ audio gốc/output hiện có; chỉ dựng lại artifact phụ thuộc khi có quyết định.
+- Acceptance còn mở: dòng subtitle mà user đánh dấu đồng bộ phải khớp với lời nói khi xuất.
 
-1. Track edited lines whose current speech no longer matches their displayed subtitle.
-2. Offer selective speech regeneration with the existing voice/configuration.
-3. Rebuild mixed audio and final render from the updated TTS checkpoint.
-4. Keep prior files and clearly mark subtitle-only changes.
+## Phase 5 — Release readiness và real-media evidence: chưa hoàn tất
 
-## Phase 5 — Release evidence
+- Xây dựng ma trận video đa dạng, first-use model download, provider/TTS, render, restart recovery và Windows packaged startup.
+- Ghi riêng các dịch vụ không thể gọi và giới hạn nền tảng.
+- Không diễn giải compile/static review thành bằng chứng inference hoặc render thật.
 
-1. Define repeatable checks for startup, settings, review edits, resume, and export.
-2. Exercise real local media and first-use model/service paths where available.
-3. Verify packaging on supported operating systems.
-4. Publish a short report separating passed checks from unavailable external dependencies.
+## Quy tắc handoff
 
-## Current handoff
-
-- Existing-feature team: implement the bounded Phase 1 transcript-merge integrity fix.
-- New-feature team: implement the first coherent Phase 2 batch queue slice or return a concrete blocker and reduced safe scope.
-- Integrator: review both branch diffs, resolve overlap, and merge only work that meets its acceptance criteria.
+Tài liệu này ghi nhận trạng thái của roadmap; dùng [docs/README.md](../../README.md) để tìm hướng dẫn hiện hành. Không dùng checkbox/phase đã qua làm checklist release.

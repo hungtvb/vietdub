@@ -1,5 +1,7 @@
 # ASR comparison — 2026-10-25
 
+> Đây là benchmark lịch sử trên một video, đánh giá định tính và không có transcript chuẩn. Nó không bao gồm VietDub STT local được thêm sau đó; kết quả không đại diện cho mọi nguồn/video hoặc máy.
+
 ## Real video used
 
 The comparison used the public Wikimedia ChinaJoy video linked from

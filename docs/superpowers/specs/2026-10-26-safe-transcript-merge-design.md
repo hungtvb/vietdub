@@ -1,11 +1,15 @@
+> **Hồ sơ lịch sử:** nội dung này ghi nhận bối cảnh, quyết định và kế hoạch tại thời điểm tạo; không phải hướng dẫn runtime hoặc trạng thái release hiện tại. Dùng [ARCHITECTURE.md](../../ARCHITECTURE.md), [WORKFLOWS.md](../../WORKFLOWS.md) và [mục lục tài liệu](../../README.md) để tra cứu trạng thái hiện hành.
+
 # Safe Transcript Merge — Design
+
+**Status:** Implemented and merged. See [WORKFLOWS.md](../../WORKFLOWS.md) for the current review flow.
 
 ## Intent
 
 Prevent the source transcript review from silently changing who spoke a line
 or who it is addressed to when two rows are merged.
 
-## Current behavior
+## Baseline at design time
 
 `ReviewSourceWindow.merge_with_next()` joins the selected row with the next
 row, keeps the first row's speaker and audience, and deletes the second row.

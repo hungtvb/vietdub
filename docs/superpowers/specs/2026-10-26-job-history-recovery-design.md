@@ -1,7 +1,11 @@
+> **Hồ sơ lịch sử:** nội dung này ghi nhận bối cảnh, quyết định và kế hoạch tại thời điểm tạo; không phải hướng dẫn runtime hoặc trạng thái release hiện tại. Dùng [ARCHITECTURE.md](../../ARCHITECTURE.md), [WORKFLOWS.md](../../WORKFLOWS.md) và [mục lục tài liệu](../../README.md) để tra cứu trạng thái hiện hành.
+
 # VietDub Job History and Restart Recovery — Design
 
-**Status:** Approved by user
+**Status:** Implemented and merged to main; see docs/ARCHITECTURE.md
 **Date:** 2026-10-26
+
+Implementation is complete. Use [ARCHITECTURE.md](../../ARCHITECTURE.md) and [WORKFLOWS.md](../../WORKFLOWS.md) for current behavior.
 
 ## Intent
 
@@ -10,7 +14,7 @@ continue safe work after closing or restarting VietDub. Restore an interrupted
 batch in its original order while keeping the existing one-job orchestrator
 contract.
 
-## Current behavior
+## Baseline at design time
 
 - Jobs are stored below the per-user `JOBS_ROOT`; each job has `project.json`,
   stage checkpoints, artifacts, and a run log.

@@ -1,3 +1,5 @@
+> Hồ sơ review lịch sử cho job recovery. Mô tả hành vi hiện hành nằm trong [docs/ARCHITECTURE.md](../../../docs/ARCHITECTURE.md) và [docs/WORKFLOWS.md](../../../docs/WORKFLOWS.md).
+
 # Whole-branch fix wave report
 
 ## Findings addressed

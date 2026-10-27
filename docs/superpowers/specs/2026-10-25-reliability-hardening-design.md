@@ -1,7 +1,9 @@
+> **Hồ sơ lịch sử:** nội dung này ghi nhận bối cảnh, quyết định và kế hoạch tại thời điểm tạo; không phải hướng dẫn runtime hoặc trạng thái release hiện tại. Dùng [ARCHITECTURE.md](../../ARCHITECTURE.md), [WORKFLOWS.md](../../WORKFLOWS.md) và [mục lục tài liệu](../../README.md) để tra cứu trạng thái hiện hành.
+
 # VietDub reliability hardening design
 
 - Date: 2026-10-25
-- Status: approved by user on 2026-10-26; implementation in progress
+- Status: implemented and merged; see docs/ARCHITECTURE.md for current behavior
 - Selected approach: A — address all four P1 findings with minimal UI changes
 
 ## Intent
@@ -11,7 +13,7 @@ refer to media that has disappeared, safe from accidental output replacement,
 and writable when installed under a protected directory such as `Program Files`.
 The existing pipeline and its screens should remain familiar.
 
-## Current behavior
+## Baseline at design time
 
 - `MainWindow.closeEvent` cleans voice-preview temporary directories immediately.
   The download and preview workers run in child `QThread`s, so closing during
