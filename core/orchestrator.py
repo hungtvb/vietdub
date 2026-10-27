@@ -596,6 +596,26 @@ class Orchestrator:
                 import json
                 visual_plan.write_text(
                     json.dumps(plan,ensure_ascii=False,indent=2),encoding="utf-8")
+            elif backend == "hybrid":
+                from media.visual_hybrid import render_reviewed_hybrid
+                if not plan:
+                    raise ValueError("Hybrid cleanup requires a reviewed JSON plan")
+                video_for_render = render_reviewed_hybrid(
+                    video_for_render, job.stages_dir / "visual_clean.mp4",
+                    plan, model_path=str(self.settings.get("visual_lama_weight_path", "")),
+                    ffmpeg=mbin.ffmpeg_cmd())
+                import json
+                visual_plan.write_text(
+                    json.dumps(plan,ensure_ascii=False,indent=2),encoding="utf-8")
+                from media.visual_acceptance import write_audit
+                qa = write_audit(
+                    job.stages_dir / "visual_acceptance.json",
+                    fetch_data.get("video_path") or proj.video_in,
+                    video_for_render, plan,
+                    required_subtitle_times=plan.get("required_subtitle_times", []))
+                if not qa["pass_structural_checks"]:
+                    raise RuntimeError("Hybrid cleanup failed structural acceptance: "+
+                                       "; ".join(qa["issues"]))
             elif backend == "cv":
                 config = vclean.Config(
                     mode=str(self.settings.get("visual_cleanup_mode", "blur")),
