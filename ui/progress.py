@@ -354,9 +354,16 @@ class ProgressWindow(QWidget):
             if not inspection.can_open_review:
                 raise ValueError(inspection.blocked_reason or
                                  "Checkpoint duyệt đã thay đổi. Mở lịch sử hoặc hàng đợi để dựng lại.")
-            save_pending_review(self.job.job_dir, inspection.pending_review)
             self.job.status = REVIEW
             self.job.resume_from = inspection.review_resume_from
+            # History and restored queues reopen review directly, without
+            # entering Orchestrator.run(). Seed URL artifact identity here as
+            # part of that explicit action, after inspection and before the
+            # review is shown. JobStore preserves any existing file identity.
+            if self.job.project.video_source == "url" and not self.job.force_fetch:
+                JobStore().save(self.job, last_stage=inspection.pending_review,
+                                last_error="", seed_fetched_identity=True)
+            save_pending_review(self.job.job_dir, inspection.pending_review)
             if inspection.pending_review == "asr":
                 from ui.review_source import ReviewSourceWindow
                 review = ReviewSourceWindow(
