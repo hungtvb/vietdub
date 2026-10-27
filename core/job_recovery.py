@@ -91,6 +91,8 @@ def _inspect_job(store: JobStore, job_id: str, *, sub_mode: str | None = None) -
                            (project.name, project.video_source, project.video_in,
                             project.video_url, project.video_out, project.sub_mode))
                 or project.video_source not in {"file", "url"}
+                or type(project.overnight) is not bool
+                or type(project.review_stops) is not bool
                 or not isinstance(project.stages_done, list)
                 or any(not isinstance(step, str) or step not in checkpoint.STEPS
                        for step in project.stages_done)):

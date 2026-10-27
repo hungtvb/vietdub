@@ -55,7 +55,8 @@ class JobStore:
 
     def save(self, job: Job, *, last_stage: str | None = None,
              progress: float | None = None, last_error: str | None = None,
-             refresh_source_identity: bool = False) -> JobRecord:
+             refresh_source_identity: bool = False,
+             seed_fetched_identity: bool = False) -> JobRecord:
         path = self._path(job.job_id)
         prior: JobRecord | None = None
         if not path.exists() and os.path.lexists(path.with_name(path.name + ".corrupt")):
@@ -69,8 +70,12 @@ class JobStore:
             progress = prior.progress if prior is not None else 0.0
         if last_error is None and prior is not None:
             last_error = prior.last_error
-        source = (self._source_identity(job, refresh_download=refresh_source_identity)
-                  if prior is None or refresh_source_identity
+        seed = (seed_fetched_identity and job.project.video_source == "url"
+                and (prior is None or (prior.source_identity is not None
+                     and prior.source_identity.get("kind") == "url"
+                     and prior.source_identity.get("url") == job.project.video_url)))
+        source = (self._source_identity(job, refresh_download=refresh_source_identity or seed)
+                  if prior is None or refresh_source_identity or seed
                   else prior.source_identity)
         record = JobRecord(SCHEMA_VERSION, job.job_id,
                            prior.created_at if prior else now, now,
@@ -109,7 +114,10 @@ class JobStore:
         if project.video_source == "url" and project.video_url:
             if not refresh_download:
                 return {"kind": "url", "url": project.video_url}
-            local = Path(project.video_in).expanduser() if project.video_in else None
+            job_dir = self.root / job.job_id
+            fetch = load_step(job_dir, "fetch") if has_step(job_dir, "fetch") else None
+            local = (Path(fetch["video_path"]).expanduser() if fetch
+                     else Path(project.video_in).expanduser() if project.video_in else None)
             job_local = (local is not None and local.exists() and
                          local.resolve().is_relative_to((self.root / job.job_id).resolve()))
             if not job_local:

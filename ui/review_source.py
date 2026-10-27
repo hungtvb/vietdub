@@ -580,4 +580,8 @@ class ReviewSourceWindow(QWidget):
                  f"Đã lưu {len(self.segments)} câu đã duyệt. "
                  "Chạy tiếp bước ước lượng giới tính, phân tích và dịch.")
         self._close_via_button = True  # on_continue tự đóng window này
-        self.on_continue()
+        try:
+            self.on_continue()
+        finally:
+            if self.isVisible():
+                self._close_via_button = False

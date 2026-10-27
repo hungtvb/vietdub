@@ -73,12 +73,19 @@ class Orchestrator:
         try:
             inspection = inspect_job(self.job_store, job.job_id,
                                      sub_mode=self.settings.get("sub_mode", proj.sub_mode))
+            seed_url_identity = (proj.video_source == "url" and not job.force_fetch
+                                 and (resume_from or job.resume_from) != "fetch"
+                                 and not inspection.damaged and not inspection.source_changed
+                                 and not inspection.blocked_reason
+                                 and inspection.resume_from != "fetch"
+                                 and self._has_step("fetch"))
             if inspection.can_open_review:
                 job.status = REVIEW
                 job.resume_from = inspection.review_resume_from
-                self._save_state(last_stage=inspection.pending_review, last_error="")
+                self._save_state(last_stage=inspection.pending_review, last_error="",
+                                 seed_fetched_identity=seed_url_identity)
                 return REVIEW
-            self._save_state(last_error="")
+            self._save_state(last_error="", seed_fetched_identity=seed_url_identity)
             if not resume_from and not job.resume_from and all(
                     self._has_step(s) for s in STEPS):
                 self.logger.info("job %s: mọi bước đã có checkpoint -> DONE",
@@ -296,8 +303,9 @@ class Orchestrator:
         if manual is None:
             manual = pio.load_speakers(job.job_dir, "gender") or {}
         manually_labeled = set()
+        active_speakers = {segment.speaker for segment in segments}
         for spk_id, mspk in manual.items():
-            if mspk.gender not in ("male", "female"):
+            if spk_id not in active_speakers or mspk.gender not in ("male", "female"):
                 continue
             manually_labeled.add(spk_id)
             estimated = speakers.get(spk_id)

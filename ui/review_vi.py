@@ -216,7 +216,11 @@ class ReviewViWindow(QWidget):
         if self.on_retranslate is None or not self._save_review():
             return
         self._close_via_button = True  # on_retranslate tự xử lý window này
-        self.on_retranslate(self.meta)
+        try:
+            self.on_retranslate(self.meta)
+        finally:
+            if self.isVisible():
+                self._close_via_button = False
 
     def _save_review(self) -> bool:
         self.tbl.commit_active_editor()
@@ -245,4 +249,8 @@ class ReviewViWindow(QWidget):
                  f"Đã lưu {len(self.segments)} câu dịch. "
                  "Chạy tiếp bước lồng tiếng (TTS).")
         self._close_via_button = True  # on_continue tự đóng window này
-        self.on_continue()
+        try:
+            self.on_continue()
+        finally:
+            if self.isVisible():
+                self._close_via_button = False
