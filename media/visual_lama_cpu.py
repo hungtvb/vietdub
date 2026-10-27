@@ -37,7 +37,7 @@ def _validate_regions(regions, fps, width, height, total_frames):
         for x1,y1,x2,y2 in boxes:
             if not (0<=x1<x2<=width and 0<=y1<y2<=height):
                 raise LamaCPUError("invalid LaMa mask box")
-        spans.append((a,b,boxes))
+        spans.append((a,b,boxes,region))
     spans.sort()
     if not spans or any(x[1]>y[0] for x,y in zip(spans,spans[1:])):
         raise LamaCPUError("specify non-overlapping reviewed neural windows")
@@ -102,9 +102,20 @@ def render_lama_cpu(video, output, *, model_path, regions, ffmpeg="ffmpeg",
                 index+=1
             if index<len(spans) and spans[index][0]<=frame_i<spans[index][1]:
                 boxes=spans[index][2]
-                mask=np.zeros((height,width),np.float32)
-                for x1,y1,x2,y2 in boxes:
-                    mask[int(y1):int(y2),int(x1):int(x2)]=1.
+                region=spans[index][3]
+                if region.get("mask_style") == "expanding-graphic":
+                    if len(boxes)!=1:
+                        raise LamaCPUError("expanding-graphic requires one reviewed box")
+                    from media.visual_dynamic_mask import expanding_graphic_mask
+                    options=dict(region.get("mask_options") or {})
+                    options["feather"]=0  # hard model mask; feather only final composite
+                    mask=expanding_graphic_mask(frame,boxes[0],**options)
+                elif region.get("mask_style") in (None,"rectangle"):
+                    mask=np.zeros((height,width),np.float32)
+                    for x1,y1,x2,y2 in boxes:
+                        mask[int(y1):int(y2),int(x1):int(x2)]=1.
+                else:
+                    raise LamaCPUError("unrecognized reviewed mask_style")
                 top=max(0,min(int(b[1]) for b in boxes)-int(vertical_context))
                 bottom=min(height,max(int(b[3]) for b in boxes)+8)
                 crop=frame[top:bottom]
