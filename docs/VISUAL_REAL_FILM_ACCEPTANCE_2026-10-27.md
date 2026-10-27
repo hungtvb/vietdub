@@ -1,3 +1,71 @@
+## V13 — latest real-film review, supersedes V11
+
+The latest delivered sample is **V13**, not the earlier V11. It was produced
+with **real pretrained LaMa TorchScript CPU** inference and composited in
+one encode from the original Chinese 91.80-second film.
+
+Frame-level review discovered that a question-card icon appears several
+frames **before** its full Chinese caption, at all three question-card
+introductions. LaMa inference was run on an additional **19 early icon
+frames**: #222–227, #1229–1234, and #1405–1411 inclusive. All three
+fade-on intervals were manually checked in before/after decoded frames.
+
+The Q&A panel expands from approximately 65 to 300 pixels, so a fixed
+335-pixel LaMa rectangle was unnecessarily replacing visible human clothes,
+referee movements and sideline detail. V13 uses **per-frame width
+estimation from a reviewer-specified HSV blue/purple color band**;
+only the visibly covered region borrows model-cleaned pixels. The
+comparison at frames 1235–1260, 1412–1450 shows cleaner restoration
+of unoccluded referee clothing and the white boundary line.
+
+This method is now reusable in
+`media/visual_dynamic_mask.py:expanding_graphic_mask` and opt-in
+for reviewed `neural-window` entries of
+`media/visual_lama_cpu.py` with `mask_style: "expanding-graphic"`.
+Source-specific hue range, review box, time range and min width must be
+chosen from the actual film. **Do not apply the Chinese video ROI presets
+automatically to all videos.**
+
+V13 final decoded QA: **2,295 / 2,295 frames**, 25 FPS,
+**91.80 seconds**, zero full-stream FFmpeg decode errors. Mean outside
+approved-region pixel MAE is **2.30/255**; highest reviewed frame's
+outside-region average is **2.59/255**. Tesseract `chi_sim`
+detects no readable original Chinese dialogue in cleaned caption ROIs
+at sampled timestamps 0, 4, 7.88, 8.88, 20, 50, and 80 seconds.
+At 58 seconds the Q&A-colored pixel proxy fell **45.5% → 1.9%**.
+One-frame interview lower-third at frame #197 remains fixed.
+
+Source audio is still **Chinese**, retained for visual QA. No claim of
+Vietnamese dub or perfect pixel reconstruction is made. The last
+branded end card is replaced by neutral white from frame #2170.
+Human playback acceptance is still needed, especially for large
+occlusions on moving bodies.
+
+Sample output, iPhone-compatible version, before/after clips, 30-frame
+contact sheet and JSON metrics are conversation artifacts rather than
+files committed to GitHub. PR remains **Draft**.
+
+**Reviewed plan example** (illustrative only):
+
+```json
+{
+  "source": "neural-window",
+  "kind": "subtitle",
+  "start": 49.16,
+  "end": 52.48,
+  "box": [0, 245, 335, 316],
+  "mask_style": "expanding-graphic",
+  "mask_options": {
+    "hue_min": 90, "hue_max": 158,
+    "saturation_min": 55, "brightness_min": 75,
+    "blue_fraction": 0.12,
+    "min_width": 73, "padding": 15, "feather": 0
+  }
+}
+```
+
+---
+
 # Visual cleanup — real Chinese broadcast output review (27 Oct 2026)
 
 This is a sample-specific acceptance record for PR #6, **not** a claim that
