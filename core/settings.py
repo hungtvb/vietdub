@@ -65,7 +65,7 @@ DEFAULTS = {
     "sub_mode": "burn",                  # "burn" | "srt" | "none"
     # Visual cleanup is opt-in: PaddleOCR/OpenCV are optional dependencies.
     "visual_cleanup_enabled": False,
-    "visual_cleanup_backend": "cv",      # "cv" | "vsr" | "lama-cpu"
+    "visual_cleanup_backend": "cv",      # "cv" | "vsr" | "lama-cpu" | "hybrid"
     "visual_lama_weight_path": "",      # downloaded official LaMa TorchScript weight      # "cv" or optional external "vsr"
     "visual_vsr_root": "",              # separately installed VSR directory
     "visual_vsr_mode": "sttn-det",       # "sttn-det"|"sttn-auto"|"lama"|"propainter"
