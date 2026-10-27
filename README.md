@@ -11,7 +11,7 @@ VietDub là ứng dụng desktop PySide6 tạo bản lồng tiếng Việt cho v
 - Edge-TTS tạo giọng tiếng Việt; co giãn hoặc tách câu dài để khớp thời lượng.
 - Trộn dub với tiếng gốc giảm nhỏ; xuất phụ đề burn-in hoặc SRT rời.
 - Lưu checkpoint từng bước, job history, hàng đợi video tuần tự và trạng thái review để tiếp tục sau khi đóng app.
-- Editor cho phép cắt video, sửa nội dung/thời gian subtitle, thêm/xóa câu, đóng logo và xuất bản mới.
+- Editor cho phép cắt video, sửa nội dung/thời gian subtitle, thêm/xóa câu, đóng logo và xuất bản mới; nếu subtitle khác lời đọc đã tạo, app cảnh báo và yêu cầu xác nhận giữ nguyên audio lồng tiếng.
 
 ## Bắt đầu nhanh
 
@@ -49,7 +49,7 @@ Model local được tải khi bắt đầu ASR lần đầu, không tải lúc 
 
 ## Giới hạn hiện tại
 
-- Sửa hoặc thêm/xóa subtitle text/timing trong editor không tạo lại hay retime audio TTS; bản dub tiếp tục dùng audio đã tạo trước khi chỉnh subtitle.
+- Editor chưa tạo lại audio TTS cho subtitle được sửa. Khi có thay đổi nội dung, thời gian hoặc số câu, cần xác nhận chế độ subtitle-only; audio lồng tiếng giữ nguyên và có thể không khớp subtitle.
 - VietDub STT là tích hợp tùy chọn; chưa có đánh giá end-to-end trên model thật.
 - Benchmark ASR hiện tại là đánh giá định tính trên một video, không có phụ đề chuẩn để tính CER/WER.
 - Qwen 1.7B trên CPU có thể chậm và dùng nhiều RAM. Chất lượng/tốc độ phụ thuộc máy, model và video.

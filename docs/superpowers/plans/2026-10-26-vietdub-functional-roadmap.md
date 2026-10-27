@@ -2,7 +2,7 @@
 
 # VietDub Functional Upgrade Plan — Execution Record
 
-**Trạng thái:** Phase 1–3 đã hoàn thành và merge; Phase 4–5 chưa triển khai.
+**Trạng thái:** Phase 1–4 đã triển khai; Phase 5 chưa hoàn tất.
 **Roadmap gốc:** [Functional upgrade roadmap](../specs/2026-10-26-vietdub-functional-roadmap.md).
 **Tài liệu runtime hiện hành:** [Kiến trúc](../../ARCHITECTURE.md), [luồng](../../WORKFLOWS.md).
 
@@ -29,11 +29,11 @@
 - Giữ pending review sau Back/close/crash; Continue là thao tác duyệt rõ ràng.
 - Thêm history actions và startup queue notice; startup không tự chạy model/provider.
 
-## Phase 4 — Subtitle/audio editing consistency: chưa triển khai
+## Phase 4 — Subtitle/audio editing consistency: đã triển khai
 
-- Chọn giữa tái tạo TTS cho câu đã sửa và mode subtitle-only có nhãn rõ.
-- Giữ audio gốc/output hiện có; chỉ dựng lại artifact phụ thuộc khi có quyết định.
-- Acceptance còn mở: dòng subtitle mà user đánh dấu đồng bộ phải khớp với lời nói khi xuất.
+- So sánh subtitle trong editor với transcript/TTS ban đầu.
+- Báo rõ subtitle-only và yêu cầu xác nhận khi text, timing hoặc số câu thay đổi.
+- Giữ nguyên audio đã tạo; tái tạo TTS cho câu sửa tiếp tục là giới hạn đã biết.
 
 ## Phase 5 — Release readiness và real-media evidence: chưa hoàn tất
 

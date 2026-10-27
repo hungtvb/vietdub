@@ -180,5 +180,5 @@ Job có thể giữ state RUNNING khi app dừng bất thường; History hiển
 4. Review intent chỉ được xóa khi Continue; Back/close lưu edit nhưng chưa duyệt.
 5. Không publish output lên file đã tồn tại; MP4/SRT sidecar dùng chung basename.
 6. Pause/cancel có hiệu lực giữa stage, không giết lời gọi model/network đang chạy.
-7. Sửa subtitle text/timing, thêm hoặc xóa câu trong editor không tổng hợp lại hay retime TTS; dub track vẫn giữ audio và timing đã tạo.
+7. Khi subtitle khác nội dung, timing hoặc số câu đã dùng để tạo TTS, editor báo rõ và yêu cầu xác nhận xuất theo chế độ subtitle-only; audio lồng tiếng giữ nguyên.
 8. VietDub STT gửi WAV tới service localhost do user khởi chạy; service không được bundle cùng app.

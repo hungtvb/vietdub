@@ -3,7 +3,7 @@
 # VietDub Functional Upgrade Roadmap
 
 **Ngày lập:** 2026-10-26
-**Trạng thái hiện hành:** Phase 1–3 đã được triển khai; Phase 4–5 còn mở.
+**Trạng thái hiện hành:** Phase 1–4 đã được triển khai; Phase 5 còn mở.
 **Nguồn trạng thái runtime:** [Kiến trúc hiện hành](../../ARCHITECTURE.md), [luồng](../../WORKFLOWS.md).
 
 Đây là roadmap theo giai đoạn. Nội dung “findings” bên dưới ghi nhận vấn đề tại thời điểm scan 2026-10-26; không dùng phần đó làm mô tả hành vi hiện tại.
@@ -19,14 +19,14 @@ Roadmap bao phủ desktop workflow, pipeline chín bước, job/checkpoint persi
 | 1. Data integrity | Guard transcript merge theo speaker/audience/gender; giữ edit khi merge/save lỗi | Đã triển khai và merge |
 | 2. Batch queue | Queue video local tuần tự, status theo item, cô lập từng job | Đã triển khai; queue được persist |
 | 3. Job history/recovery | Lưu queue/job lifecycle, inspect checkpoint/source, resume/rebuild tường minh | Đã triển khai và merge |
-| 4. Đồng bộ subtitle/audio | Tạo lại speech đã sửa hoặc cho phép chọn rõ subtitle-only | Chưa triển khai |
+| 4. Đồng bộ subtitle/audio | Cho phép xác nhận rõ chế độ subtitle-only khi subtitle khác TTS | Đã triển khai; tái tạo speech chưa hỗ trợ |
 | 5. Release evidence | Ma trận smoke cho model first-use, audio, Edge-TTS, render, recovery và Windows package | Chưa hoàn tất |
 
 ## Giới hạn còn mở
 
 ### Phase 4 — Đồng bộ subtitle và audio
 
-Editor hiện cho sửa text/time subtitle, thêm/xóa câu, trim video và đóng logo. Sửa chữ không tạo lại audio TTS tương ứng. Hướng triển khai còn cần quyết định: re-synthesize các câu thay đổi, hoặc đánh dấu subtitle-only và hiển thị rõ lời đọc còn cũ.
+Editor cho sửa text/time subtitle, thêm/xóa câu, trim video và đóng logo. Khi nội dung, timing hoặc số câu khác dữ liệu đã dùng để tạo TTS, UI báo rõ rằng audio sẽ giữ nguyên và yêu cầu xác nhận xuất theo chế độ subtitle-only. Re-synthesize các câu thay đổi vẫn chưa hỗ trợ.
 
 ### Phase 5 — Release evidence
 

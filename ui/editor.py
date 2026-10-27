@@ -28,7 +28,7 @@ from media import extract as mextract
 from media.editor import export_edit
 from project import io as pio
 from project.schema import Segment
-from ui.common import error_box, fmt_time, info_box
+from ui.common import confirm_box, error_box, fmt_time, info_box
 from ui.editor_style import EDITOR_STYLESHEET
 from ui.poster_loader import PosterLoader
 from ui.theme import UI_COLORS
@@ -276,6 +276,8 @@ class EditorWindow(QWidget):
         self.segments = [Segment.from_dict(s.to_dict()) for s in
                          (pio.load_segments(job.job_dir, "tts") or
                           pio.load_segments(job.job_dir, "translate") or [])]
+        self.original_segments = [Segment.from_dict(s.to_dict())
+                                  for s in self.segments]
         self.draft_path = job.stages_dir / "editor.json"
         base = Path(render.get("video_out") or job.project.video_out or
                     job.job_dir / "video.mp4")
@@ -594,6 +596,7 @@ class EditorWindow(QWidget):
         if self.segments:
             self._select_segment(0)
         self._ready = True
+        self._update_sync_notice()
         self._set_draft_state("Đã mở bản nháp" if draft else "Chưa lưu bản nháp")
         if self._draft_error:
             self._set_draft_state("Không đọc được bản nháp", self._draft_error, error=True)
@@ -682,6 +685,11 @@ class EditorWindow(QWidget):
         note.setObjectName("editorHint")
         note.setWordWrap(True)
         sl.addWidget(note)
+        self.sync_notice = QLabel()
+        self.sync_notice.setObjectName("editorSyncNotice")
+        self.sync_notice.setWordWrap(True)
+        self.sync_notice.setAccessibleName("Chế độ đồng bộ phụ đề và audio")
+        sl.addWidget(self.sync_notice)
         sub_scroll = QScrollArea()
         sub_scroll.setWidgetResizable(True)
         sub_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -805,6 +813,7 @@ class EditorWindow(QWidget):
             self._select_segment(i)
         self.timeline.update()
         self._update_subtitle(self.player.position() / 1000)
+        self._update_sync_notice()
         self._schedule_save()
 
     def _time_changed(self) -> None:
@@ -824,6 +833,7 @@ class EditorWindow(QWidget):
             self.sub_list.item(i).setText(self._segment_label(i))
             self.timeline.update()
             self._update_subtitle(self.player.position() / 1000)
+            self._update_sync_notice()
             self._schedule_save()
 
     def _add_segment(self) -> None:
@@ -836,6 +846,7 @@ class EditorWindow(QWidget):
         self.subtitle_count_label.setText(f"{len(self.segments)} câu")
         self._select_segment(len(self.segments) - 1)
         self.timeline.update()
+        self._update_sync_notice()
         self._schedule_save()
 
     def _remove_segment(self) -> None:
@@ -854,6 +865,7 @@ class EditorWindow(QWidget):
             self.sub_text.clear()
         self.timeline.update()
         self._update_subtitle(self.player.position() / 1000)
+        self._update_sync_notice()
         self._schedule_save()
 
     def _trim_changed(self, start: float, end: float) -> None:
@@ -1128,6 +1140,31 @@ class EditorWindow(QWidget):
         self._set_draft_state("Có thay đổi chưa lưu")
         self._save_timer.start()
 
+    def _subtitle_audio_mismatch(self) -> bool:
+        """Whether edited subtitles differ from the text/timing that produced TTS."""
+        if len(self.segments) != len(self.original_segments):
+            return True
+        for current, original in zip(self.segments, self.original_segments):
+            if current.text_vi != original.text_vi:
+                return True
+            if (abs(current.start - original.start) > 0.01
+                    or abs(current.end - original.end) > 0.01):
+                return True
+        return False
+
+    def _update_sync_notice(self) -> None:
+        if not hasattr(self, "sync_notice"):
+            return
+        if self._subtitle_audio_mismatch():
+            message = (
+                "Đã chỉnh sửa phụ đề. Khi xuất, VietDub sẽ giữ nguyên audio "
+                "lồng tiếng hiện tại; lời đọc có thể không khớp với phụ đề.")
+        else:
+            message = (
+                "Sửa phụ đề không tạo lại lời đọc. Nếu có thay đổi, VietDub sẽ "
+                "yêu cầu xác nhận trước khi xuất với audio hiện tại.")
+        self.sync_notice.setText(message)
+
     def _save_draft(self) -> bool:
         if not self._ready:
             return False
@@ -1160,9 +1197,18 @@ class EditorWindow(QWidget):
     def export(self) -> None:
         if self._thread is not None:
             return
-        self._save_draft()
+        if not self._save_draft():
+            return
         if not _valid_trim_interval(self.timeline.trim_start, self.timeline.trim_end):
             error_box(self, "Khoảng cắt quá ngắn", "Cần giữ ít nhất 0,1 giây video.")
+            return
+        if self._subtitle_audio_mismatch() and not confirm_box(
+                self, "Xác nhận xuất phụ đề riêng",
+                "Bạn đã sửa nội dung, thời gian hoặc số câu phụ đề. Bản xuất sẽ "
+                "dùng phụ đề mới nhưng giữ nguyên audio lồng tiếng đã tạo trước đó, "
+                "nên lời đọc có thể không khớp.\n\n"
+                "Chọn Có để xuất theo chế độ chỉ cập nhật phụ đề."):
+            self.status.setText("Đã hủy xuất. Audio lồng tiếng vẫn giữ nguyên.")
             return
         target = self.output_path
         version = 2

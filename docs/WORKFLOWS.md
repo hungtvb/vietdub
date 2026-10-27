@@ -137,14 +137,26 @@ sequenceDiagram
     Editor->>Editor: Preview video/dub và seek timeline
     Editor->>Draft: Debounce-save trim, subtitle và logo
     User->>Editor: Bấm Xuất video
-    Editor->>Media: Gửi trim, segments, logo và subtitle mode
+    Editor->>Editor: So sánh subtitle với bản dùng để tạo TTS
+    alt Text, thời gian hoặc số câu đã thay đổi
+        Editor->>User: Cảnh báo và hỏi xác nhận subtitle-only
+        alt Xác nhận
+            User->>Editor: Đồng ý giữ audio hiện tại
+            Editor->>Media: Gửi trim, segments, logo và subtitle mode
+        else Hủy
+            User->>Editor: Hủy xuất
+            Editor-->>User: Giữ editor, không xuất
+        end
+    else Không thay đổi subtitle
+        Editor->>Media: Gửi trim, segments, logo và subtitle mode
+    end
     Media->>FFmpeg: Cắt media, overlay logo, burn subtitle nếu chọn
     FFmpeg-->>Media: Temporary MP4/SRT
     Media->>Output: Publish không ghi đè
     Output-->>Editor: Trả đường dẫn xuất thực tế
 ~~~
 
-Editor cho phép cắt video, sửa subtitle text/timing, thêm/xóa câu, đóng logo và chọn burn-in/SRT. Sửa text/timing, thêm hoặc xóa subtitle không gọi TTS lại và không retime dub track; lời nói tiếp tục dùng audio/timing đã tạo trước đó.
+Editor cho phép cắt video, sửa subtitle text/timing, thêm/xóa câu, đóng logo và chọn burn-in/SRT. Nếu subtitle khác nội dung, thời gian hoặc số câu đã dùng để tạo TTS, editor hiển thị cảnh báo và yêu cầu xác nhận xuất theo chế độ subtitle-only. Audio lồng tiếng tiếp tục dùng track đã tạo trước đó.
 
 ## 7. Hành vi khi lỗi
 
