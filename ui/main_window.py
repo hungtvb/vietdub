@@ -283,6 +283,14 @@ class MainWindow(QMainWindow):
         self.source_detail.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.source_detail.setProperty("role", "secondary")
         source_lay.addWidget(self.source_detail)
+        self.btn_visual_regions = QPushButton("▣ Chọn vùng chữ/logo cần làm mờ…")
+        self.btn_visual_regions.setProperty("role", "secondary")
+        self.btn_visual_regions.setToolTip(
+            "Kéo chuột chọn vùng trên frame, đặt thời gian và xem trước Blur/Mosaic/Inpaint. "
+            "Không cần PaddleOCR để chọn vùng thủ công.")
+        self.btn_visual_regions.setEnabled(False)
+        self.btn_visual_regions.clicked.connect(self.open_visual_region_editor)
+        source_lay.addWidget(self.btn_visual_regions)
 
         self.options_toggle = QPushButton("Tùy chọn lồng tiếng…")
         self.options_toggle.setCheckable(True)
@@ -416,6 +424,7 @@ class MainWindow(QMainWindow):
         self.video_url = ""
         self._active_info = None
         self.btn_start.setEnabled(False)
+        self.btn_visual_regions.setEnabled(False)
         self.file_info["box"].hide()
         self.link_info["box"].hide()
         self._source_feedback(message)
@@ -442,6 +451,7 @@ class MainWindow(QMainWindow):
 
     def _show_info(self, info: dict, path: str, data: dict, url: str = "") -> None:
         self.video_path, self.video_url = path, url
+        self.btn_visual_regions.setEnabled(True)
         self._active_info = info
         info["name"].setText(Path(path).name)
         info["name"].setToolTip(path)
@@ -719,6 +729,44 @@ class MainWindow(QMainWindow):
         error_box(self, "Không nghe thử được",
                   f"{message}\n\nCách khắc phục: kiểm tra mạng (Edge-TTS cần "
                   "kết nối tới Microsoft), rồi bấm Nghe thử lại.")
+
+    # ------------------------------------------------------------------ manual visual cleanup
+    def open_visual_region_editor(self) -> None:
+        """Review source-bound blur rectangles before starting the pipeline."""
+        if not self.video_path or not Path(self.video_path).is_file():
+            error_box(self,"Chưa có video","Chọn hoặc tải video thành công trước.")
+            return
+        import json
+        from ui.visual_region_editor import VisualRegionEditor
+        preferred = Path(self.settings.get("visual_cleanup_review_plan","") or "")
+        # Never reuse another video's manual region plan, even if both videos
+        # happen to have exactly the same resolution and duration.
+        if preferred.is_file():
+            try:
+                previous=json.loads(preferred.read_text(encoding="utf-8"))
+                if previous.get("source") != str(Path(self.video_path).resolve()):
+                    preferred=Path()
+            except (OSError,ValueError,TypeError):
+                preferred=Path()
+        if not preferred.is_file():
+            preferred=VisualRegionEditor.default_plan_path(
+                self.video_path,self.settings.path.parent)
+        try:
+            dialog=VisualRegionEditor(self.video_path,preferred,self)
+        except Exception as exc:
+            error_box(self,"Không mở được vùng chọn",
+                      "Kiểm tra file video và OpenCV trong requirements-visual-cleanup.txt.\n"+str(exc))
+            return
+        if dialog.exec():
+            self.settings.set("visual_cleanup_review_plan",str(preferred))
+            self.settings.set("visual_cleanup_enabled",True)
+            # User-picked blur/inpaint is handled by the CV renderer, which
+            # does not require OCR model weights when a reviewed plan exists.
+            self.settings.set("visual_cleanup_backend","cv")
+            self.settings.save()
+            self._source_feedback(
+                f"Đã lưu {len(dialog.regions)} vùng chọn. "
+                "Visual Cleanup sẽ dùng plan này khi render.", "success")
 
     # ------------------------------------------------------------------ bắt đầu
     def open_settings(self) -> None:
