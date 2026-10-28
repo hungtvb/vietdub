@@ -114,6 +114,8 @@ def audit_video(source, output, plan, *, required_subtitle_times=(),
             issues.append(f"{len(jumps)} unexpected mask-boundary jumps")
         return {
             "source_frames":decoded_source,"output_frames":decoded_output,"fps":fps,
+            "tracked_region_count":len(tracked),
+            "tracked_frames_checked":sum(len(points) for points in tracked.values()),
             "outside_samples":len(errors),
             "max_outside_mae":round(max(errors,default=0.),3),
             "boundary_jumps":jumps[:15],
