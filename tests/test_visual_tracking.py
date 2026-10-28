@@ -81,6 +81,29 @@ def test_static_uniform_logo_rejected_no_false_confidence(tmp_path):
         track_region(video,_region())
 
 
+
+def test_disappearing_logo_fails_instead_of_blurring_background(tmp_path):
+    """Do not keep blurring empty footage when a moving logo disappears."""
+    source=tmp_path/"disappearing.mp4"
+    writer=cv2.VideoWriter(
+        str(source),cv2.VideoWriter_fourcc(*"mp4v"),10,(320,180))
+    assert writer.isOpened()
+    rng=np.random.default_rng(7)
+    background=rng.integers(40,110,(180,320,3),dtype=np.uint8)
+    for frame in range(30):
+        image=background.copy()
+        x,y=45+frame//2,54+frame//5
+        if not 12<=frame<16:
+            cv2.rectangle(image,(x,y),(x+65,y+30),
+                          (22,26,203),-1)
+            cv2.putText(image,"MARK",(x+5,y+22),
+                        cv2.FONT_HERSHEY_SIMPLEX,.53,(255,255,255),2)
+        writer.write(image)
+    writer.release()
+    with pytest.raises(TrackingError,match="confidence"):
+        track_region(source,_region())
+
+
 def test_invalid_keyframe_dimensions_fail_closed(tmp_path):
     video=tmp_path/"motion.mp4";_movie(video)
     region=_region()
