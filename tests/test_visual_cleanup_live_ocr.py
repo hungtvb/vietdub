@@ -70,9 +70,8 @@ def test_real_paddle_detects_and_blurs_burned_subtitles(tmp_path):
         cv2.putText(review_overlay,f"REVIEW {score:.2f}",
                     (x1,max(18,y1-5)),cv2.FONT_HERSHEY_SIMPLEX,
                     .55,(0,180,255),2)
-    assert cv2.imwrite(str(Path("evidence/visual-cleanup-live") /
-                            "06_reviewable_multi_pass_OCR.png"), review_overlay) if Path(
-                            "evidence/visual-cleanup-live").is_dir() else True
+    assert cv2.imwrite(str(evidence/"06_reviewable_multi_pass_OCR.png"),
+                       review_overlay)
     active=[r for r in plan["regions"]
             if r["kind"]=="subtitle" and r["start"] <= selected_frame/fps < r["end"]]
     assert active, "No temporal OCR track active at evidence timestamp"
