@@ -126,3 +126,17 @@ def test_render_rejects_cut_without_writing_output(tmp_path):
     with pytest.raises(TrackingError,match="scene cut"):
         VisualCleanup(Config(auto_logo=False)).render(video,dest,plan)
     assert not dest.exists()
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"),reason="FFmpeg required")
+def test_decoded_output_acceptance_uses_moving_mask_not_static_box(tmp_path):
+    from media.visual_acceptance import audit_video
+    video=tmp_path/"moving.mp4"; output=tmp_path/"tracked.mp4"
+    _movie(video)
+    plan={**video_metadata(video),"regions":[_region()]}
+    VisualCleanup(Config(auto_logo=False)).render(video,output,plan)
+    report=audit_video(video,output,plan)
+    assert report["pass_structural_checks"],report["issues"]
+    assert report["tracked_region_count"]==1
+    assert report["tracked_frames_checked"]==30
+    assert report["source_frames"]==report["output_frames"]==30
