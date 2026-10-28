@@ -121,6 +121,30 @@ def test_real_mp4_manual_blur_without_ocr_weights(tmp_path):
     origin.release();clean.release()
 
 
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"),reason="FFmpeg required")
+def test_render_fractional_manual_times_activate_on_rounded_frame(tmp_path):
+    video=tmp_path/"src.mp4"; output=tmp_path/"out.mp4"
+    _video(video)
+    # .31*10 rounds to frame 3, .79*10 rounds to 8 (end exclusive).
+    plan={**video_metadata(video),"regions":[
+        _region(start=.31,end=.79,mode="pixelate")]}
+    VisualCleanup(Config(mode="blur",auto_logo=False)).render(
+        video,output,plan)
+    a=cv2.VideoCapture(str(video)); b=cv2.VideoCapture(str(output))
+    for frame_no in range(12):
+        oka,raw=a.read();okb,clean=b.read()
+        assert oka and okb
+        roi=np.s_[58:80,42:126]
+        change=float(np.mean(np.abs(raw[roi].astype(float)-
+                                   clean[roi].astype(float))))
+        if 3<=frame_no<8:
+            assert change>8,(frame_no,change)
+        else:
+            assert change<11,(frame_no,change)
+    a.release();b.release()
+
+
 def test_json_plan_roundtrip_and_no_autodetection(tmp_path):
     source=tmp_path/"video.mp4";_video(source)
     plan={**video_metadata(source),"regions":[_region()]}
