@@ -30,8 +30,15 @@ def _scene_jump(previous, current):
         values = cv2.calcHist([hsv], [0, 1], None, [20, 12],
                               [0, 180, 0, 256])
         return cv2.normalize(values, values)
-    return float(cv2.compareHist(
+    histogram_distance = float(cv2.compareHist(
         hist(previous), hist(current), cv2.HISTCMP_BHATTACHARYYA))
+    # HSV histograms can look similar after a hard lighting/color cut.
+    # Pixel-wise differences on a small image catch those edits. Using
+    # conservative MAX means ambiguous cuts require a human keyframe.
+    a = cv2.resize(previous, (120, 68)).astype(np.int16)
+    b = cv2.resize(current, (120, 68)).astype(np.int16)
+    pixel_distance = float(np.mean(np.abs(a-b))) / 130.0
+    return max(histogram_distance, pixel_distance)
 
 
 def _match(previous, current, box, *, max_motion, min_confidence):
