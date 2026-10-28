@@ -113,3 +113,52 @@ def test_dialog_rejects_other_video_source_plan(app,video,tmp_path):
         dialog.close()
     finally:
         QMessageBox.warning=orig
+
+
+def test_main_window_integrates_saved_review_and_disables_stale_plan(
+        app,video,tmp_path,monkeypatch):
+    from core.settings import Settings
+    from ui.main_window import MainWindow
+    import ui.visual_region_editor as editor_mod
+
+    settings=Settings(path=tmp_path/"settings.json")
+    window=MainWindow(settings)
+    assert not window.btn_visual_regions.isEnabled()
+    metadata={"duration":2.0,"resolution":"320×180",
+              "audio":[{"codec_name":"aac","channels":2}]}
+    window._show_info(window.file_info,str(video),metadata)
+    assert window.btn_visual_regions.isEnabled()
+
+    class AcceptedEditor:
+        def __init__(self,source,plan_path,parent):
+            self.source=source
+            self.plan_path=plan_path
+            self.regions=[{
+                "source":"user","start":0.2,"end":1.0,
+                "box":[20,100,125,145],"kind":"subtitle",
+                "mode":"blur","strength":18,"feather":2
+            }]
+        @staticmethod
+        def default_plan_path(video,config_dir):
+            return tmp_path/"visual_plans"/"user-reviewed.json"
+        def exec(self):
+            self.plan_path.parent.mkdir(parents=True,exist_ok=True)
+            from media.visual_user_regions import video_metadata
+            self.plan_path.write_text(
+                json.dumps({**video_metadata(self.source),
+                            "regions":self.regions}),encoding="utf-8")
+            return 1
+
+    monkeypatch.setattr(editor_mod,"VisualRegionEditor",AcceptedEditor)
+    window.btn_visual_regions.click()
+    assert settings.get("visual_cleanup_enabled") is True
+    assert settings.get("visual_cleanup_backend")=="cv"
+    saved_path=settings.get("visual_cleanup_review_plan")
+    assert Path(saved_path).is_file()
+    # The same review plan must never be silently applied to another video.
+    other=tmp_path/"other.mp4"
+    other.write_bytes(video.read_bytes())
+    window._show_info(window.file_info,str(other),metadata)
+    assert settings.get("visual_cleanup_enabled") is False
+    assert settings.get("visual_cleanup_review_plan")==""
+    window.close()
