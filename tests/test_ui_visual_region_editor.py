@@ -79,6 +79,11 @@ def test_dialog_draw_add_preview_save_and_reopen(app,video,tmp_path):
     dialog.preview.setChecked(True)
     app.processEvents()
     assert not dialog.canvas.image.isNull()
+    from pathlib import Path
+    evidence=Path("evidence/visual-region-editor")
+    evidence.mkdir(parents=True,exist_ok=True)
+    assert dialog.grab().save(str(evidence/"01_editor_after_region_selected.png"),
+                              "PNG")
     dialog._save()
     assert dest.is_file()
     plan=json.loads(dest.read_text(encoding="utf-8"))
