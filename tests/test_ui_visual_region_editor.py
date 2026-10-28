@@ -163,3 +163,44 @@ def test_main_window_integrates_saved_review_and_disables_stale_plan(
     assert settings.get("visual_cleanup_enabled") is False
     assert settings.get("visual_cleanup_review_plan")==""
     window.close()
+
+
+def test_tracker_ui_analyze_correct_keyframe_and_save(app,video,tmp_path,monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    warnings=[]
+    monkeypatch.setattr(
+        QMessageBox,"warning",
+        lambda *args,**kwargs: warnings.append(str(args[2])) or QMessageBox.Ok)
+    dialog=VisualRegionEditor(video,tmp_path/"moving.json")
+    dialog._set_box([80,112,180,155])
+    dialog.from_sec.setValue(0)
+    dialog.to_sec.setValue(1.8)
+    dialog.tracking.setCurrentIndex(
+        dialog.tracking.findData("template"))
+    dialog._add()
+    assert dialog.regions[0]["tracking"]=="template"
+    dialog._save()
+    assert any("tracking" in m.lower() for m in warnings)
+    assert not dialog.plan_path.exists()
+
+    dialog._analyze_tracking()
+    worker=dialog._track_worker
+    assert worker is not None
+    assert worker.wait(15000), "Background tracker did not finish"
+    app.processEvents()
+    assert len(dialog._track_results[0]) == 18
+    dialog.slider.setValue(7)
+    dialog._set_box([81,112,181,155])
+    dialog._add_keyframe()
+    assert not dialog._track_results
+    assert any(k["frame"]==7 for k in dialog.regions[0]["keyframes"])
+
+    dialog._analyze_tracking()
+    worker=dialog._track_worker
+    assert worker.wait(15000)
+    app.processEvents()
+    assert len(dialog._track_results[0])==18
+    dialog._save()
+    record=json.loads(dialog.plan_path.read_text(encoding="utf-8"))
+    assert record["regions"][0]["tracking"]=="template"
+    assert record["regions"][0]["keyframes"][-1]["frame"]==7
