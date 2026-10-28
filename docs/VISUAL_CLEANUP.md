@@ -38,6 +38,20 @@ To omit all *new* subtitle overlays, select **Không thêm phụ đề**. Existi
 - Bright, high-contrast Chinese subtitles and solid-color logos are the main target. Text still can leave visible blurred glyph-shaped remnants; animated and semi-transparent marks or scene-matched typography may need a segmentation model/temporal clean-plate inpainting. Some original black subtitle bands may remain.
 
 
+## User-selected blur/mosaic/inpaint regions (Qt editor)
+
+For the latest user-directed workflow, including original-pixel drag
+selection, timeline intervals, three-pass OCR suggestions, before/after
+preview, and source-bound JSON plan persistence, see
+[USER_MANUAL_VISUAL_REGIONS.md](USER_MANUAL_VISUAL_REGIONS.md).
+
+User-approved rectangles use `source: "user"` and are applied
+*without* the OCR glyph/brightness mask. Each region can choose its own
+Gaussian blur, mosaic or Telea mode and exact frame interval. A manual-only
+plan renders without installing PaddleOCR; OCR is only needed when the
+user explicitly asks for suggestions. The mask remains static in screen
+coordinates for its reviewed interval (no automatic object tracking yet).
+
 ## Operator-reviewed temporal clean-plate restoration (new)
 
 The ordinary OCR pipeline deliberately remains conservative: a bounding box
