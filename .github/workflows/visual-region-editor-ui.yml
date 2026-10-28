@@ -1,0 +1,31 @@
+name: Visual region editor UI
+on:
+  pull_request:
+    paths:
+      - 'ui/visual_region_editor.py'
+      - 'ui/main_window.py'
+      - 'media/visual_user_regions.py'
+      - 'tests/test_ui_visual_region_editor.py'
+      - '.github/workflows/visual-region-editor-ui.yml'
+  workflow_dispatch:
+
+jobs:
+  offscreen-editor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install UI and frame decoder
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install PySide6 'opencv-python-headless>=4.8,<5' numpy pytest
+      - name: Test drag selection, letterboxing, time and save/reopen
+        timeout-minutes: 4
+        run: |
+          python -m compileall -q ui/visual_region_editor.py ui/main_window.py media/visual_user_regions.py
+          python -m pytest -vv -q tests/test_ui_visual_region_editor.py
