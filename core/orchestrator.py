@@ -625,9 +625,9 @@ class Orchestrator:
                 engine = vclean.VisualCleanup(config)
                 if reviewed:
                     if not any(r.get("source") in (
-                            "temporal-clean-plate", "exemplar-patch", "flat-strip-repaint")
-                               for r in plan.get("regions", [])):
-                        raise ValueError("Plan đã duyệt phải có vùng clean-plate, exemplar hoặc flat-strip")
+                            "user", "temporal-clean-plate", "exemplar-patch",
+                            "flat-strip-repaint") for r in plan.get("regions", [])):
+                        raise ValueError("Plan đã duyệt phải có vùng user hoặc vùng clean-plate")
                     video_for_render = engine.render(
                         video_for_render, job.stages_dir / "visual_clean.mp4",
                         plan, ffmpeg=mbin.ffmpeg_cmd())
