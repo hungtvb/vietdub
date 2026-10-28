@@ -29,6 +29,29 @@ def audit_video(source, output, plan, *, required_subtitle_times=(),
                               int(exported.get(cv2.CAP_PROP_FRAME_HEIGHT))):
             raise ValueError("source/output dimensions differ")
         regions=plan.get("regions",[])
+        from media.visual_tracking import track_region
+        # Rebuild exactly the same user-approved position trajectory as the
+        # renderer. Otherwise QA mistakes correctly moved masks for edits
+        # outside the original *static* rectangle.
+        tracked = {
+            id(r): track_region(source, r) for r in regions
+            if r.get("source") == "user" and
+               r.get("tracking") == "template"
+        }
+        def is_active(r, frame):
+            if r.get("source") == "user":
+                return (round(float(r["start"])*fps) <= frame <
+                        round(float(r["end"])*fps))
+            return float(r["start"]) <= frame/fps < float(r["end"])
+
+        def box_at(r, frame):
+            points = tracked.get(id(r))
+            if points is None:
+                return r["box"]
+            first = min(points)
+            last = max(points)
+            return points[min(max(frame,first),last)].box
+
         issues=[]
         for t in required_subtitle_times:
             if not any(r.get("kind")=="subtitle" and
@@ -57,7 +80,7 @@ def audit_video(source, output, plan, *, required_subtitle_times=(),
             if near and last_a is not None:
                 for r in regions:
                     if min(abs(t-r["start"]),abs(t-r["end"]))>=.24:continue
-                    x1,y1,x2,y2=map(int,r["box"])
+                    x1,y1,x2,y2=map(int,box_at(r,i))
                     x1,y1=max(0,x1),max(0,y1)
                     x2,y2=min(width,x2),min(height,y2)
                     if x2<=x1 or y2<=y1: continue
@@ -73,8 +96,8 @@ def audit_video(source, output, plan, *, required_subtitle_times=(),
             if i%5==0 or near:
                 safe=np.ones((height,width),dtype=bool)
                 for r in regions:
-                    if not (r["start"]<=t<r["end"]):continue
-                    x1,y1,x2,y2=map(int,r["box"])
+                    if not is_active(r,i):continue
+                    x1,y1,x2,y2=map(int,box_at(r,i))
                     pad=4
                     safe[max(0,y1-pad):min(height,y2+pad),
                          max(0,x1-pad):min(width,x2+pad)]=False
