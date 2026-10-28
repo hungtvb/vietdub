@@ -117,6 +117,7 @@ def test_dialog_rejects_other_video_source_plan(app,video,tmp_path):
 
 def test_main_window_integrates_saved_review_and_disables_stale_plan(
         app,video,tmp_path,monkeypatch):
+    from pathlib import Path
     from core.settings import Settings
     from ui.main_window import MainWindow
     import ui.visual_region_editor as editor_mod
