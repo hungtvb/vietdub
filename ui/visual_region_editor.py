@@ -536,6 +536,9 @@ class VisualRegionEditor(QDialog):
                 f'{region["start"]:.2f}–{region["end"]:.2f}s '
                 f'· [{x1},{y1}→{x2},{y2}]')
         self.list.blockSignals(False)
+        self.status.setText(
+            f"Đã lưu {len(self.regions)} vùng. "
+            "Chọn một vùng để chỉnh hoặc đặt keyframe.")
 
     def _pick_region(self,index):
         if index<0 or index>=len(self.regions):
