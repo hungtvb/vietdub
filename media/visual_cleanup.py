@@ -343,17 +343,27 @@ class VisualCleanup:
                    "-c:v", "libx264", "-crf", "18", "-preset", "fast",
                    "-pix_fmt", "yuv420p", str(temp)]
             proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-            upcoming = sorted(plan["regions"], key=lambda r:r["start"])
+            def _start_frame(r):
+                if r.get("source") == USER_SOURCE:
+                    return int(round(float(r["start"]) * fps))
+                return float(r["start"]) * fps
+
+            def _still_active(r, frame_number):
+                if r.get("source") == USER_SOURCE:
+                    return frame_number < int(round(float(r["end"]) * fps))
+                return frame_number/fps < float(r["end"])
+
+            upcoming = sorted(plan["regions"], key=_start_frame)
             current, cursor, frame_n = [], 0, 0
             while True:
                 ok, frame = cap.read()
                 if not ok:
                     break
                 t = frame_n/fps
-                while cursor < len(upcoming) and upcoming[cursor]["start"] <= t:
+                while cursor < len(upcoming) and _start_frame(upcoming[cursor]) <= frame_n:
                     current.append(upcoming[cursor])
                     cursor += 1
-                current = [r for r in current if r["end"] > t]
+                current = [r for r in current if _still_active(r, frame_n)]
                 if clean_plate is not None:
                     frame = clean_plate.apply(frame, frame_n)
                 # User-picked masks win over heuristic OCR when they overlap.
