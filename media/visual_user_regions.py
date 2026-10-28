@@ -69,10 +69,39 @@ def validate_region(region, width, height, duration):
         raise UserRegionError("Invalid cleanup mode/category")
     if not (1 <= strength <= 64 and 0 <= feather <= 16):
         raise UserRegionError("Strength or edge feather outside safe limits")
+    tracking = str(region.get("tracking", "static"))
+    if tracking not in ("static", "template"):
+        raise UserRegionError("Unknown movement mode")
+    frames = []
+    raw_keyframes = region.get("keyframes", [])
+    if raw_keyframes is None:
+        raw_keyframes = []
+    if not isinstance(raw_keyframes, list) or len(raw_keyframes) > 1000:
+        raise UserRegionError("Invalid keyframe list")
+    if tracking == "template":
+        seen = set()
+        for item in raw_keyframes:
+            if not isinstance(item, dict):
+                raise UserRegionError("Invalid keyframe")
+            try:
+                fi = int(item["frame"])
+                bb = [int(x) for x in item["box"]]
+            except (TypeError, ValueError, KeyError, OverflowError) as exc:
+                raise UserRegionError("Invalid keyframe fields") from exc
+            if (fi < 0 or fi in seen or len(bb) != 4
+                    or not (0 <= bb[0] < bb[2] <= width
+                            and 0 <= bb[1] < bb[3] <= height)
+                    or (bb[2]-bb[0], bb[3]-bb[1]) != (x2-x1, y2-y1)):
+                raise UserRegionError(
+                    "Keyframes must have unique frame index and unchanged rectangle size")
+            seen.add(fi)
+            frames.append({"frame": fi, "box": bb})
+        frames.sort(key=lambda entry: entry["frame"])
     return {
         "start": start, "end": end, "box": coordinates,
         "kind": kind, "source": SOURCE,
         "mode": mode, "strength": strength, "feather": feather,
+        "tracking": tracking, "keyframes": frames,
         "confidence": 1.0
     }
 
