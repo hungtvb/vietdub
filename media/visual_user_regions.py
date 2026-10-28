@@ -128,12 +128,17 @@ def apply_user_regions(frame, regions, frame_number, fps):
         feather = region["feather"]
         width, height = x2-x1, y2-y1
         if mode == "inpaint":
-            mask = np.zeros((h, w), dtype=np.uint8)
-            mask[y1:y2, x1:x2] = 255
-            # Telea is local; this is deliberately a rectangular mask, not a
-            # glyph-only OCR mask, so any translucent strip is covered.
-            restored = cv2.inpaint(result, mask, min(9, max(2, strength//5)), cv2.INPAINT_TELEA)
-            replacement = restored[y1:y2, x1:x2]
+            # Inpaint a padded local crop. Never allocate and reconstruct an
+            # entire 4K frame for a 150px subtitle rectangle.
+            radius = min(9, max(2, strength//5))
+            margin = max(12, radius*3)
+            bx1, by1 = max(0,x1-margin), max(0,y1-margin)
+            bx2, by2 = min(w,x2+margin), min(h,y2+margin)
+            crop = result[by1:by2,bx1:bx2]
+            mask = np.zeros(crop.shape[:2], dtype=np.uint8)
+            mask[y1-by1:y2-by1,x1-bx1:x2-bx1] = 255
+            restored = cv2.inpaint(crop,mask,radius,cv2.INPAINT_TELEA)
+            replacement = restored[y1-by1:y2-by1,x1-bx1:x2-bx1]
         elif mode == "blur":
             radius = max(2, strength)
             margin = min(3*radius, max(w, h))
