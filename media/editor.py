@@ -33,7 +33,7 @@ def export_edit(video_in: str | Path, mixed_wav: str | Path,
         raise RenderError("Đường dẫn xuất không được ghi đè video hoặc audio gốc.")
     if trim_start < 0 or trim_end <= trim_start:
         raise RenderError("Khoảng cắt video không hợp lệ.")
-    if sub_mode not in {"burn", "srt"}:
+    if sub_mode not in {"burn", "srt", "none"}:
         raise RenderError("Chế độ phụ đề không hợp lệ.")
     if logo_path and not Path(logo_path).is_file():
         raise RenderError(f"Không tìm thấy logo: {logo_path}")
@@ -43,7 +43,7 @@ def export_edit(video_in: str | Path, mixed_wav: str | Path,
         raise RenderError("Kích thước hoặc độ mờ logo không hợp lệ.")
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    selected = next_available_output_path(target, (".srt",))
+    selected = next_available_output_path(target, (".srt",) if sub_mode != "none" else ())
     # Preserve the editor's absolute timeline; the exported file begins at 0.
     clipped = [replace(s, start=max(s.start, trim_start) - trim_start,
                        end=min(s.end, trim_end) - trim_start)
@@ -52,8 +52,11 @@ def export_edit(video_in: str | Path, mixed_wav: str | Path,
     temp = _temporary_output(target.parent, ".mp4")
     temp_srt = None
     try:
-        temp_srt = _temporary_output(target.parent, ".srt")
-        srt = write_srt(clipped, temp_srt)
+        if sub_mode != "none":
+            temp_srt = _temporary_output(target.parent, ".srt")
+            srt = write_srt(clipped, temp_srt)
+        else:
+            srt = None
         filters = [
             f"[0:v]trim=start={trim_start:.3f}:end={trim_end:.3f},"
             "setpts=PTS-STARTPTS[v0]",
@@ -102,6 +105,7 @@ def export_edit(video_in: str | Path, mixed_wav: str | Path,
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0 or not temp.is_file():
             raise RenderError(f"Xuất video thất bại:\n{result.stderr[-900:]}")
-        return _publish_rendered_mp4(temp, target, selected, temp_srt)
+        return _publish_rendered_mp4(
+            temp, target, selected, temp_srt if sub_mode != "none" else None)
     finally:
         _cleanup_temporary(temp, temp_srt)

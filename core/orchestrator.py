@@ -184,10 +184,51 @@ class Orchestrator:
             if final_save_failed:
                 return FAILED
 
+    def _visual_cleanup_signature(self):
+        """Render checkpoint inputs that must invalidate any stale final MP4."""
+        if not self.settings.get("visual_cleanup_enabled", False):
+            return None
+        review_file = str(self.settings.get("visual_cleanup_review_plan", "") or "").strip()
+        review_hash = ""
+        if review_file:
+            import hashlib
+            path = Path(review_file)
+            # Missing review files invalidate stale output and then fail
+            # explicitly in _step_render, rather than returning DONE.
+            review_hash = (hashlib.sha256(path.read_bytes()).hexdigest()
+                           if path.is_file() else "missing")
+        return {
+            "enabled": True,
+            "backend": str(self.settings.get("visual_cleanup_backend", "cv")),
+            "vsr_root": str(self.settings.get("visual_vsr_root", "")),
+            "vsr_mode": str(self.settings.get("visual_vsr_mode", "sttn-det")),
+            "lama_weight_path": str(self.settings.get("visual_lama_weight_path", "")),
+            "lama_weight_stat": (
+                (Path(self.settings.get("visual_lama_weight_path")).stat().st_size,
+                 Path(self.settings.get("visual_lama_weight_path")).stat().st_mtime_ns)
+                if self.settings.get("visual_lama_weight_path")
+                and Path(self.settings.get("visual_lama_weight_path")).is_file()
+                else None),
+            "mode": str(self.settings.get("visual_cleanup_mode", "blur")),
+            "interval": float(self.settings.get("visual_cleanup_interval_sec", 0.65)),
+            "min_hits": int(self.settings.get("visual_cleanup_min_hits", 2)),
+            "auto_logo": bool(self.settings.get("visual_cleanup_auto_logo", False)),
+            "review_plan": review_file,
+            "review_sha256": review_hash,
+        }
+
     def _has_step(self, step: str) -> bool:
         sub_mode = (self.settings.get("sub_mode", self.job.project.sub_mode)
                     or self.job.project.sub_mode or "burn")
-        return cp.has_step(self.job.job_dir, step, sub_mode=sub_mode)
+        if not cp.has_step(self.job.job_dir, step, sub_mode=sub_mode):
+            return False
+        if step == "render":
+            data = cp.load_step(self.job.job_dir, "render") or {}
+            # Legacy jobs without this field count as cleanup-disabled.
+            # Re-enable/disable/change cleanup => must rerender, never DONE
+            # from an incompatible render checkpoint.
+            return data.get("visual_cleanup_signature") == self._visual_cleanup_signature()
+        return True
 
     def _first_missing_step(self) -> str:
         for step in STEPS:
@@ -565,8 +606,138 @@ class Orchestrator:
         out_mp4 = Path(proj.video_out or str(job.job_dir / out_name))
         sub_mode = (self.settings.get("sub_mode", proj.sub_mode)
                     or proj.sub_mode or "burn")
+        video_for_render = fetch_data.get("video_path") or proj.video_in
+        if self.settings.get("visual_cleanup_enabled", False):
+            # Optional step inside render keeps existing checkpoint order stable.
+            # Fail explicitly when OCR/runtime is missing; never silently export
+            # uncleaned video after the user asked for cleanup.
+            from media import visual_cleanup as vclean
+            from media import _bin as mbin
+            backend = str(self.settings.get("visual_cleanup_backend", "cv"))
+            visual_plan = job.stages_dir / "visual_regions.json"
+            reviewed = str(self.settings.get("visual_cleanup_review_plan", "") or "").strip()
+            plan = None
+            if reviewed:
+                import json
+                review_path = Path(reviewed)
+                if not review_path.is_file():
+                    raise FileNotFoundError(f"Không tìm thấy plan đã duyệt: {review_path}")
+                plan = json.loads(review_path.read_text(encoding="utf-8"))
+            if backend == "vsr":
+                from media.visual_neural import run_vsr
+                mode = str(self.settings.get("visual_vsr_mode", "sttn-det"))
+                root = str(self.settings.get("visual_vsr_root", "") or "")
+                reviewed_windows = [r for r in (plan or {}).get("regions", [])
+                                    if r.get("source")=="neural-window"]
+                if reviewed_windows:
+                    from media.visual_neural_window import run_windowed_vsr
+                    video_for_render = run_windowed_vsr(
+                        root, video_for_render, job.stages_dir / "visual_clean.mp4",
+                        regions=reviewed_windows, mode=mode,
+                        ffmpeg=mbin.ffmpeg_cmd())
+                else:
+                    boxes = [r["box"] for r in (plan or {}).get("regions", [])
+                             if r.get("kind") in ("subtitle", "text") and "box" in r]
+                    video_for_render = run_vsr(
+                        root, video_for_render, job.stages_dir / "visual_clean.mp4",
+                        mode=mode, areas=boxes)
+                boxes = [r.get("box") for r in (plan or {}).get("regions", [])
+                         if r.get("box")]
+                # External model does its own OCR detection. Do not present
+                # this metadata as though it were PaddleOCR tracking boxes.
+                import json
+                visual_plan.write_text(json.dumps({
+                    "backend": "vsr", "model": mode,
+                    "source": str(Path(fetch_data.get("video_path") or proj.video_in).resolve()),
+                    "reviewed_areas":boxes,"reviewed_windows":reviewed_windows,
+                    "note":"External open-source model; validate the rendered result visually"},
+                    ensure_ascii=False,indent=2),encoding="utf-8")
+            elif backend == "lama-cpu":
+                from media.visual_lama_cpu import render_lama_cpu
+                if not plan:
+                    raise ValueError("LaMa CPU requires reviewed neural-window regions JSON")
+                windows = [r for r in plan.get("regions",[])
+                           if r.get("source")=="neural-window"]
+                if not windows:
+                    raise ValueError("LaMa CPU plan has no approved neural-window regions")
+                video_for_render = render_lama_cpu(
+                    video_for_render,job.stages_dir/"visual_clean.mp4",
+                    model_path=str(self.settings.get("visual_lama_weight_path","")),
+                    regions=windows,ffmpeg=mbin.ffmpeg_cmd())
+                import json
+                visual_plan.write_text(
+                    json.dumps(plan,ensure_ascii=False,indent=2),encoding="utf-8")
+            elif backend == "hybrid":
+                from media.visual_hybrid import render_reviewed_hybrid
+                if not plan:
+                    raise ValueError("Hybrid cleanup requires a reviewed JSON plan")
+                video_for_render = render_reviewed_hybrid(
+                    video_for_render, job.stages_dir / "visual_clean.mp4",
+                    plan, model_path=str(self.settings.get("visual_lama_weight_path", "")),
+                    ffmpeg=mbin.ffmpeg_cmd())
+                import json
+                visual_plan.write_text(
+                    json.dumps(plan,ensure_ascii=False,indent=2),encoding="utf-8")
+                from media.visual_acceptance import write_audit
+                qa = write_audit(
+                    job.stages_dir / "visual_acceptance.json",
+                    fetch_data.get("video_path") or proj.video_in,
+                    video_for_render, plan,
+                    required_subtitle_times=plan.get("required_subtitle_times", []))
+                if not qa["pass_structural_checks"]:
+                    raise RuntimeError("Hybrid cleanup failed structural acceptance: "+
+                                       "; ".join(qa["issues"]))
+            elif backend == "cv":
+                config = vclean.Config(
+                    mode=str(self.settings.get("visual_cleanup_mode", "blur")),
+                    sample_sec=float(self.settings.get("visual_cleanup_interval_sec", 0.65)),
+                    min_hits=int(self.settings.get("visual_cleanup_min_hits", 2)),
+                    auto_logo=bool(self.settings.get("visual_cleanup_auto_logo", False)))
+                engine = vclean.VisualCleanup(config)
+                if reviewed:
+                    if not any(r.get("source") in (
+                            "user", "temporal-clean-plate", "exemplar-patch",
+                            "flat-strip-repaint") for r in plan.get("regions", [])):
+                        raise ValueError("Plan đã duyệt phải có vùng user hoặc vùng clean-plate")
+                    video_for_render = engine.render(
+                        video_for_render, job.stages_dir / "visual_clean.mp4",
+                        plan, ffmpeg=mbin.ffmpeg_cmd())
+                    visual_plan.write_text(
+                        json.dumps(plan,ensure_ascii=False,indent=2),encoding="utf-8")
+                    from media.visual_acceptance import write_audit
+                    qa = write_audit(
+                        job.stages_dir / "visual_acceptance.json",
+                        fetch_data.get("video_path") or proj.video_in,
+                        video_for_render, plan,
+                        required_subtitle_times=plan.get("required_subtitle_times", []))
+                    if not qa["pass_structural_checks"]:
+                        raise RuntimeError("Video xử lý chưa đạt kiểm định: "+
+                                           "; ".join(qa["issues"]))
+                else:
+                    video_for_render = engine.process(
+                        video_for_render, job.stages_dir / "visual_clean.mp4",
+                        plan_path=visual_plan, ffmpeg=mbin.ffmpeg_cmd())
+            else:
+                raise ValueError(f"Visual cleanup backend không hợp lệ: {backend}")
+            if plan and plan.get("ocr_qa_samples"):
+                from media.visual_ocr_acceptance import audit_rendered_captions
+                qa = audit_rendered_captions(
+                    fetch_data.get("video_path") or proj.video_in,
+                    video_for_render,
+                    plan["ocr_qa_samples"],
+                    lang=plan.get("ocr_qa_lang","chi_sim+eng"))
+                import json
+                (job.stages_dir / "visual_ocr_acceptance.json").write_text(
+                    json.dumps(qa,ensure_ascii=False,indent=2),encoding="utf-8")
+                if qa["verdict"] != "no_readable_cjk":
+                    raise RuntimeError(
+                        "Đầu ra chưa đạt kiểm tra phụ đề OCR: "+
+                        qa["verdict"]+
+                        "; xem visual_ocr_acceptance.json")
+            self.logger.info("Visual cleanup output: %s; review plan: %s",
+                             video_for_render, visual_plan)
         rendered = mrender.render(
-            fetch_data.get("video_path") or proj.video_in,
+            video_for_render,
             mix_data["mixed_wav"], srt_path, out_mp4,
             sub_mode=sub_mode,
             crf=int(self.settings.get("crf", 20)),
@@ -574,7 +745,8 @@ class Orchestrator:
             font_size=int(self.settings.get("sub_font_size", 0) or 0),
             font_color=(self.settings.get("sub_font_color", "") or "").strip())
         proj.video_out = str(rendered)
-        render_data = {"video_out": str(rendered), "srt": str(srt_path)}
+        render_data = {"video_out": str(rendered), "srt": str(srt_path),
+                       "visual_cleanup_signature": self._visual_cleanup_signature()}
         if sub_mode == "srt":
             render_data["srt_out"] = str(rendered.with_suffix(".srt"))
         cp.save_step(job.job_dir, "render", render_data)

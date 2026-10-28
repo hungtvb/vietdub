@@ -1,0 +1,45 @@
+name: Visual region editor UI
+on:
+  pull_request:
+    paths:
+      - 'ui/visual_region_editor.py'
+      - 'ui/main_window.py'
+      - 'media/visual_user_regions.py'
+      - 'media/visual_tracking.py'
+      - 'media/visual_detection.py'
+      - 'tests/test_ui_visual_region_editor.py'
+      - '.github/workflows/visual-region-editor-ui.yml'
+  workflow_dispatch:
+
+jobs:
+  offscreen-editor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Qt offscreen runtime libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libegl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0 libpulse0 libasound2t64
+      - name: Install UI and frame decoder
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install PySide6 'opencv-python-headless>=4.8,<5' numpy pytest
+      - name: Test drag selection, letterboxing, time and save/reopen
+        timeout-minutes: 4
+        run: |
+          python -m compileall -q ui/visual_region_editor.py ui/main_window.py media/visual_user_regions.py media/visual_tracking.py media/visual_detection.py
+          python -m pytest -vv -q tests/test_ui_visual_region_editor.py
+      - name: Upload real Qt editor screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-region-editor-offscreen-preview
+          path: evidence/visual-region-editor/
+          retention-days: 30
+          if-no-files-found: warn

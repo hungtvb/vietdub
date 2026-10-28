@@ -10,7 +10,7 @@ app vẫn giữ nguyên lựa chọn cũ.
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFrame,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame,
                                QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
                                QPushButton, QScrollArea, QSizePolicy, QSpinBox,
@@ -380,8 +380,9 @@ class SettingsDialog(QDialog):
         self.sub_mode = QComboBox()
         self.sub_mode.addItem("Gắn cứng vào video", "burn")
         self.sub_mode.addItem("Xuất file .srt rời", "srt")
+        self.sub_mode.addItem("Không thêm phụ đề vào video", "none")
         cur = self.settings.get("sub_mode", "burn")
-        self.sub_mode.setCurrentIndex(0 if cur == "burn" else 1)
+        self.sub_mode.setCurrentIndex(max(0, self.sub_mode.findData(cur)))
         f.addRow("Chế độ phụ đề:", self.sub_mode)
         row_font = QHBoxLayout()
         self.sub_font = QLineEdit(self.settings.get("sub_font", "") or "")
@@ -403,6 +404,74 @@ class SettingsDialog(QDialog):
         self.crf.setRange(18, 28)
         self.crf.setValue(int(self.settings.get("crf", 20)))
         f.addRow("Chất lượng video (CRF):", self.crf)
+        self.visual_cleanup_enabled = QCheckBox("Xử lý chữ/logo gốc (OCR đề xuất hoặc tự chọn vùng)")
+        self.visual_cleanup_enabled.setChecked(bool(self.settings.get("visual_cleanup_enabled", False)))
+        f.addRow(self.visual_cleanup_enabled)
+        self.visual_cleanup_backend = QComboBox()
+        self.visual_cleanup_backend.addItem("OpenCV / clean-plate (nhẹ)", "cv")
+        self.visual_cleanup_backend.addItem("AI video inpainting (cần cài VSR riêng)", "vsr")
+        self.visual_cleanup_backend.addItem("LaMa CPU trực tiếp (model pretrained)", "lama-cpu")
+        self.visual_cleanup_backend.addItem("Kết hợp clean-plate và LaMa (plan đã duyệt)", "hybrid")
+        self.visual_cleanup_backend.setCurrentIndex(max(0,
+            self.visual_cleanup_backend.findData(self.settings.get("visual_cleanup_backend","cv"))))
+        f.addRow("Engine xử lý:", self.visual_cleanup_backend)
+        self.visual_vsr_mode = QComboBox()
+        self.visual_vsr_mode.addItem("STTN + OCR (tự phát hiện text)", "sttn-det")
+        self.visual_vsr_mode.addItem("STTN vùng chọn", "sttn-auto")
+        self.visual_vsr_mode.addItem("LaMa", "lama")
+        self.visual_vsr_mode.addItem("ProPainter", "propainter")
+        self.visual_vsr_mode.setCurrentIndex(max(0,
+            self.visual_vsr_mode.findData(self.settings.get("visual_vsr_mode","sttn-det"))))
+        f.addRow("Model AI (VSR):", self.visual_vsr_mode)
+        vsr_row = QHBoxLayout()
+        self.visual_vsr_root = QLineEdit(self.settings.get("visual_vsr_root","") or "")
+        self.visual_vsr_root.setPlaceholderText("Thư mục VSR có backend/main.py")
+        vsr_row.addWidget(self.visual_vsr_root, 1)
+        browse_vsr = QPushButton("Chọn…")
+        browse_vsr.clicked.connect(self.browse_visual_vsr)
+        vsr_row.addWidget(browse_vsr)
+        f.addRow("VSR local:", vsr_row)
+        model_row = QHBoxLayout()
+        self.visual_lama_weight = QLineEdit(self.settings.get("visual_lama_weight_path","") or "")
+        self.visual_lama_weight.setPlaceholderText("Đường dẫn big-lama.pt")
+        model_row.addWidget(self.visual_lama_weight, 1)
+        browse_model = QPushButton("Chọn…")
+        browse_model.clicked.connect(self.browse_visual_lama)
+        model_row.addWidget(browse_model)
+        f.addRow("LaMa CPU checkpoint:", model_row)
+        self.visual_cleanup_auto_logo = QCheckBox("Thử nhận diện logo cố định (nguy cơ nhầm vùng; cần kiểm duyệt)")
+        self.visual_cleanup_auto_logo.setChecked(bool(self.settings.get("visual_cleanup_auto_logo", False)))
+        f.addRow(self.visual_cleanup_auto_logo)
+        self.visual_cleanup_mode = QComboBox()
+        self.visual_cleanup_mode.addItem("Làm mờ Gaussian (nhanh)", "blur")
+        self.visual_cleanup_mode.addItem("Inpaint Telea (xóa và lấp nền)", "inpaint")
+        self.visual_cleanup_mode.setCurrentIndex(max(0, self.visual_cleanup_mode.findData(
+            self.settings.get("visual_cleanup_mode", "blur"))))
+        f.addRow("Xử lý chữ/logo:", self.visual_cleanup_mode)
+        self.visual_cleanup_interval = QDoubleSpinBox()
+        self.visual_cleanup_interval.setRange(0.15, 3.0)
+        self.visual_cleanup_interval.setDecimals(2)
+        self.visual_cleanup_interval.setSingleStep(0.1)
+        self.visual_cleanup_interval.setSuffix(" giây")
+        self.visual_cleanup_interval.setValue(float(self.settings.get("visual_cleanup_interval_sec", 0.65)))
+        f.addRow("Lấy mẫu OCR mỗi:", self.visual_cleanup_interval)
+        manual_row = QHBoxLayout()
+        self.visual_cleanup_review_plan = QLineEdit(
+            self.settings.get("visual_cleanup_review_plan", "") or "")
+        self.visual_cleanup_review_plan.setPlaceholderText(
+            "Plan vùng chọn từ khung hình (hoặc JSON đã duyệt)")
+        manual_row.addWidget(self.visual_cleanup_review_plan, 1)
+        browse_review = QPushButton("Chọn…")
+        browse_review.clicked.connect(self.browse_visual_plan)
+        manual_row.addWidget(browse_review)
+        f.addRow("Plan vùng xử lý:", manual_row)
+        note_visual = QLabel(
+            "Chọn video → 'Chọn vùng chữ/logo cần làm mờ…' để kéo khoanh và xem trước "
+            "Blur/Mosaic/Inpaint. Chế độ tự chọn KHÔNG cần PaddleOCR; nút gợi ý OCR "
+            "mới cần model. Plan gắn với đúng video nguồn, đổi nguồn cần chọn lại. "
+            "Chú ý: chọn vùng rộng có thể làm mờ cả người/vật thể bên dưới.")
+        note_visual.setWordWrap(True)
+        f.addRow(note_visual)
         f.addRow(QLabel("CRF càng nhỏ video càng nét (file càng nặng)."))
         row = QHBoxLayout()
         self.ffmpeg_path = QLineEdit(self.settings.get("ffmpeg_path", "ffmpeg"))
@@ -419,6 +488,24 @@ class SettingsDialog(QDialog):
             "", "Font (*.ttf *.otf *.ttc);;Tất cả (*.*)")
         if path:
             self.sub_font.setText(path)
+
+    def browse_visual_lama(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn checkpoint LaMa", "", "TorchScript (*.pt);;Tất cả (*.*)")
+        if path:
+            self.visual_lama_weight.setText(path)
+
+    def browse_visual_vsr(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Chọn thư mục VSR")
+        if path:
+            self.visual_vsr_root.setText(path)
+
+    def browse_visual_plan(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn plan clean-plate đã duyệt",
+            "", "JSON (*.json);;Tất cả (*.*)")
+        if path:
+            self.visual_cleanup_review_plan.setText(path)
 
     def browse_ffmpeg(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Chọn ffmpeg")
@@ -473,7 +560,19 @@ class SettingsDialog(QDialog):
         self.tts_rate.setText(str(DEFAULTS["tts_rate"]))
         self.tts_pitch.setText(str(DEFAULTS["tts_pitch"]))
         self.tts_conc.setValue(int(DEFAULTS["tts_concurrency"]))
-        self.sub_mode.setCurrentIndex(0 if DEFAULTS["sub_mode"] == "burn" else 1)
+        self.sub_mode.setCurrentIndex(max(0, self.sub_mode.findData(DEFAULTS["sub_mode"])))
+        self.visual_cleanup_enabled.setChecked(bool(DEFAULTS["visual_cleanup_enabled"]))
+        self.visual_cleanup_backend.setCurrentIndex(max(0,
+            self.visual_cleanup_backend.findData(DEFAULTS["visual_cleanup_backend"])))
+        self.visual_vsr_mode.setCurrentIndex(max(0,
+            self.visual_vsr_mode.findData(DEFAULTS["visual_vsr_mode"])))
+        self.visual_vsr_root.setText(str(DEFAULTS["visual_vsr_root"]))
+        self.visual_lama_weight.setText(str(DEFAULTS["visual_lama_weight_path"]))
+        self.visual_cleanup_auto_logo.setChecked(bool(DEFAULTS["visual_cleanup_auto_logo"]))
+        self.visual_cleanup_mode.setCurrentIndex(max(0,
+            self.visual_cleanup_mode.findData(DEFAULTS["visual_cleanup_mode"])))
+        self.visual_cleanup_interval.setValue(float(DEFAULTS["visual_cleanup_interval_sec"]))
+        self.visual_cleanup_review_plan.setText(str(DEFAULTS["visual_cleanup_review_plan"]))
         self.sub_font.setText(str(DEFAULTS["sub_font"]))
         self.sub_font_size.setValue(int(DEFAULTS["sub_font_size"]))
         self.sub_font_color.setText(str(DEFAULTS["sub_font_color"]))
@@ -522,6 +621,15 @@ class SettingsDialog(QDialog):
             "tts_pitch": self.tts_pitch.text().strip() or "+0Hz",
             "tts_concurrency": self.tts_conc.value(),
             "sub_mode": self.sub_mode.currentData(),
+            "visual_cleanup_enabled": self.visual_cleanup_enabled.isChecked(),
+            "visual_cleanup_backend": self.visual_cleanup_backend.currentData(),
+            "visual_vsr_mode": self.visual_vsr_mode.currentData(),
+            "visual_vsr_root": self.visual_vsr_root.text().strip(),
+            "visual_lama_weight_path": self.visual_lama_weight.text().strip(),
+            "visual_cleanup_auto_logo": self.visual_cleanup_auto_logo.isChecked(),
+            "visual_cleanup_mode": self.visual_cleanup_mode.currentData(),
+            "visual_cleanup_interval_sec": self.visual_cleanup_interval.value(),
+            "visual_cleanup_review_plan": self.visual_cleanup_review_plan.text().strip(),
             "sub_font": self.sub_font.text().strip(),
             "sub_font_size": self.sub_font_size.value(),
             "sub_font_color": self.sub_font_color.text().strip().lstrip("#"),
