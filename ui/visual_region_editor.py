@@ -311,6 +311,7 @@ class VisualRegionEditor(QDialog):
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save|QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Save).setText("Lưu vùng & dùng khi render")
+        buttons.button(QDialogButtonBox.Cancel).setText("Hủy")
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
