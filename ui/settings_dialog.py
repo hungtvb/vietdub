@@ -394,7 +394,7 @@ class SettingsDialog(QDialog):
         self.crf.setRange(18, 28)
         self.crf.setValue(int(self.settings.get("crf", 20)))
         f.addRow("Chất lượng video (CRF):", self.crf)
-        self.visual_cleanup_enabled = QCheckBox("Tự động làm mờ chữ/logo gốc (cần PaddleOCR)")
+        self.visual_cleanup_enabled = QCheckBox("Xử lý chữ/logo gốc (OCR đề xuất hoặc tự chọn vùng)")
         self.visual_cleanup_enabled.setChecked(bool(self.settings.get("visual_cleanup_enabled", False)))
         f.addRow(self.visual_cleanup_enabled)
         self.visual_cleanup_backend = QComboBox()
@@ -449,15 +449,17 @@ class SettingsDialog(QDialog):
         self.visual_cleanup_review_plan = QLineEdit(
             self.settings.get("visual_cleanup_review_plan", "") or "")
         self.visual_cleanup_review_plan.setPlaceholderText(
-            "Tuỳ chọn: JSON clean-plate đã duyệt")
+            "Plan vùng chọn từ khung hình (hoặc JSON đã duyệt)")
         manual_row.addWidget(self.visual_cleanup_review_plan, 1)
         browse_review = QPushButton("Chọn…")
         browse_review.clicked.connect(self.browse_visual_plan)
         manual_row.addWidget(browse_review)
-        f.addRow("Plan clean-plate:", manual_row)
-        note_visual = QLabel("Tính năng thử nghiệm: xem lại các vùng trong visual_regions.json. "
-                             "Logo trong suốt/di chuyển có thể không phát hiện được; "
-                             "video VFR cần chuyển CFR trước. Mặc định tắt.")
+        f.addRow("Plan vùng xử lý:", manual_row)
+        note_visual = QLabel(
+            "Chọn video → 'Chọn vùng chữ/logo cần làm mờ…' để kéo khoanh và xem trước "
+            "Blur/Mosaic/Inpaint. Chế độ tự chọn KHÔNG cần PaddleOCR; nút gợi ý OCR "
+            "mới cần model. Plan gắn với đúng video nguồn, đổi nguồn cần chọn lại. "
+            "Chú ý: chọn vùng rộng có thể làm mờ cả người/vật thể bên dưới.")
         note_visual.setWordWrap(True)
         f.addRow(note_visual)
         f.addRow(QLabel("CRF càng nhỏ video càng nét (file càng nặng)."))
