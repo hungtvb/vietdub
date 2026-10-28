@@ -149,7 +149,9 @@ class OCRFrameWorker(QThread):
         try:
             from media.visual_cleanup import PaddleDetector
             detector = PaddleDetector()
-            self.suggestionsReady.emit(detector.detect(self.frame))
+            # PaddleDetector.detect() is a generator: materialize predictions
+            # HERE inside QThread, not when the UI handles the signal.
+            self.suggestionsReady.emit(list(detector.detect(self.frame)))
         except Exception as exc:
             self.detectionFailed.emit(str(exc))
 
@@ -172,6 +174,7 @@ class VisualRegionEditor(QDialog):
         self.other_regions = []
         self._ocr_worker = None
         self._ocr_boxes = []
+        self._ocr_frame_number = None
         self._loading = False
         self.setWindowTitle("VietDub — Chọn vùng chữ/logo cần xử lý")
         self.resize(1120, 740)
@@ -330,6 +333,13 @@ class VisualRegionEditor(QDialog):
 
     def _show_frame(self, frame_index):
         self.frame_number = max(0,min(self.count-1,int(frame_index)))
+        if self._ocr_frame_number != self.frame_number:
+            self._ocr_boxes = []
+            self.canvas.suggestions = []
+            self.suggestions.blockSignals(True)
+            self.suggestions.clear()
+            self.suggestions.addItem("Chưa có gợi ý OCR cho frame này")
+            self.suggestions.blockSignals(False)
         self.cap.set(cv2.CAP_PROP_POS_FRAMES,self.frame_number)
         ok,frame = self.cap.read()
         if not ok:
@@ -470,6 +480,7 @@ class VisualRegionEditor(QDialog):
         self.detect_btn.setEnabled(False)
         self.detect_btn.setText("Đang nhận diện OCR…")
         worker=OCRFrameWorker(self.frame,self)
+        worker.requested_frame = self.frame_number
         self._ocr_worker=worker
         worker.suggestionsReady.connect(self._ocr_ready)
         worker.detectionFailed.connect(self._ocr_failed)
@@ -478,6 +489,10 @@ class VisualRegionEditor(QDialog):
         worker.start()
 
     def _ocr_ready(self,items):
+        if (self._ocr_worker is None or
+                self._ocr_worker.requested_frame != self.frame_number):
+            return  # Discard suggestions from an earlier frame after scrubbing.
+        self._ocr_frame_number = self.frame_number
         self._ocr_boxes=[]
         for box,score in items:
             if score<.35:
