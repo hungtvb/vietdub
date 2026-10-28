@@ -455,7 +455,26 @@ class MainWindow(QMainWindow):
         self._active_info = info
         info["name"].setText(Path(path).name)
         info["name"].setToolTip(path)
-        self._source_feedback("Sẵn sàng lồng tiếng", "success")
+        review_path = Path(self.settings.get("visual_cleanup_review_plan", "") or "")
+        stale_review = False
+        if review_path.is_file():
+            try:
+                import json
+                old_plan = json.loads(review_path.read_text(encoding="utf-8"))
+                stale_review = old_plan.get("source") != str(Path(path).resolve())
+            except (OSError,TypeError,ValueError):
+                stale_review = True
+        if stale_review:
+            # Explicit manual masks must never be silently applied to a
+            # different video with similar geometry.
+            self.settings.set("visual_cleanup_review_plan","")
+            self.settings.set("visual_cleanup_enabled",False)
+            self.settings.save()
+            self._source_feedback(
+                "Đã đổi video: vùng chọn cũ tạm tắt. "
+                "Bấm 'Chọn vùng chữ/logo' để duyệt vùng cho video mới.")
+        else:
+            self._source_feedback("Sẵn sàng lồng tiếng", "success")
         self.source_status.setToolTip(path)
         info["dur"].setText(fmt_time(data["duration"]))
         info["res"].setText(data["resolution"])
