@@ -325,10 +325,17 @@ class VisualCleanup:
             from media.visual_temporal import TemporalCleanPlate, is_temporal_region
             from media.visual_user_regions import (
                 SOURCE as USER_SOURCE, validate_region, apply_user_regions)
+            from media.visual_tracking import track_region, TrackingError
             duration = float(plan["frames"]) / fps
+            tracking_cache = {}
             for r in plan["regions"]:
                 if r.get("source") == USER_SOURCE:
-                    validate_region(r, w, h, duration)
+                    checked = validate_region(r, w, h, duration)
+                    if checked["tracking"] == "template":
+                        # Strict fail-closed preprocessing: if frame matching
+                        # cannot be verified, DO NOT create a partially blurred
+                        # output or silently pin the mask in one place.
+                        tracking_cache[id(r)] = track_region(src, checked)
             reviewed_regions = [r for r in plan["regions"] if is_temporal_region(r)]
             clean_plate = (TemporalCleanPlate(
                 src, reviewed_regions, fps, w, h,
@@ -420,7 +427,20 @@ class VisualCleanup:
                             patch*(1-alpha[:,:,None]) +
                             blurred_patch*alpha[:,:,None],0,255).astype(np.uint8)
                 if user_regions:
-                    frame = apply_user_regions(frame, user_regions, frame_n, fps)
+                    positioned = []
+                    for r in user_regions:
+                        path = tracking_cache.get(id(r))
+                        if path is None:
+                            positioned.append(r)
+                        else:
+                            point = path.get(frame_n)
+                            if point is None:
+                                raise VisualCleanupError(
+                                    f"Missing approved tracking position at frame {frame_n}")
+                            positioned.append({
+                                **r, "box": list(point.box),
+                                "tracking": "static", "keyframes": []})
+                    frame = apply_user_regions(frame, positioned, frame_n, fps)
                 try:
                     proc.stdin.write(frame.tobytes())
                 except BrokenPipeError as exc:
