@@ -200,6 +200,15 @@ def test_tracker_ui_analyze_correct_keyframe_and_save(app,video,tmp_path,monkeyp
     assert worker.wait(15000)
     app.processEvents()
     assert len(dialog._track_results[0])==18
+    dialog.slider.setValue(7)
+    dialog.preview.setChecked(True)
+    app.processEvents()
+    from pathlib import Path
+    capture=Path("evidence/visual-region-editor")
+    capture.mkdir(parents=True,exist_ok=True)
+    assert dialog.grab().save(
+        str(capture/"02_verified_moving_mask_with_keyframe.png"),"PNG")
+    assert "Đạt:" in dialog.track_status.text()
     dialog._save()
     record=json.loads(dialog.plan_path.read_text(encoding="utf-8"))
     assert record["regions"][0]["tracking"]=="template"
