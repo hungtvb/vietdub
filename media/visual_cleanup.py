@@ -323,6 +323,12 @@ class VisualCleanup:
             if w != plan["width"] or h != plan["height"] or fps <= 0:
                 raise VisualCleanupError("Plan dimensions don't match video")
             from media.visual_temporal import TemporalCleanPlate, is_temporal_region
+            from media.visual_user_regions import (
+                SOURCE as USER_SOURCE, validate_region, apply_user_regions)
+            duration = float(plan["frames"]) / fps
+            for r in plan["regions"]:
+                if r.get("source") == USER_SOURCE:
+                    validate_region(r, w, h, duration)
             reviewed_regions = [r for r in plan["regions"] if is_temporal_region(r)]
             clean_plate = (TemporalCleanPlate(
                 src, reviewed_regions, fps, w, h,
@@ -350,18 +356,25 @@ class VisualCleanup:
                 current = [r for r in current if r["end"] > t]
                 if clean_plate is not None:
                     frame = clean_plate.apply(frame, frame_n)
-                # A manually reviewed clean-plate covering an OCR text box
-                # supersedes auto-blur; never erase freshly reconstructed
-                # background by applying the old OCR mask a second time.
+                # User-picked masks win over heuristic OCR when they overlap.
+                # Do NOT apply the OCR brightness threshold to user masks;
+                # its narrow glyph mask would leave a black subtitle band.
+                user_regions = [r for r in current
+                                if r.get("source") == USER_SOURCE]
                 approved = [r for r in current
-                            if r.get("source") in ("temporal-clean-plate", "flat-strip-repaint")]
+                            if r.get("source") in
+                            ("temporal-clean-plate", "flat-strip-repaint")]
                 standard = []
                 for r in current:
-                    if is_temporal_region(r):
+                    if is_temporal_region(r) or r.get("source") == USER_SOURCE:
                         continue
                     area = max(1, (r["box"][2]-r["box"][0]) *
                                   (r["box"][3]-r["box"][1]))
-                    if any(_overlap(r["box"], q["box"]) > .5*area for q in approved):
+                    if any(_overlap(r["box"], q["box"]) > .5*area
+                           for q in approved):
+                        continue
+                    if any(_overlap(r["box"], q["box"]) > .25*area
+                           for q in user_regions):
                         continue
                     standard.append(r)
                 if standard and self.config.mode == "inpaint":
@@ -396,6 +409,8 @@ class VisualCleanup:
                         frame[y1:y2,x1:x2] = np.clip(
                             patch*(1-alpha[:,:,None]) +
                             blurred_patch*alpha[:,:,None],0,255).astype(np.uint8)
+                if user_regions:
+                    frame = apply_user_regions(frame, user_regions, frame_n, fps)
                 try:
                     proc.stdin.write(frame.tobytes())
                 except BrokenPipeError as exc:
