@@ -60,6 +60,19 @@ def test_real_paddle_detects_and_blurs_burned_subtitles(tmp_path):
     after=frame_at(rendered,selected_frame)
     raw=list(detector.detect(before))
     assert raw, "Real PaddleOCR did not find the text at evidence timestamp"
+    from media.visual_detection import detect_frame_candidates
+    suggested = detect_frame_candidates(before, detector)
+    assert suggested, "Multi-pass OCR suggestions missing real detected text"
+    review_overlay = before.copy()
+    for box, score in suggested:
+        x1,y1,x2,y2 = box
+        cv2.rectangle(review_overlay,(x1,y1),(x2,y2),(0,180,255),3)
+        cv2.putText(review_overlay,f"REVIEW {score:.2f}",
+                    (x1,max(18,y1-5)),cv2.FONT_HERSHEY_SIMPLEX,
+                    .55,(0,180,255),2)
+    assert cv2.imwrite(str(Path("evidence/visual-cleanup-live") /
+                            "06_reviewable_multi_pass_OCR.png"), review_overlay) if Path(
+                            "evidence/visual-cleanup-live").is_dir() else True
     active=[r for r in plan["regions"]
             if r["kind"]=="subtitle" and r["start"] <= selected_frame/fps < r["end"]]
     assert active, "No temporal OCR track active at evidence timestamp"
@@ -104,6 +117,9 @@ def test_real_paddle_detects_and_blurs_burned_subtitles(tmp_path):
         "timestamp_seconds":selected_frame/fps,
         "raw_ocr_boxes":[{"box":list(map(int,box)),"confidence":float(score)}
                          for box,score in raw],
+        "reviewable_multi_pass_candidates": [
+            {"box":list(box),"confidence":float(score)}
+            for box,score in suggested],
         "temporal_regions":active,
         "mean_absolute_pixel_change_in_track":changed,
         "paths":sorted(p.name for p in evidence.glob("*.png")),
