@@ -148,10 +148,11 @@ class OCRFrameWorker(QThread):
     def run(self):
         try:
             from media.visual_cleanup import PaddleDetector
+            from media.visual_detection import detect_frame_candidates
             detector = PaddleDetector()
-            # PaddleDetector.detect() is a generator: materialize predictions
-            # HERE inside QThread, not when the UI handles the signal.
-            self.suggestionsReady.emit(list(detector.detect(self.frame)))
+            # Three-pass detection runs entirely in the worker thread.
+            self.suggestionsReady.emit(
+                detect_frame_candidates(self.frame, detector))
         except Exception as exc:
             self.detectionFailed.emit(str(exc))
 
@@ -292,7 +293,7 @@ class VisualRegionEditor(QDialog):
         self.list = QListWidget()
         self.list.currentRowChanged.connect(self._pick_region)
         r.addWidget(self.list,1)
-        self.detect_btn = QPushButton("✨ OCR: đề xuất vùng ở frame này")
+        self.detect_btn = QPushButton("✨ OCR nâng cao: tìm chữ ở frame này")
         self.detect_btn.clicked.connect(self._detect_frame)
         r.addWidget(self.detect_btn)
         self.suggestions = QComboBox()
@@ -525,7 +526,7 @@ class VisualRegionEditor(QDialog):
     def _ocr_finished(self):
         self._ocr_worker=None
         self.detect_btn.setEnabled(True)
-        self.detect_btn.setText("✨ OCR: đề xuất vùng ở frame này")
+        self.detect_btn.setText("✨ OCR nâng cao: tìm chữ ở frame này")
 
     def _select_suggestion(self,index):
         if index<=0 or index>len(self._ocr_boxes):
