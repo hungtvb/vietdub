@@ -34,3 +34,11 @@ jobs:
         run: |
           python -m compileall -q ui/visual_region_editor.py ui/main_window.py media/visual_user_regions.py media/visual_detection.py
           python -m pytest -vv -q tests/test_ui_visual_region_editor.py
+      - name: Upload real Qt editor screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-region-editor-offscreen-preview
+          path: evidence/visual-region-editor/
+          retention-days: 30
+          if-no-files-found: warn
