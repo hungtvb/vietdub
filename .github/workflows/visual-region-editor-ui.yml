@@ -5,6 +5,7 @@ on:
       - 'ui/visual_region_editor.py'
       - 'ui/main_window.py'
       - 'media/visual_user_regions.py'
+      - 'media/visual_tracking.py'
       - 'media/visual_detection.py'
       - 'tests/test_ui_visual_region_editor.py'
       - '.github/workflows/visual-region-editor-ui.yml'
@@ -32,7 +33,7 @@ jobs:
       - name: Test drag selection, letterboxing, time and save/reopen
         timeout-minutes: 4
         run: |
-          python -m compileall -q ui/visual_region_editor.py ui/main_window.py media/visual_user_regions.py media/visual_detection.py
+          python -m compileall -q ui/visual_region_editor.py ui/main_window.py media/visual_user_regions.py media/visual_tracking.py media/visual_detection.py
           python -m pytest -vv -q tests/test_ui_visual_region_editor.py
       - name: Upload real Qt editor screenshot
         if: always()
