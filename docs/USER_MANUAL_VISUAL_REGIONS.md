@@ -1,5 +1,85 @@
 # VietDub: chọn vùng làm mờ / xóa chữ, logo trực tiếp trên video
 
+## NEW: Follow a moving logo or on-screen caption (tracking)
+
+The editor now supports **Vùng cố định trên khung hình** (default, safer for
+burned-in TV logos), or **Tự bám theo vùng + keyframe** for moving text.
+
+1. Choose a distinctive text/logo rectangle on its **first visible frame**.
+   Set precise start/end seconds, then choose the moving/track mode.
+2. Click **Thêm vùng** / **Cập nhật**.
+3. Click **▶ Phân tích tracking**. The work runs in a background thread and
+   checks each decoded frame, the template-correlation confidence, a reverse
+   matching consistency check and hard scene changes.
+4. Scrub through the video to inspect the **green tracked rectangle** and
+   toggle Blur/Mosaic/Telea preview. The UI **does not pretend a moving mask
+   is static** before tracking is verified.
+5. If the rectangle drifts, draw it at the correct location on that frame and
+   click **◆ Đặt keyframe tại đây** (the box must stay the same size).
+   Analyze again; the manual keyframe restarts matching from that frame.
+6. If the scene changes, **split the region at the cut** and add a new
+   reviewed interval. Do not let a mask continue onto a different person.
+7. Saving a moving plan is blocked until every moving region has been
+   successfully analyzed in this editing session. Rendering independently
+   recomputes and validates the track: a stale or unverified JSON plan
+   cannot force a wrong blur through the renderer.
+
+### Reviewed moving region JSON
+
+```json
+{
+  "source": "user",
+  "start": 0.0,
+  "end": 3.0,
+  "box": [45, 54, 111, 85],
+  "kind": "logo",
+  "mode": "blur",
+  "strength": 14,
+  "feather": 2.0,
+  "tracking": "template",
+  "keyframes": [
+    {"frame": 0, "box": [45, 54, 111, 85]},
+    {"frame": 30, "box": [62, 59, 128, 90]}
+  ]
+}
+```
+
+The tracking code is in `media/visual_tracking.py`. A confidence
+below the approved threshold, low-texture logo, reverse-match drift, invalid
+geometry, or probable hard cut **fails closed**. The renderer doesn't
+fall back to stationary blur. On the audit side,
+`media/visual_acceptance.py` recomputes the exact path to
+exclude the **moving mask**, not merely the original rectangle, when
+checking whether unrelated source pixels were modified.
+
+Limitations: simple template matching works best when the watermark remains
+legible, similar in shape/scale and within the nearby search radius. Rotation,
+perspective, scale changes, temporary occlusion, and sharp animation can
+cause a deliberate stop. User corrections/keyframes are the supported way
+to re-anchor; this is **not** a segmentation, object identity or DeepSORT
+tracker.
+
+### Output-led evidence
+
+A synthetic moving "V D" watermark was composited over **real** Chinese
+interview footage. The source was tracked through 72 frames (2.88 seconds
+at 25fps), with **0 pixel position error** against the known synthetic
+ground truth and minimal correlation confidence >99%. The H.264 baseline
+before/after and 7-timepoint visual contact sheet are delivered in the
+ChatGPT conversation. On a longer input that included an actual broadcast
+shot change at frame 84, the tracker **rejected the cross-shot interpolation**
+rather than blurring a wrong person/background.
+
+CI tests use deterministic generated encoded videos with known trajectories:
+exact position error, corrected keyframes, frame-loss checks, cross-shot
+failure, confidence checks and end-to-end encoded blur, plus Qt offscreen
+background tracking and save validation. These sample-specific results are
+not a universal accuracy benchmark.
+
+---
+
+
+
 > Feature in PR #6, branch `feat/visual-cleanup-engine`.
 > This is independent of the video dubbing track and **does not require
 > PaddleOCR if the user manually selects a rectangle**.
