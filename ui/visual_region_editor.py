@@ -552,6 +552,95 @@ class VisualRegionEditor(QDialog):
             0, self.tracking.findData(r.get("tracking", "static"))))
         self._show_frame(self.frame_number)
 
+    def _add_keyframe(self):
+        index = self.list.currentRow()
+        if index < 0 or self.regions[index].get("tracking") != "template":
+            QMessageBox.information(
+                self, "Tracking", "Chọn một vùng đang ở chế độ bám theo.")
+            return
+        region = self.regions[index]
+        first = round(region["start"]*self.fps)
+        last = round(region["end"]*self.fps)
+        if not first <= self.frame_number < last:
+            QMessageBox.warning(
+                self, "Keyframe", "Frame hiện tại nằm ngoài thời gian vùng.")
+            return
+        box = [self.coords[key].value()
+               for key in ("x1","y1","x2","y2")]
+        size = (box[2]-box[0], box[3]-box[1])
+        reference = region["box"]
+        reference_size = (reference[2]-reference[0], reference[3]-reference[1])
+        if size != reference_size:
+            QMessageBox.warning(
+                self, "Keyframe", "Keyframe phải giữ nguyên kích thước vùng. "
+                "Di chuyển cả khung hình chữ nhật, không kéo giãn nó.")
+            return
+        keys = [k for k in region.get("keyframes", [])
+                if k["frame"] != self.frame_number]
+        keys.append({"frame": self.frame_number, "box": box})
+        keys.sort(key=lambda k:k["frame"])
+        updated = {**region, "keyframes": keys}
+        if self.frame_number == first:
+            updated["box"] = box
+        try:
+            self.regions[index] = validate_region(
+                updated,self.meta["width"],self.meta["height"],self.duration)
+        except UserRegionError as exc:
+            QMessageBox.warning(self, "Keyframe không hợp lệ", str(exc))
+            return
+        self._track_results.pop(index, None)
+        self.track_status.setText(
+            f"Đã lưu keyframe {self.frame_number}. "
+            "Bấm Phân tích tracking để kiểm tra lại toàn bộ vùng.")
+        self._refresh_regions()
+        self.list.setCurrentRow(index)
+        self._show_frame(self.frame_number)
+
+    def _analyze_tracking(self):
+        if self._track_worker is not None:
+            return
+        index = self.list.currentRow()
+        if index < 0 or self.regions[index].get("tracking") != "template":
+            QMessageBox.information(
+                self, "Tracking", "Chọn vùng bám theo và bấm Cập nhật trước.")
+            return
+        worker = TrackingWorker(self.source, self.regions[index], index, self)
+        self._track_worker = worker
+        self.track_btn.setEnabled(False)
+        self.track_status.setText(
+            "Đang kiểm tra matching, cảnh cắt và độ tin cậy từng frame…")
+        worker.trackingReady.connect(self._tracking_ready)
+        worker.trackingFailed.connect(self._tracking_failed)
+        worker.finished.connect(self._tracking_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _tracking_ready(self, points):
+        worker = self._track_worker
+        if worker is None or worker.index >= len(self.regions):
+            return
+        if self.regions[worker.index] != worker.region:
+            self.track_status.setText(
+                "Vùng đã thay đổi trong lúc phân tích. Hãy chạy lại tracking.")
+            return
+        self._track_results[worker.index] = points
+        confidences = [p.confidence for p in points.values()]
+        self.track_status.setText(
+            f"Đạt: {len(points)} frame, độ tin cậy nhỏ nhất "
+            f"{min(confidences):.1%}. Kiểm tra những frame khó bằng timeline.")
+        self._show_frame(self.frame_number)
+
+    def _tracking_failed(self, message):
+        self.track_status.setText("Tracking chưa đạt: "+message)
+        QMessageBox.warning(
+            self, "Tracking chưa đạt",
+            message+"\n\nHãy chia khoảng tại điểm cắt cảnh hoặc "
+            "khoanh lại vùng và đặt keyframe sửa vị trí.")
+
+    def _tracking_finished(self):
+        self._track_worker = None
+        self.track_btn.setEnabled(True)
+
     def _detect_frame(self):
         if self.frame is None or self._ocr_worker is not None:
             return
@@ -625,6 +714,14 @@ class VisualRegionEditor(QDialog):
         try:
             clean = [validate_region(x,self.meta["width"],
                         self.meta["height"],self.duration) for x in self.regions]
+            for index, region in enumerate(clean):
+                if (region.get("tracking") == "template"
+                        and index not in self._track_results):
+                    QMessageBox.warning(
+                        self, "Chưa kiểm tra chuyển động",
+                        f"Vùng {index+1} chưa có tracking hợp lệ. "
+                        "Hãy chọn vùng → Phân tích tracking trước khi lưu.")
+                    return
             plan={**self.meta,"regions":self.other_regions+clean,
                   "reviewed":True}
             self.plan_path.parent.mkdir(parents=True,exist_ok=True)
@@ -640,6 +737,8 @@ class VisualRegionEditor(QDialog):
 
     def closeEvent(self,event):  # noqa: N802
         self.timer.stop()
+        if self._track_worker is not None:
+            self._track_worker.wait()
         if self._ocr_worker is not None:
             # The decoder frame copy is owned by the thread; let OCR finish
             # before the dialog and its QObject parent are destroyed.
@@ -651,6 +750,8 @@ class VisualRegionEditor(QDialog):
 
     def done(self,result):
         self.timer.stop()
+        if self._track_worker is not None:
+            self._track_worker.wait()
         if self._ocr_worker is not None:
             self._ocr_worker.wait()
         if self.cap is not None:
