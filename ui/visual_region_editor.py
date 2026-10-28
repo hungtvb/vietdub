@@ -157,6 +157,25 @@ class OCRFrameWorker(QThread):
             self.detectionFailed.emit(str(exc))
 
 
+class TrackingWorker(QThread):
+    trackingReady = Signal(object)
+    trackingFailed = Signal(str)
+
+    def __init__(self, video, region, index, parent=None):
+        super().__init__(parent)
+        self.video = video
+        self.region = dict(region)
+        self.index = index
+
+    def run(self):
+        try:
+            from media.visual_tracking import track_region
+            points = track_region(self.video, self.region)
+            self.trackingReady.emit(points)
+        except Exception as exc:
+            self.trackingFailed.emit(str(exc))
+
+
 class VisualRegionEditor(QDialog):
     """Draw/edit blur regions and save a source-bound JSON review plan."""
 
@@ -174,6 +193,8 @@ class VisualRegionEditor(QDialog):
         self.regions = []
         self.other_regions = []
         self._ocr_worker = None
+        self._track_worker = None
+        self._track_results = {}  # index -> frame number -> validated TrackPoint
         self._ocr_boxes = []
         self._ocr_frame_number = None
         self._loading = False
@@ -276,7 +297,23 @@ class VisualRegionEditor(QDialog):
         self.feather.setSingleStep(.5)
         self.feather.setValue(2)
         form.addRow("Mềm cạnh:",self.feather)
+        self.tracking = QComboBox()
+        self.tracking.addItem("Vùng cố định trên khung hình", "static")
+        self.tracking.addItem("Tự bám theo vùng + keyframe", "template")
+        form.addRow("Chuyển động:", self.tracking)
         r.addLayout(form)
+        movement_row = QHBoxLayout()
+        self.track_btn = QPushButton("▶ Phân tích tracking")
+        self.track_btn.clicked.connect(self._analyze_tracking)
+        movement_row.addWidget(self.track_btn)
+        self.keyframe_btn = QPushButton("◆ Đặt keyframe tại đây")
+        self.keyframe_btn.clicked.connect(self._add_keyframe)
+        movement_row.addWidget(self.keyframe_btn)
+        r.addLayout(movement_row)
+        self.track_status = QLabel(
+            "Chọn chế độ bám theo để phân tích và xem đường đi từng frame.")
+        self.track_status.setWordWrap(True)
+        r.addWidget(self.track_status)
 
         row = QHBoxLayout()
         self.add_btn = QPushButton("＋ Thêm vùng")
