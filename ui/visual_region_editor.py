@@ -385,18 +385,36 @@ class VisualRegionEditor(QDialog):
             self.status.setText("Không đọc được frame; kiểm tra định dạng video.")
             return
         self.frame = frame
+        positioned = []
+        unverified = []
+        for index, region in enumerate(self.regions):
+            if not (round(region["start"]*self.fps)<=self.frame_number<
+                    round(region["end"]*self.fps)):
+                continue
+            if region.get("tracking") == "template":
+                point = self._track_results.get(index, {}).get(self.frame_number)
+                if point is None:
+                    unverified.append(index+1)
+                    continue
+                positioned.append({
+                    **region, "box": list(point.box),
+                    "tracking": "static", "keyframes": []})
+            else:
+                positioned.append(region)
         canvas_frame = frame
-        if self.preview.isChecked():
+        if self.preview.isChecked() and positioned:
             try:
                 canvas_frame = apply_user_regions(
-                    frame,self.regions,self.frame_number,self.fps)
+                    frame, positioned, self.frame_number, self.fps)
             except UserRegionError as exc:
                 self.status.setText(f"Preview lỗi: {exc}")
+        if unverified:
+            self.track_status.setText(
+                "Chưa có tracking đã xác minh cho vùng "+
+                ", ".join(map(str,unverified))+
+                ". Bấm Phân tích tracking; không dùng vị trí tĩnh thay thế.")
         self.canvas.set_frame(canvas_frame)
-        self.canvas.regions = [
-            r["box"] for r in self.regions
-            if round(r["start"]*self.fps)<=self.frame_number<
-               round(r["end"]*self.fps)]
+        self.canvas.regions = [region["box"] for region in positioned]
         self.canvas.update()
         minute,second = divmod(self.frame_number/self.fps,60)
         self.position.setText(f"{int(minute):02d}:{second:06.3f} "
@@ -449,11 +467,25 @@ class VisualRegionEditor(QDialog):
     def _current_record(self):
         box = [self.coords[key].value()
                for key in ("x1","y1","x2","y2")]
+        tracking = self.tracking.currentData()
+        first = int(round(self.from_sec.value()*self.fps))
+        keys = []
+        selected = self.list.currentRow()
+        if tracking == "template":
+            if 0 <= selected < len(self.regions):
+                previous = self.regions[selected]
+                if (previous.get("tracking") == "template"
+                        and previous["box"] == box
+                        and round(previous["start"]*self.fps) == first):
+                    keys = list(previous.get("keyframes", []))
+            if not any(k["frame"] == first for k in keys):
+                keys.insert(0, {"frame": first, "box": box})
         return validate_region({
             "source":"user","box":box,
             "start":self.from_sec.value(),"end":self.to_sec.value(),
             "kind":self.kind.currentData(),"mode":self.mode.currentData(),
-            "strength":self.strength.value(),"feather":self.feather.value()
+            "strength":self.strength.value(),"feather":self.feather.value(),
+            "tracking":tracking, "keyframes":keys
         },self.meta["width"],self.meta["height"],self.duration)
 
     def _add(self):
@@ -463,6 +495,7 @@ class VisualRegionEditor(QDialog):
             QMessageBox.warning(self,"Vùng không hợp lệ",str(exc))
             return
         self.regions.append(item)
+        self._track_results.clear()
         self._refresh_regions()
         self.list.setCurrentRow(len(self.regions)-1)
         self._show_frame(self.frame_number)
@@ -478,6 +511,7 @@ class VisualRegionEditor(QDialog):
             QMessageBox.warning(self,"Vùng không hợp lệ",str(exc))
             return
         self.regions[index]=item
+        self._track_results.pop(index,None)
         self._refresh_regions()
         self.list.setCurrentRow(index)
         self._show_frame(self.frame_number)
@@ -487,6 +521,7 @@ class VisualRegionEditor(QDialog):
         if index<0:
             return
         self.regions.pop(index)
+        self._track_results.clear()
         self._refresh_regions()
         self._show_frame(self.frame_number)
 
@@ -497,6 +532,7 @@ class VisualRegionEditor(QDialog):
             x1,y1,x2,y2=region["box"]
             self.list.addItem(
                 f'{region["kind"]} · {region["mode"]} · '
+                f'{region.get("tracking", "static")} · '
                 f'{region["start"]:.2f}–{region["end"]:.2f}s '
                 f'· [{x1},{y1}→{x2},{y2}]')
         self.list.blockSignals(False)
@@ -512,6 +548,9 @@ class VisualRegionEditor(QDialog):
         self.mode.setCurrentIndex(max(0,self.mode.findData(r["mode"])))
         self.strength.setValue(r["strength"])
         self.feather.setValue(r["feather"])
+        self.tracking.setCurrentIndex(max(
+            0, self.tracking.findData(r.get("tracking", "static"))))
+        self._show_frame(self.frame_number)
 
     def _detect_frame(self):
         if self.frame is None or self._ocr_worker is not None:
