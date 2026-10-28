@@ -762,7 +762,14 @@ class MainWindow(QMainWindow):
             self.settings.set("visual_cleanup_enabled",True)
             # User-picked blur/inpaint is handled by the CV renderer, which
             # does not require OCR model weights when a reviewed plan exists.
-            self.settings.set("visual_cleanup_backend","cv")
+            import json
+            final_plan=json.loads(preferred.read_text(encoding="utf-8"))
+            neural_present=any(r.get("source")=="neural-window"
+                               for r in final_plan.get("regions", []))
+            # A source may contain pre-existing neural review regions.
+            # Preserve them via Hybrid rather than silently dropping them.
+            self.settings.set("visual_cleanup_backend",
+                              "hybrid" if neural_present else "cv")
             self.settings.save()
             self._source_feedback(
                 f"Đã lưu {len(dialog.regions)} vùng chọn. "
