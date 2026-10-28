@@ -12,7 +12,7 @@ from tempfile import TemporaryDirectory
 from media.visual_cleanup import Config, VisualCleanup
 from media.visual_lama_cpu import render_lama_cpu
 
-CV_SOURCES={"temporal-clean-plate","exemplar-patch","flat-strip-repaint"}
+CV_SOURCES={"user","temporal-clean-plate","exemplar-patch","flat-strip-repaint"}
 NEURAL_SOURCE="neural-window"
 
 
