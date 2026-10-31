@@ -450,8 +450,16 @@ class Orchestrator:
         self.logger.info("dịch xong bằng %s: %d câu", used, len(segments))
 
     def _synthesize_tts(self, tts, segments, tts_dir):
-        """Use Edge-TTS only; surface a failure so the job can be retried."""
-        return tts.synthesize(segments, tts_dir)
+        """Fail closed: a missing synthesized utterance is not silent dub."""
+        voiced = tts.synthesize(segments, tts_dir)
+        for seg in voiced:
+            if not seg.audio_vi or not Path(seg.audio_vi).is_file():
+                raise RuntimeError(
+                    f"Câu {seg.index} không có file giọng đọc TTS; "
+                    "không thay bằng khoảng lặng. Hãy kiểm tra dịch vụ TTS "
+                    "và thử lại từ stage TTS."
+                )
+        return voiced
 
     def _fit_and_track(self, segments, tts_dir, synthesize_fn):
         """Split-and-retry loop for too-long sentences (edge case 1).
@@ -514,9 +522,13 @@ class Orchestrator:
         from tts import edge_tts as metts
         from tts import duration_fit as mfit
         from media import extract as mextract
+        from core.release_quality import assert_dub_ready
         job = self.job
         s = self.settings
         segments = pio.load_segments(job.job_dir, "translate") or []
+        # Runs AFTER any manual translation review and BEFORE paid/remote TTS.
+        # Overnight mode must not silently export incomplete Chinese lines.
+        assert_dub_ready(segments)
         tts_dir = job.stages_dir / "tts"
         tts = metts.EdgeTTS(
             voice_male=s.get("voice_male"), voice_female=s.get("voice_female"),

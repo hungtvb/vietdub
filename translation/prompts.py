@@ -78,8 +78,11 @@ Requirements:
   is uncertain. Use neighboring lines to understand them, but do not invent a
   correction; translate only what the source supports.
 - Preserve the exact meaning, facts, names, numbers, dates, units, negation, uncertainty, and speaker intent. Do not add explanations, omit details, or invent context.
-- Translate into natural spoken Vietnamese that is concise and easy to dub, without making the line so short that meaning is lost.
-- Keep names consistent with earlier translated context and the supplied proper-name list. Do not translate a person's or place's name by its literal meaning.
+- Translate every meaningful clause into natural spoken Vietnamese that is concise and easy to dub; do not omit facts to fit a short slot.
+- The output text_vi MUST use Vietnamese-readable writing. Do NOT leave Chinese Hanzi, Japanese kana or Korean Hangul anywhere in text_vi, including inside an otherwise Vietnamese sentence.
+- Keep names consistent with earlier translated context and the supplied proper-name list. Render Chinese proper names with their conventional Vietnamese reading or Latin transliteration; do not translate the name's literal meaning and do not copy source-script characters into text_vi.
+- Preserve question/answer intent, negation, requests, and speaker turn-taking even when source punctuation is uncertain. Do not replace a question with its supposed answer.
+- Check each target id for source-script remnants and omitted clauses before returning JSON.
 - Keep each source segment as exactly one output segment. Do not merge, split, reorder, or drop lines.
 - No commentary, no explanations.
 
@@ -88,9 +91,11 @@ Return ONLY valid JSON: { "translations": [ { "id": 0, "text_vi": "..." } ] }"""
 # Edge case 9: proper names must be kept / transliterated, never translated
 # by meaning. Appended to the translate system prompt.
 PROPER_NOUN_RULE = """
-Proper-name rule: keep Chinese proper names of people and places as-is or
-transliterate them into Han-Viet reading (e.g. 乌兰察布 -> O Lan Sat Bo /
-Ô Lan Sát Bố). NEVER translate a proper name by its literal meaning.
+Proper-name rule: preserve each person's and place's identity and spelling
+consistently; write Chinese names in conventional Vietnamese or Latin-letter
+transliteration (e.g. 乌兰察布 -> Ô Lan Sát Bố). NEVER translate a proper name
+by its literal meaning. Do not leave source Hanzi in text_vi, even when the
+name was supplied as Hanzi in the source-language proper-name list.
 {custom_names}"""
 
 CUSTOM_NAMES_TMPL = ("Additionally, the user provided these known names - always "

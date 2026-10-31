@@ -822,13 +822,15 @@ class BaseTranslator:
 
         if (source and normalize(source) == normalize(target)
                 and re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", source)):
-            custom = {normalize(str(name))
-                      for name in (proper_nouns or []) if name}
-            if normalize(source) not in custom:
-                return True
-        han = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", target))
-        latin = len(re.findall(r"[A-Za-zÀ-ỹ]", target))
-        return han >= 3 and han > latin
+            return True
+        # Even a single source-script word inside otherwise fluent Vietnamese
+        # is an untranslated fragment. Relative script ratios previously let
+        # code-switched lines slip through when the Vietnamese part was long.
+        # Vietnamese TTS cannot be asked to pronounce unconverted Hanzi names.
+        return bool(re.search(
+            r"[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]",
+            target,
+        ))
 
     @staticmethod
     def _pronoun_hit(text: str, pronoun: str) -> bool:
@@ -938,8 +940,10 @@ class BaseTranslator:
                 user + "\n\nCorrection for the previous attempt: "
                 + f"complete missing target ids {missing}. Return each id "
                 "exactly once with non-empty Vietnamese text. Fully "
-                "translate any target line that was left mostly in "
-                "Chinese. Preserve meaning and proper names.")
+                "translate any leftover Chinese source-script fragments, even "
+                "one word embedded in fluent Vietnamese. For proper names use "
+                "Vietnamese or Latin spelling, not source Hanzi. Preserve "
+                "meaning, speaker intent and question form.")
         log.warning("batch dịch còn %d/%d câu sau %d lần (%s), dịch lẻ "
                     "phần thiếu", len(want_ids) - len(best), len(want_ids),
                     TRANSLATE_RETRIES, last_err[:120])
@@ -971,7 +975,7 @@ class BaseTranslator:
                 text_vi = text_vi.strip()
                 if self._looks_untranslated(seg.text_src, text_vi,
                                             self.proper_nouns):
-                    raise ValueError("câu dịch lẻ vẫn chủ yếu là tiếng Trung")
+                    raise ValueError("câu dịch lẻ vẫn còn chữ nguồn chưa dịch")
                 return text_vi
             except (ValueError, KeyError, TypeError) as e:
                 log.warning("dịch lẻ câu %d lần %d lỗi: %s",
@@ -979,7 +983,9 @@ class BaseTranslator:
                 retry_user = (
                     user + "\n\nCorrection: return exactly this id once "
                     "with non-empty Vietnamese text. Translate the source "
-                    "fully while preserving meaning and proper names.")
+                    "fully into Vietnamese-readable writing (no Hanzi or "
+                    "other source scripts), preserve full meaning, questions "
+                    "and proper names as Vietnamese/Latin transliterations.")
         return None
 
 
