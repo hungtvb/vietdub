@@ -1,0 +1,82 @@
+name: VietDub Windows real package smoke
+on:
+  push:
+    branches: [ci/windows-release-smoke-20261031]
+  pull_request:
+    paths:
+      - 'packaging/**'
+      - 'requirements.txt'
+      - 'main.py'
+      - '.github/workflows/windows-release-smoke.yml'
+
+jobs:
+  windows-onedir:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      QT_QPA_PLATFORM: offscreen
+      VIETDUB_CONSOLE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Check FFmpeg and FFprobe availability
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg --no-progress -y
+          }
+          ffmpeg -version | Select-Object -First 1
+          ffprobe -version | Select-Object -First 1
+          New-Item -ItemType Directory -Force packaging/bin | Out-Null
+          # Install real binaries, not Chocolatey shims, into the app package.
+          $ffmpeg = (Get-Command ffmpeg -ErrorAction Stop).Source
+          $ffprobe = (Get-Command ffprobe -ErrorAction Stop).Source
+          if ($ffmpeg -match "\\chocolatey\\bin\\") {
+            $real = Get-ChildItem "C:\\ProgramData\\chocolatey\\lib\\ffmpeg" -Recurse -Filter ffmpeg.exe |
+              Where-Object { $_.FullName -notmatch "\\tools\\ffmpeg\\bin\\ffmpeg.exe\\." } |
+              Select-Object -First 1 -ExpandProperty FullName
+            if ($real) { $ffmpeg = $real; $ffprobe = Join-Path (Split-Path $real) "ffprobe.exe" }
+          }
+          if (!(Test-Path $ffmpeg) -or !(Test-Path $ffprobe)) { throw "Missing real ffmpeg/ffprobe executable" }
+          Copy-Item $ffmpeg packaging/bin/ffmpeg.exe -Force
+          Copy-Item $ffprobe packaging/bin/ffprobe.exe -Force
+      - name: Install full runtime and PyInstaller
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+      - name: Compile and package Windows app
+        shell: pwsh
+        run: |
+          python -m compileall -q main.py core asr translation tts ui media project
+          python -m PyInstaller packaging/vietdub.spec --noconfirm
+          if (!(Test-Path "dist/VietDub/VietDub.exe")) { throw "No Windows EXE produced" }
+          if (!(Test-Path "dist/VietDub/ffmpeg.exe")) { throw "ffmpeg not bundled" }
+          if (!(Test-Path "dist/VietDub/ffprobe.exe")) { throw "ffprobe not bundled" }
+          Get-Item "dist/VietDub/VietDub.exe" | Select-Object Name,Length
+      - name: UI cold-start smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $proc = Start-Process -FilePath "$pwd/dist/VietDub/VietDub.exe" -WorkingDirectory "$pwd/dist/VietDub" -PassThru
+          Start-Sleep -Seconds 7
+          if ($proc.HasExited) { throw "Windows UI exited during smoke: $($proc.ExitCode)" }
+          Stop-Process -Id $proc.Id -Force
+      - name: Upload build summary and executable metadata
+        if: always()
+        shell: pwsh
+        run: |
+          $d = "build-evidence"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Get-ChildItem "dist/VietDub" -ErrorAction SilentlyContinue |
+            Select-Object Name,Length | ConvertTo-Json | Set-Content "$d/file-list.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vietdub-windows-build-evidence
+          path: build-evidence/
+          retention-days: 7
