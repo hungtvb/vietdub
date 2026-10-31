@@ -1,0 +1,38 @@
+name: VieNeu TTS integration
+
+on:
+  pull_request:
+    paths:
+      - 'tts/**'
+      - 'core/**'
+      - 'project/**'
+      - 'ui/**'
+      - 'tests/test_vieneu_tts.py'
+      - 'tests/test_vieneu_ui.py'
+      - 'requirements-vieneu.txt'
+      - '.github/workflows/vieneu-tts.yml'
+  push:
+    branches:
+      - feat/vieneu-tts-v3
+
+jobs:
+  provider-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install minimal test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest numpy soundfile PySide6
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg libegl1 libopengl0 libxkbcommon-x11-0 libdbus-1-3
+          ffmpeg -version
+      - name: Compile touched Python modules
+        run: python -m compileall -q core project tts ui tests/test_vieneu_tts.py tests/test_vieneu_ui.py
+      - name: VieNeu provider + GUI smoke tests (no actual model download)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q -rs tests/test_vieneu_tts.py tests/test_vieneu_ui.py tests/test_duration_fit.py tests/test_checkpoint.py tests/test_edge_tts.py tests/test_orchestrator.py

@@ -146,6 +146,11 @@ def apply_plan(decisions: List[Tuple[Segment, str, float]]) -> None:
     for seg, action, factor in decisions:
         if action == "atempo" or (action == "overflow" and factor != 1.0):
             apply_atempo(seg.audio_vi, factor)
+            # The sentence cache stores ORIGINAL (unfitted) TTS audio.
+            # atempo changes this WAV in place, so its manifest must be
+            # invalidated; rerunning TTS will synthesize fresh audio rather
+            # than compress a previously compressed WAV a second time.
+            Path(seg.audio_vi).with_suffix(".md5").unlink(missing_ok=True)
             log.debug("câu %d: atempo=%.3f (%s)", seg.index, factor, action)
 
 
