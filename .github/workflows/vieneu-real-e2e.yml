@@ -1,0 +1,43 @@
+name: VieNeu v3 real-model CPU E2E
+on:
+  push:
+    branches: [feat/vieneu-tts-v3]
+  pull_request:
+    paths:
+      - 'ci_vieneu_real_e2e.py'
+      - 'tts/vieneu_tts.py'
+      - 'requirements-vieneu.txt'
+      - '.github/workflows/vieneu-real-e2e.yml'
+jobs:
+  real-model-cpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    permissions:
+      contents: read
+    env:
+      HF_HUB_DISABLE_TELEMETRY: '1'
+      HF_HUB_DOWNLOAD_TIMEOUT: '120'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ffmpeg and real VieNeu SDK
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install -U pip
+          python -m pip install -r requirements-vieneu.txt
+          python -m pip install numpy soundfile
+      - name: CPU ONNX real model inference, transcode and MP4
+        run: python ci_vieneu_real_e2e.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vieneu-v3-real-inference-evidence
+          path: |
+            ci-vieneu-real/*.json
+            ci-vieneu-real/*.wav
+            ci-vieneu-real/*.mp4
+          if-no-files-found: warn
+          retention-days: 10
