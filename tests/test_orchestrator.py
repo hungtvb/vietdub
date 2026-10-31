@@ -54,7 +54,11 @@ def _job(tmp_path, monkeypatch, **proj_kw):
     monkeypatch.setattr(jobmod, "JOBS_ROOT", tmp_path / "jobs")
     kw = dict(review_stops=True, overnight=False)
     kw.update(proj_kw)
-    job = Job(project=Project(video_in="/tmp/x.mp4", **kw))
+    # Use a real per-test source identity. Recent core recovery logic hashes
+    # the input and rejects the previous nonexistent /tmp/x.mp4 fixture.
+    source = tmp_path / "source-video.mp4"
+    source.write_bytes(b"test-fixture-source")
+    job = Job(project=Project(video_in=str(source), **kw))
     return job
 
 
