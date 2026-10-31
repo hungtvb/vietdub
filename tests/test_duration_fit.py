@@ -111,7 +111,7 @@ def test_severe_short_slot_overflow_is_blocked(tmp_path):
     w = _wav(tmp_path / "too_long.wav", 1.2)
     seg = Segment(index=8, start=0.0, end=0.3, speaker=0,
                   text_vi="Một câu quá dài.", audio_vi=str(w))
-    with pytest.raises(mfit.SevereOverflowError, match="1"):
+    with pytest.raises(mfit.SevereOverflowError, match="4.00x"):
         mfit.plan([seg])
 
 
