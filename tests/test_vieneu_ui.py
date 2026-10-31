@@ -36,7 +36,9 @@ def test_switch_tts_engines_keeps_independent_voice_choices(app, tmp_path, monke
 
         settings.set("vieneu_backend", "onnx")
         settings.set("vieneu_precision", "fp32")
-        job = win._configure_job(Job(), str(tmp_path / "test.mp4"))
+        source = tmp_path / "test.mp4"
+        source.write_bytes(b"source-for-ui-test")
+        job = win._configure_job(Job(), str(source))
         assert job.project.tts_provider == "vieneu"
         assert job.project.voice_male == "Quang Sơn"
         assert job.project.vieneu_backend == "onnx"
