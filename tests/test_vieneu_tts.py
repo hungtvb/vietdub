@@ -195,3 +195,42 @@ def test_legacy_edge_tts_checkpoint_is_still_readable(tmp_path, monkeypatch):
     assert orch._has_step("tts")
     job.project.tts_provider = "vieneu"
     assert not orch._has_step("tts")
+
+
+def test_staged_onnx_assets_no_cross_directory_symlink(tmp_path, monkeypatch):
+    import sys
+    import types
+    from pathlib import Path
+    from tts import vieneu_tts as adapter
+    from core import settings as config
+
+    base = tmp_path / "app"
+    monkeypatch.setattr(config, "settings_path", lambda: base / "settings.json")
+    package = types.ModuleType("vieneu._v3_turbo_engine.onnx_runtime_lite")
+    package._V3_REPO = "example/backbone"
+    package._CODEC_REPO = "example/codec"
+    package._GRAPH_FILES = ["vieneu_prefill.onnx", "vieneu_backbone_shared.data"]
+    package._CODEC_FILES = ["codec.onnx", "codec.data"]
+    monkeypatch.setitem(sys.modules, package.__name__, package)
+    hub = types.ModuleType("huggingface_hub")
+    def fake_download(repo_id, filename, subfolder=None, local_dir=None):
+        path = Path(local_dir) / (subfolder or "") / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        blob = tmp_path / "hf-blobs" / filename
+        blob.parent.mkdir(parents=True, exist_ok=True)
+        blob.write_bytes(b"onnx-or-data")
+        path.symlink_to(blob)
+        return str(path)
+    hub.hf_hub_download = fake_download
+    monkeypatch.setitem(sys.modules, hub.__name__, hub)
+    graph, codec = adapter._stage_safe_onnx_files("fp32")
+    assert graph.name == "onnx_update"
+    assert codec.name == "codec"
+    for name in package._GRAPH_FILES:
+        p = graph / name
+        assert p.exists() and not p.is_symlink()
+        assert p.resolve().parent == graph.resolve()
+    for name in package._CODEC_FILES:
+        p = codec / name
+        assert p.exists() and not p.is_symlink()
+        assert p.resolve().parent == codec.resolve()

@@ -82,3 +82,14 @@ requirements now pin the CPU runtime to 1.24.4, close to the 1.24 runtime
 used in upstream benchmarks. **This is a compatibility workaround**, not
 proof that all ONNX versions or platforms are supported. Verify against a
 fresh model load; never disable ONNX external-path security checks.
+
+## Verified ONNX external-data layout
+
+Vieneu's ONNX graphs refer to external `.data` files. Hugging Face snapshot
+symlinks may resolve graph and data into different blob directories, which is
+now correctly rejected by ONNX Runtime. VieNeu stages **real local copies**
+of graph and codec artifacts under the VietDub model cache, preserving the
+runtime security check and avoiding any modification of Hugging Face's shared
+cache. First inference needs network and enough disk for both model sets.
+The temporary SDK codec-path interception occurs only while loading the
+serialized local engine. Await CI real-weight inference before approval.

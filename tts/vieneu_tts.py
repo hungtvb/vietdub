@@ -31,6 +31,58 @@ class VieNeuTTSError(RuntimeError):
     """VieNeu is unavailable or a sentence cannot be synthesized."""
 
 
+def _stage_safe_onnx_files(precision: str):
+    """Stage real ONNX graph + external data beside each other without symlinks.
+
+    Hugging Face's shared snapshot cache uses symlinks to distinct blobs.
+    ONNX Runtime correctly rejects a model whose external-data path escapes
+    the directory containing its graph. Use a private, real-file copy rather
+    than disabling that security validation.
+    """
+    from huggingface_hub import hf_hub_download
+    from vieneu._v3_turbo_engine.onnx_runtime_lite import (
+        _V3_REPO, _CODEC_REPO, _GRAPH_FILES, _CODEC_FILES
+    )
+    from core.settings import settings_path
+    base = settings_path().parent / "models" / "vieneu-onnx"
+    folder = "onnx_int8" if precision == "int8" else "onnx_update"
+    graph_dir = base / folder
+    codec_dir = base / "codec"
+    for repo, filenames, subfolder, root in (
+        (_V3_REPO, _GRAPH_FILES, folder, graph_dir),
+        (_CODEC_REPO, _CODEC_FILES, None, codec_dir),
+    ):
+        root.mkdir(parents=True, exist_ok=True)
+        for filename in filenames:
+            try:
+                path = Path(hf_hub_download(
+                    repo_id=repo, filename=filename,
+                    subfolder=subfolder, local_dir=str(root.parent if subfolder else root)
+                ))
+            except Exception:
+                # Upstream marks only optional JSON metadata as absent.
+                if filename == "codec_browser_onnx_meta.json":
+                    continue
+                raise
+            expected = root / filename
+            # local_dir may contain files in a subfolder; ensure path matches.
+            if path != expected:
+                raise VieNeuTTSError(
+                    f"VieNeu model path mismatch: {path} != {expected}")
+            # An actual copy is required: ONNX graph and .data must resolve
+            # within the same real directory, not separate HF blob dirs.
+            if path.is_symlink():
+                import shutil
+                staged = path.with_name(path.name + ".real-copy")
+                shutil.copyfile(path, staged)
+                staged.replace(path)
+            if not path.is_file() or path.stat().st_size == 0:
+                raise VieNeuTTSError(f"VieNeu model artifact missing: {path}")
+            if path.resolve().parent != root.resolve():
+                raise VieNeuTTSError(f"Unsafe VieNeu external-data path: {path}")
+    return graph_dir, codec_dir
+
+
 @lru_cache(maxsize=2)
 def _load_engine(backend: str, precision: str):
     try:
@@ -40,6 +92,37 @@ def _load_engine(backend: str, precision: str):
             "Chưa cài VieNeu-TTS. Chạy: pip install -r requirements-vieneu.txt"
         ) from exc
     try:
+        use_onnx = backend == "onnx"
+        if backend == "auto":
+            try:
+                import torch
+                use_onnx = not torch.cuda.is_available()
+            except ImportError:
+                use_onnx = True
+        if use_onnx:
+            from unittest.mock import patch
+            from vieneu._v3_turbo_engine.onnx_runtime_lite import (
+                OnnxV3LiteEngine, _CODEC_REPO
+            )
+            graph, codec = _stage_safe_onnx_files(precision)
+            upstream_fetch = OnnxV3LiteEngine._fetch
+
+            # The installed SDK forwards onnx_dir but does not expose
+            # codec_dir through Vieneu(...). Override only codec lookup,
+            # while holding the provider's engine-init lock. This is a
+            # temporary compatibility layer until SDK adds codec_dir.
+            def fetch_codec(repo, files, subfolder):
+                if repo == _CODEC_REPO and subfolder is None:
+                    return codec
+                return upstream_fetch(repo, files, subfolder)
+
+            with _ENGINE_LOCK, patch.object(
+                OnnxV3LiteEngine, "_fetch", staticmethod(fetch_codec)
+            ):
+                return Vieneu(
+                    mode="v3turbo", backend="onnx", precision=precision,
+                    onnx_dir=str(graph),
+                )
         return Vieneu(mode="v3turbo", backend=backend, precision=precision)
     except Exception as exc:
         raise VieNeuTTSError(f"Không tải được mô hình VieNeu v3 Turbo: {exc}") from exc
