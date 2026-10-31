@@ -52,8 +52,8 @@ def test_too_long_raises_and_splits(tmp_path):
 
 
 def test_short_slot_overflow_allowed(tmp_path, caplog):
-    # edge case 2: 0.3s slot, ratio 2 -> no split possible -> squeeze + overflow
-    w = _wav(tmp_path / "a.wav", 0.6)
+    # edge case 2: 0.3s slot, small ratio -> squeeze + light overflow
+    w = _wav(tmp_path / "a.wav", 0.42)
     seg = Segment(index=0, start=0.0, end=0.3, speaker=0, text_vi="ừ",
                   audio_vi=str(w))
     import logging
@@ -104,3 +104,20 @@ def test_segment_crossing_track_chunk_boundary_is_not_replayed(tmp_path):
     assert data[int(59.0 * sr)] == pytest.approx(0.1, abs=0.02)
     assert data[int(60.5 * sr)] == pytest.approx(0.3, abs=0.02)
     assert np.abs(data[int(62.5 * sr)]).max() < 0.02
+
+
+def test_severe_short_slot_overflow_is_blocked(tmp_path):
+    # 4x slowdown would either overlap next dialogue or be truncated.
+    w = _wav(tmp_path / "too_long.wav", 1.2)
+    seg = Segment(index=8, start=0.0, end=0.3, speaker=0,
+                  text_vi="Một câu quá dài.", audio_vi=str(w))
+    with pytest.raises(mfit.SevereOverflowError, match="1"):
+        mfit.plan([seg])
+
+
+def test_severe_forced_overflow_is_blocked(tmp_path):
+    w = _wav(tmp_path / "long.wav", 5.0)
+    seg = Segment(index=9, start=0.0, end=2.0, speaker=0,
+                  text_vi="không thể chia", audio_vi=str(w))
+    with pytest.raises(mfit.SevereOverflowError):
+        mfit.plan([seg], force_overflow={id(seg)})
