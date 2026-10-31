@@ -12,7 +12,7 @@ the optional VieNeu SDK separately:
 pip install -r requirements-vieneu.txt
 ```
 
-The tested SDK target is `vieneu==3.8.3` from
+The tested SDK target is `vieneu==3.8.3` with `onnxruntime==1.24.4` from
 https://github.com/pnnbao97/VieNeu-TTS. First inference downloads model
 assets from Hugging Face; subsequent inference reuses the local model cache.
 Allow enough disk space and RAM. There is **no remote hosted paid API** in
@@ -72,3 +72,13 @@ VieNeu-TTS SDK: https://github.com/pnnbao97/VieNeu-TTS (Apache-2.0).
 Model: https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo (Apache-2.0).
 Keep upstream attribution/license notices when redistributing components.
 Clone real people's voices only with authorization.
+
+## Runtime compatibility (real-model CI)
+
+On 2026-10-31, the fresh CPU runner with ONNX Runtime 1.31.1 rejected the
+model's Hugging Face cached external-data symlink with an
+`External data path escapes model directory` failure. The optional
+requirements now pin the CPU runtime to 1.24.4, close to the 1.24 runtime
+used in upstream benchmarks. **This is a compatibility workaround**, not
+proof that all ONNX versions or platforms are supported. Verify against a
+fresh model load; never disable ONNX external-path security checks.
