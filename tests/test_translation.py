@@ -514,3 +514,17 @@ def test_empty_or_source_script_in_dub_is_blocked_before_tts():
         assert_dub_ready([good])
     with pytest.raises(RuntimeError, match="ASR"):
         assert_dub_ready([])
+
+
+def test_missing_tts_sentence_is_not_silently_replaced_with_silence(tmp_path):
+    from core.orchestrator import Orchestrator
+    from project.schema import Segment
+
+    class IncompleteTTS:
+        def synthesize(self, segments, output_dir):
+            return segments
+
+    seg = Segment(index=3, start=0, end=2, speaker=0,
+                  text_src="你好", text_vi="Xin chào.")
+    with pytest.raises(RuntimeError, match="không có file giọng"):
+        Orchestrator._synthesize_tts(None, IncompleteTTS(), [seg], tmp_path)
