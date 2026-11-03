@@ -7,6 +7,7 @@ on:
       - 'packaging/**'
       - 'requirements.txt'
       - 'main.py'
+      - 'media/_bin.py'
       - '.github/workflows/windows-release-smoke.yml'
 
 jobs:
@@ -55,8 +56,32 @@ jobs:
           python -m compileall -q main.py core asr translation tts ui media project
           python -m PyInstaller packaging/vietdub.spec --noconfirm
           if (!(Test-Path "dist/VietDub/VietDub.exe")) { throw "No Windows EXE produced" }
-          if (!(Test-Path "dist/VietDub/ffmpeg.exe")) { throw "ffmpeg not bundled" }
-          if (!(Test-Path "dist/VietDub/ffprobe.exe")) { throw "ffprobe not bundled" }
+          # PyInstaller 6+ onedir stores binaries under _internal by default.
+          $bundle = if (Test-Path "dist/VietDub/_internal/ffmpeg.exe") {
+            (Resolve-Path "dist/VietDub/_internal").Path
+          } else { (Resolve-Path "dist/VietDub").Path }
+          foreach ($binary in @("ffmpeg.exe", "ffprobe.exe")) {
+            $full = Join-Path $bundle $binary
+            if (!(Test-Path $full)) { throw "$binary missing from bundled runtime: $full" }
+            & $full -version | Select-Object -First 1
+            if ($LASTEXITCODE -ne 0) { throw "$binary cannot execute in the bundle" }
+          }
+          # Validate the SAME binary resolution used by the frozen application.
+          $env:VIETDUB_BUNDLE_DIR = $bundle
+          @'
+import os, sys
+from pathlib import Path
+from media import _bin
+sys.frozen = True
+sys._MEIPASS = os.environ["VIETDUB_BUNDLE_DIR"]
+_bin.configure(None)
+for program, resolved in (("ffmpeg.exe", _bin.ffmpeg_cmd()),
+                          ("ffprobe.exe", _bin.ffprobe_cmd())):
+    expected = Path(os.environ["VIETDUB_BUNDLE_DIR"]) / program
+    assert Path(resolved).resolve() == expected.resolve(), (program, resolved, expected)
+    print("Bundled runtime resolver verified:", resolved)
+'@ | python -
+          if ($LASTEXITCODE -ne 0) { throw "Bundled runtime path resolution failed" }
           Get-Item "dist/VietDub/VietDub.exe" | Select-Object Name,Length
       - name: UI cold-start smoke
         shell: pwsh
