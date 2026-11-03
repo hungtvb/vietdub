@@ -118,10 +118,16 @@ def test_failed_replacement_cannot_reuse_old_voice(tmp_path):
     lines = _segs(2)
     tts.synthesize(lines, out)
     assert all(Path(s.audio_vi).is_file() for s in lines)
+    # Keep the prior valid cache recoverable, but never attach it to a
+    # job whose text/voice identity has changed and resynthesis failed.
+    old_wav = [(out / f"seg_{i:04d}.wav").read_bytes() for i in range(2)]
+    old_manifest = [(out / f"seg_{i:04d}.md5").read_text() for i in range(2)]
     lines[0].text_vi = "Đổi toàn bộ lời thoại"
     lines[1].text_vi = "Đổi lời thoại thứ hai"
     FakeComm.fail_at = FakeComm.calls + 1
     with pytest.raises(metts.TTSError, match="thất bại toàn bộ"):
         tts.synthesize(lines, out)
-    assert not (out / "seg_0000.wav").exists()
-    assert not (out / "seg_0001.wav").exists()
+    assert all(not seg.audio_vi for seg in lines)
+    for index in range(2):
+        assert (out / f"seg_{index:04d}.wav").read_bytes() == old_wav[index]
+        assert (out / f"seg_{index:04d}.md5").read_text() == old_manifest[index]
