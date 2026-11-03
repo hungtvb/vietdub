@@ -67,7 +67,10 @@ def test_line_mismatch_fallback_single():
     t = FakeTranslator([short, short, short,
                         single(0), single(1), single(2)])
     out = t.translate(segs, make_speakers())
-    assert [s.text_vi for s in out] == ["LE 0", "LE 1", "LE 2"]
+    # Preserve a valid partial batch translation for ID 0; only retranslate
+    # missing IDs. Rejecting the whole batch wastes LLM calls and may alter
+    # already-correct dialogue.
+    assert [s.text_vi for s in out] == ["VI 0", "LE 1", "LE 2"]
 
 
 def test_proper_noun_rule_in_prompt():
