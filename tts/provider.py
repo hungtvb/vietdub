@@ -7,6 +7,7 @@ from __future__ import annotations
 
 def create_tts(settings, *, provider=None, voice_male=None, voice_female=None,
                vieneu_backend=None, vieneu_precision=None,
+               zerotts_model_dir=None, zerotts_voices=None,
                rate=None, pitch=None):
     selected = provider or settings.get("tts_provider", "edge")
     if selected == "vieneu":
@@ -16,6 +17,23 @@ def create_tts(settings, *, provider=None, voice_male=None, voice_female=None,
             voice_female=voice_female or settings.get("vieneu_voice_female", "Mai Anh"),
             backend=vieneu_backend or settings.get("vieneu_backend", "auto"),
             precision=vieneu_precision or settings.get("vieneu_precision", "fp32"))
+    if selected == "zerotts":
+        # ZeroTTS ships as a separate optional adapter on the multilingual
+        # branch. Never substitute Edge-TTS when it is not installed.
+        try:
+            from tts.zerotts_local import ZeroTTSLocal
+        except ImportError as exc:
+            raise RuntimeError(
+                "ZeroTTS adapter unavailable: integrate tts/zerotts_local.py "
+                "before selecting the zerotts provider"
+            ) from exc
+        return ZeroTTSLocal(
+            model_dir=(zerotts_model_dir if zerotts_model_dir is not None
+                       else settings.get("zerotts_model_dir", "model/ZeroTTS")),
+            voices=(zerotts_voices if zerotts_voices is not None
+                    else settings.get("zerotts_voices", {})),
+            local_only=True,
+        )
     if selected == "edge":
         from tts.edge_tts import EdgeTTS
         return EdgeTTS(
