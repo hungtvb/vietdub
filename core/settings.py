@@ -35,11 +35,29 @@ DEFAULTS = {
     "translate_provider": "openai",       # "openai" | "9router" | "ollama"
     "llm_temperature": 0.2,
     "translate_batch": 20,
+    "translation_semantic_review": True,  # optional LLM semantic QA for any video
+    "translation_review_batch": 10,
     # --- ASR ---
-    "asr_backend": "whisper",              # "whisper" | "funasr" | "qwen" | "vietdub_stt"
+    "asr_engine": "auto",  # auto: zh -> FunASR, others -> Whisper; Qwen is opt-in
+    "qwen_asr_model": "Qwen/Qwen3-ASR-0.6B",
+    "qwen_asr_aligner": "Qwen/Qwen3-ForcedAligner-0.6B",
+    "qwen_asr_device": "auto",  # auto | cpu | cuda
+    "language_detection_model": "tiny",  # light acoustic language probe
+    "chinese_asr_min_confidence": 0.70,  # below threshold use multilingual Whisper + QA
     "whisper_model": "large-v3-turbo",
-    "whisper_compute_type": "int8",
-    "asr_model": "iic/SenseVoiceSmall",
+    "source_language": "auto",  # new video source detection: auto | en | zh | ...
+    "asr_device": "auto",
+    "whisper_forced_alignment": True,
+    "voice_anchor_review": True,  # exports audition candidates; NEVER approves automatically
+    "hf_token": "",  # optional; HF_TOKEN environment variable takes priority
+
+    "funasr_backend": "modelscope",  # automodel is opt-in pending real benchmarking
+    "funasr_cpu_threads": 4,
+    "funasr_keep_loaded": True,  # one reusable model in RAM; disable for low-memory computers
+    "funasr_batch_size_s": 60,
+    "funasr_max_vad_segment_ms": 15000,
+    "funasr_chunk_overlap_sec": 1.5,  # protects speech at 10-minute boundaries
+    "asr_model": "damo/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
     "vad_model": "damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
     "punc_model": "damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",  # 290M, light
     "spk_model": "damo/speech_campplus_sv_zh-cn_16k-common",
@@ -54,6 +72,13 @@ DEFAULTS = {
     "pitch_female_min_hz": 165.0,
     "pitch_confidence_low": 0.7,
     # --- TTS ---
+    "tts_provider": "edge",          # "edge" | "vieneu" | "zerotts"
+    "zerotts_model_dir": "model/ZeroTTS",
+    "zerotts_voices": {},
+    "vieneu_voice_male": "Hải Đăng",
+    "vieneu_voice_female": "Mai Anh",
+    "vieneu_backend": "auto",        # "auto" | "onnx" | "pytorch"
+    "vieneu_precision": "fp32",      # CPU ONNX: "fp32" | "int8" (requires VNNI)
     "voice_male": "vi-VN-NamMinhNeural",
     "voice_female": "vi-VN-HoaiMyNeural",
     "tts_rate": "+0%",

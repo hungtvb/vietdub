@@ -27,7 +27,9 @@ from PySide6.QtWidgets import (QBoxLayout, QCheckBox, QComboBox, QFileDialog,
 from core.job import Job
 from core.settings import Settings
 from media import _bin as mbin
-from ui.common import confirm_box, error_box, fmt_time
+from project.schema import Project
+from asr.source_language import LANGUAGES, normalize_language
+from ui.common import confirm_box, error_box, fmt_size, fmt_time, info_box
 from ui.theme import APP_BACKGROUND, UI_COLORS
 
 VIDEO_FILTER = ("Video (*.mp4 *.mkv *.avi *.mov *.webm *.ts *.m4v);;"
@@ -81,24 +83,28 @@ class DownloadWorker(QObject):
 
 
 class VoicePreviewWorker(QObject):
-    """Tạo câu mẫu bằng Edge-TTS trong thread riêng."""
+    """Tạo câu mẫu bằng TTS provider đang chọn trong thread riêng."""
     done = Signal(str)     # wav path
     failed = Signal(str)   # thông báo lỗi
 
-    def __init__(self, voice: str, gender: str, tmpdir: Path):
+    def __init__(self, voice: str, gender: str, tmpdir: Path,
+                 provider: str, settings: Settings):
         super().__init__()
         self.voice = voice
         self.gender = gender
         self.tmpdir = tmpdir
+        self.provider = provider
+        self.settings = settings
 
     def run(self) -> None:
         try:
             from project.schema import Segment
-            from tts.edge_tts import EdgeTTS
+            from tts.provider import create_tts
             seg = Segment(index=0, start=0.0, end=6.0, speaker=0,
                           gender=self.gender,
                           text_vi="Xin chào, đây là giọng lồng tiếng của VietDub.")
-            tts = EdgeTTS(voice_male=self.voice, voice_female=self.voice)
+            tts = create_tts(self.settings, provider=self.provider,
+                             voice_male=self.voice, voice_female=self.voice)
             tts.synthesize([seg], self.tmpdir)
             if seg.audio_vi:
                 self.done.emit(seg.audio_vi)
@@ -191,10 +197,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.settings = settings or Settings()
         mbin.configure(self.settings.get("ffmpeg_path"))
-        self.setWindowTitle("VietDub — Lồng tiếng video Trung sang Việt")
-        self.setStyleSheet(f"QWidget#appRoot, QWidget#mainShell {{ background: {APP_BACKGROUND}; }}")
-        self.resize(800, 790)
-        self.setMinimumSize(620, 500)
+        self.setWindowTitle("VietDub — Lồng tiếng video đa ngôn ngữ sang tiếng Việt")
+        self.resize(640, 720)
 
         self.job: Job | None = None          # tạo khi cần (tải link / bắt đầu)
         self.video_path: str = ""            # file local sẵn sàng xử lý
@@ -641,8 +645,19 @@ class MainWindow(QMainWindow):
         box = QGroupBox("Tùy chọn lồng tiếng")
         lay = QVBoxLayout(box)
 
-        # giọng nam / nữ + nghe thử
+        # Engine is independent of the LLM translation provider.
+        self.tts_provider = QComboBox()
+        self.tts_provider.addItem("Edge-TTS (online)", "edge")
+        self.tts_provider.addItem("VieNeu v3 Turbo (offline)", "vieneu")
+        self._voice_drafts = {
+            "edge": (self.settings.get("voice_male"),
+                     self.settings.get("voice_female")),
+            "vieneu": (self.settings.get("vieneu_voice_male", "Hải Đăng"),
+                       self.settings.get("vieneu_voice_female", "Mai Anh")),
+        }
+        self._active_tts_provider = None
         vg = QFormLayout()
+        vg.addRow("Công nghệ TTS:", self.tts_provider)
         vg.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.voice_male = QComboBox()
         self.voice_male.setEditable(True)
@@ -656,6 +671,10 @@ class MainWindow(QMainWindow):
                             (self.voice_female, self.settings.get("voice_female"))):
             cb.addItem(default)
             cb.setCurrentText(default)
+        self.tts_provider.setCurrentIndex(max(
+            0, self.tts_provider.findData(self.settings.get("tts_provider", "edge"))))
+        self.tts_provider.currentIndexChanged.connect(self._on_tts_provider_changed)
+        self._on_tts_provider_changed()
         row_m = QHBoxLayout()
         row_m.addWidget(self.voice_male, 1)
         btn_pm = QPushButton("Nghe thử")
@@ -682,6 +701,18 @@ class MainWindow(QMainWindow):
         self.provider.setCurrentIndex(max(0, self.provider.findData(cur)))
         pf = QFormLayout()
         pf.addRow("Nguồn dịch:", self.provider)
+        # Selection belongs to each video job, never to a hard-coded film.
+        self.source_lang = QComboBox()
+        for code, label in LANGUAGES.items():
+            self.source_lang.addItem(label, code)
+        desired_lang = normalize_language(
+            self.settings.get("source_language", "auto"))
+        self.source_lang.setCurrentIndex(max(
+            0, self.source_lang.findData(desired_lang)))
+        self.source_lang.setToolTip(
+            "Tự động: nhận diện tiếng nói từ nhiều đoạn audio trước ASR. "
+            "Có thể chọn tay nếu video ít lời hoặc nhận diện chưa chính xác.")
+        pf.addRow("Ngôn ngữ video:", self.source_lang)
         lay.addLayout(pf)
 
         self.chk_review = QCheckBox("Dừng để duyệt phụ đề và bản dịch")
@@ -705,6 +736,19 @@ class MainWindow(QMainWindow):
         out_row.addWidget(btn_out)
         lay.addLayout(out_row)
         return box
+
+    def _on_tts_provider_changed(self, _index=None) -> None:
+        """Keep distinct per-provider voices when switching without losing edits."""
+        previous = self._active_tts_provider
+        if previous:
+            self._voice_drafts[previous] = (
+                self.voice_male.currentText().strip(),
+                self.voice_female.currentText().strip())
+        current = self.tts_provider.currentData() or "edge"
+        male, female = self._voice_drafts[current]
+        self.voice_male.setCurrentText(male)
+        self.voice_female.setCurrentText(female)
+        self._active_tts_provider = current
 
     def _on_overnight_toggled(self, on: bool) -> None:
         # Chế độ qua đêm CẤM treo chờ người -> tự tắt dừng duyệt (DESIGN).
@@ -742,7 +786,8 @@ class MainWindow(QMainWindow):
         tmp = tempfile.TemporaryDirectory(prefix="vietdub_nghe_thu_")
         self._pv_tmps.append(tmp)
         tmpdir = Path(tmp.name)
-        worker = VoicePreviewWorker(voice, gender, tmpdir)
+        worker = VoicePreviewWorker(
+            voice, gender, tmpdir, self.tts_provider.currentData(), self.settings)
         thread = QThread(self)
         worker.moveToThread(thread)
         worker.done.connect(self._on_preview_done)
@@ -776,9 +821,10 @@ class MainWindow(QMainWindow):
     def _on_preview_failed(self, message: str) -> None:
         if self._close_when_idle:
             return
-        error_box(self, "Không nghe thử được",
-                  f"{message}\n\nCách khắc phục: kiểm tra mạng (Edge-TTS cần "
-                  "kết nối tới Microsoft), rồi bấm Nghe thử lại.")
+        hint = ("Cài VieNeu bằng: pip install -r requirements-vieneu.txt "
+                "và kiểm tra backend/model." if self.tts_provider.currentData() == "vieneu"
+                else "Kiểm tra kết nối Microsoft Edge-TTS.")
+        error_box(self, "Không nghe thử được", f"{message}\n\n{hint}")
 
     # ------------------------------------------------------------------ manual visual cleanup
     def open_visual_region_editor(self) -> None:
@@ -830,8 +876,17 @@ class MainWindow(QMainWindow):
         from ui.common import open_settings_dialog
         if open_settings_dialog(self, self.settings):
             # settings đã được lưu trong dialog; áp lại vào UI chính
-            self.voice_male.setCurrentText(self.settings.get("voice_male"))
-            self.voice_female.setCurrentText(self.settings.get("voice_female"))
+            self._voice_drafts = {
+                "edge": (self.settings.get("voice_male"),
+                         self.settings.get("voice_female")),
+                "vieneu": (self.settings.get("vieneu_voice_male"),
+                           self.settings.get("vieneu_voice_female")),
+            }
+            self._active_tts_provider = None
+            selected = self.settings.get("tts_provider", "edge")
+            self.tts_provider.setCurrentIndex(max(
+                0, self.tts_provider.findData(selected)))
+            self._on_tts_provider_changed()
             cur = self.settings.get("translate_provider", "openai")
             self.provider.setCurrentIndex(max(0, self.provider.findData(cur)))
             self.chk_review.setChecked(bool(self.settings.get("review_stops", True)))
@@ -936,10 +991,18 @@ class MainWindow(QMainWindow):
             proj.video_out = str(Path(out_dir) / out_name)
         else:
             proj.video_out = ""
+        tts_provider = self.tts_provider.currentData() or "edge"
+        proj.tts_provider = tts_provider
+        proj.vieneu_backend = self.settings.get("vieneu_backend", "auto")
+        proj.vieneu_precision = self.settings.get("vieneu_precision", "fp32")
+        proj.tts_rate = self.settings.get("tts_rate", "+0%")
+        proj.tts_pitch = self.settings.get("tts_pitch", "+0Hz")
+        male_key = "vieneu_voice_male" if tts_provider == "vieneu" else "voice_male"
+        female_key = "vieneu_voice_female" if tts_provider == "vieneu" else "voice_female"
         proj.voice_male = self.voice_male.currentText().strip() \
-            or self.settings.get("voice_male")
+            or self.settings.get(male_key)
         proj.voice_female = self.voice_female.currentText().strip() \
-            or self.settings.get("voice_female")
+            or self.settings.get(female_key)
         proj.translate_provider = provider
         proj.review_stops = self.chk_review.isChecked()
         proj.overnight = self.chk_overnight.isChecked()
@@ -973,11 +1036,16 @@ class MainWindow(QMainWindow):
             )
 
         # lưu lựa chọn nhanh vào settings để mở lại app vẫn giữ
-        self.settings.set("voice_male", proj.voice_male)
-        self.settings.set("voice_female", proj.voice_female)
+        self._voice_drafts[tts_provider] = (proj.voice_male, proj.voice_female)
+        for key_provider, (male, female) in self._voice_drafts.items():
+            prefix = "vieneu_" if key_provider == "vieneu" else ""
+            self.settings.set(prefix + "voice_male", male)
+            self.settings.set(prefix + "voice_female", female)
+        self.settings.set("tts_provider", tts_provider)
         self.settings.set("translate_provider", provider)
         self.settings.set("review_stops", proj.review_stops)
         self.settings.set("overnight", proj.overnight)
+        self.settings.set("source_language", proj.src_lang)
         self.settings.save()
 
         from project import io as pio

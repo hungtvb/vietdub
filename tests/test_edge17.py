@@ -3,6 +3,7 @@
 # - peak RAM estimate + warning logic
 # - ASR transcribes long wavs in 10-minute chunks with offset re-join
 import logging
+from pathlib import Path
 
 import numpy as np
 import soundfile as sf
@@ -97,8 +98,11 @@ def test_asr_long_wav_chunked_with_offset(tmp_path, monkeypatch):
 
     def fake_one(path):
         seen.append(path)
-        # each chunk pretends to hold one sentence at its own 0-1s
-        return [Segment(index=0, start=0.0, end=1.0, speaker=0,
+        # Each padded chunk has one sentence at the nominal start.
+        # Chunk 1/2 decode extra look-behind; local 1.25s => nominal + 0s.
+        num = int(Path(path).stem.split("_")[-1])
+        start = 0.0 if num == 0 else 1.25
+        return [Segment(index=0, start=start, end=start + 1.0, speaker=0,
                         text_src="你好", confidence=1.0)]
 
     monkeypatch.setattr(ad, "_transcribe_one", fake_one)
@@ -108,3 +112,22 @@ def test_asr_long_wav_chunked_with_offset(tmp_path, monkeypatch):
     assert [s.start for s in segs] == [0.0, 5.0, 10.0]
     assert [s.end for s in segs] == [1.0, 6.0, 11.0]
     assert [s.index for s in segs] == [0, 1, 2]  # post_fix renumbered
+
+
+
+def test_audio_crossing_chunk_boundary_is_not_replayed_from_start(tmp_path):
+    sr = 44100
+    # One second of different amplitudes. At 2s, we must hear the
+    # SECOND half of the source, not the first half again.
+    audio = np.r_[np.full(sr // 2, .10, dtype=np.float32),
+                  np.full(sr // 2, .40, dtype=np.float32)]
+    clip = tmp_path / "cross.wav"
+    sf.write(str(clip), audio, sr, subtype="PCM_16")
+    seg = Segment(index=0, start=1.5, end=2.5, speaker=0,
+                  audio_vi=str(clip))
+    result = mfit.build_track([seg], tmp_path / "joined.wav",
+                              total_sec=4.0, chunk_sec=2.0)
+    samples, _ = sf.read(str(result), dtype="float32")
+    assert abs(float(np.mean(samples[int(1.75*sr):int(1.95*sr)]))-.1) < .01
+    assert abs(float(np.mean(samples[int(2.05*sr):int(2.25*sr)]))-.4) < .01
+    assert abs(float(np.mean(samples[int(2.65*sr):int(2.9*sr)]))) < .001

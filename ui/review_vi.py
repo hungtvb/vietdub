@@ -113,7 +113,7 @@ class ReviewViWindow(QWidget):
         self.meta_scroll.setFixedHeight(200)
         root.addWidget(self.meta_scroll)
 
-        self.tbl = TranscriptTable(len(self.segments), len(COLS))
+        self.tbl = QTableWidget(len(self.segments), len(COLS))
         self.tbl.setHorizontalHeaderLabels(COLS)
         self.tbl.verticalHeader().setVisible(False)
         for r, seg in enumerate(self.segments):

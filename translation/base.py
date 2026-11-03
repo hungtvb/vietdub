@@ -25,6 +25,7 @@ from typing import Dict, List, Tuple
 
 from project.schema import Segment, Speaker
 from translation import prompts
+from translation.quality import structural_issues
 
 log = logging.getLogger("vietdub.translate")
 
@@ -175,12 +176,16 @@ class BaseTranslator:
         for s in chunk:
             spk = speakers.get(s.speaker)
             g = spk.gender if spk else "unknown"
-            lines.append(f"[{s.index}] SPEAKER_{s.speaker} ({g}): {s.text_src}")
-        user = prompts.build_analyze_user(lines, context_lines)
-        expected_ids = {s.index for s in chunk}
-        expected_speakers = {s.speaker for s in chunk}
+            approved_name = (f" [verified character: {s.character_name}]"
+                             if s.identity_status == "VERIFIED" and s.character_name
+                             else "")
+            lines.append(f"[{s.index}] SPEAKER_{s.speaker}{approved_name} "
+                         f"({g}): {s.text_src}")
+        user = prompts.build_analyze_user(lines)
+        expected_ids = {seg.index for seg in chunk}
+        expected_speakers = {seg.speaker for seg in chunk}
         if len(expected_ids) != len(chunk):
-            raise ValueError("segment ids trùng trong batch phân tích")
+            raise ValueError("Duplicate source segment IDs in analysis batch")
         for attempt in range(ANALYZE_RETRIES):
             try:
                 raw = self._chat(prompts.ANALYZE_SYSTEM, user)
@@ -727,12 +732,17 @@ class BaseTranslator:
         step = self.batch_size
         for b0 in range(0, n, step):
             chunk = segments[b0:b0 + step]
-            ctx_lines = self._translation_context(
-                segments, b0, out, end_position=b0 + len(chunk))
-            lines = [f"[{s.index}]{' SOURCE NEEDS REVIEW' if s.needs_review else ''} "
-                     f"{self._line_header(s)} "
-                     f"{s.start:.1f}-{s.end:.1f}s ZH: {s.text_src}"
-                     for s in chunk]
+            ctx0 = max(0, b0 - 2)
+            ctx_lines = [f"[{s.index}] {self._line_header(s)}: {s.text_src}"
+                         for s in segments[ctx0:b0]]
+            lines = [
+                f"[{s.index}]"
+                + (" SOURCE NEEDS REVIEW" if s.needs_review else "")
+                + f" {self._line_header(s)} {s.start:.1f}-{s.end:.1f}s"
+                + (f" [lang={s.source_lang}]" if s.source_lang else "")
+                + f": {s.text_src}"
+                for s in chunk
+            ]
             user = prompts.build_translate_user(rel_table, lines,
                                                 self.proper_nouns,
                                                 ctx_lines or None)
@@ -747,15 +757,52 @@ class BaseTranslator:
             for pos, s in enumerate(segments):
                 if s.index in out:
                     continue
-                context = self._translation_context(segments, pos, out)
-                translated = self._translate_single(
-                    system, rel_table, s, context)
-                if translated is None:
-                    out[s.index] = s.text_src
-                    s.needs_review = True
-                else:
-                    out[s.index] = translated
+                out[s.index] = self._translate_single(
+                    prompts.SINGLE_LINE_TRANSLATE_SYSTEM, rel_table, s)
 
+        # A small batched LLM can repeat the exact SAME Vietnamese sentence
+        # for many DIFFERENT source turns while keeping every JSON id valid.
+        # Re-translate these suspicious runs in individually scoped calls.
+        # Never consider successful JSON parsing sufficient semantic coverage.
+        self.last_translation_collapse = {
+            "suspicious_ids": [], "repaired_ids": [], "unresolved_ids": [],
+        }
+        affected = []
+        i = 0
+        while i < len(segments):
+            j = i + 1
+            same = (out.get(segments[i].index, "") or "").strip().casefold()
+            while (same and j < len(segments)
+                   and (out.get(segments[j].index, "") or "").strip().casefold() == same):
+                j += 1
+            if j - i >= 3 and len({
+                (seg.text_src or "").strip().casefold() for seg in segments[i:j]
+            }) >= 3:
+                affected.extend(range(i, j))
+            i = j
+        self.last_translation_collapse["suspicious_ids"] = [
+            segments[pos].index for pos in affected]
+        for pos in affected:
+            line = segments[pos]
+            old = out.get(line.index, "")
+            context = segments[max(0,pos-2):pos]
+            candidate = self._translate_single(
+                prompts.SINGLE_LINE_TRANSLATE_SYSTEM,rel_table,line,
+                context=context)
+            if (candidate.strip() and candidate.strip() != line.text_src.strip()
+                    and candidate.strip().casefold() != old.strip().casefold()):
+                out[line.index] = candidate
+                self.last_translation_collapse["repaired_ids"].append(line.index)
+            else:
+                self.last_translation_collapse["unresolved_ids"].append(line.index)
+            # Semantic correctness is still unverified after individual repair.
+            line.needs_review = True
+        if affected:
+            log.warning("LLM batch collapse: %d distinct source lines repeated; "
+                        "%d individually rewritten, %d unresolved; all need review",
+                        len(affected),
+                        len(self.last_translation_collapse["repaired_ids"]),
+                        len(self.last_translation_collapse["unresolved_ids"]))
         for s in segments:
             s.text_vi = out.get(s.index, s.text_src)
             if self._looks_untranslated(s.text_src, s.text_vi,
@@ -770,12 +817,23 @@ class BaseTranslator:
             log.warning("dịch xong vẫn có %d câu text_vi rỗng: %s",
                         len(empty), empty[:10])
         self._flag_missing_pronouns(segments, speakers)
+        # Language-independent structural warnings. The LLM semantic review
+        # runs separately with video-specific context (see translation.quality).
+        basic_warnings = structural_issues(segments)
+        for seg in segments:
+            issues = basic_warnings.get(seg.index, [])
+            if issues:
+                seg.needs_review = True
+                log.warning("Translation structural review id=%d: %s",
+                            seg.index, ",".join(issues))
         return segments
 
     @staticmethod
     def _line_header(seg: Segment) -> str:
         """'SPEAKER_0 (to SPEAKER_1)' / 'SPEAKER_0 (to AUDIENCE)' / ..."""
         h = f"SPEAKER_{seg.speaker}"
+        if seg.identity_status == "VERIFIED" and seg.character_name:
+            h += f" [verified character: {seg.character_name}]"
         aud = (seg.audience or "").strip()
         if aud == "audience":
             h += " (to AUDIENCE)"
@@ -876,117 +934,109 @@ class BaseTranslator:
 
     def _translate_batch(self, system: str, user: str,
                          chunk: List[Segment]) -> Dict[int, str]:
-        want_ids = [s.index for s in chunk]
+        """Retain valid per-line translations; retry only missing/broken IDs.
+
+        Do not throw away a correct line because a different ID was omitted
+        in a batch, or trust arbitrary extra/duplicate ids from the model.
+        """
+        want_ids = [seg.index for seg in chunk]
+        sources = {seg.index: seg.text_src for seg in chunk}
+        if len(sources) != len(chunk):
+            raise ValueError("Duplicate source IDs in translation batch")
+        best: Dict[int, str] = {}
+        retry_user = user
         last_err = ""
         retry_user = user
         best: Dict[int, str] = {}
         sources = {seg.index: seg.text_src for seg in chunk}
         for attempt in range(TRANSLATE_RETRIES):
             try:
-                raw = self._chat(system, retry_user)
-                data = _parse_json(raw)
-                items = data.get("translations")
-                if not isinstance(items, list):
-                    raise ValueError("thiếu mảng 'translations'")
-                got: Dict[int, str] = {}
+                payload = _parse_json(self._chat(system, retry_user))
+                rows = payload.get("translations")
+                if not isinstance(rows, list):
+                    raise ValueError("Missing translations array")
+                candidate: Dict[int, str] = {}
                 duplicates = set()
-                invalid_rows = 0
-                for item in items:
-                    if not isinstance(item, dict):
-                        invalid_rows += 1
+                bad = 0
+                for row in rows:
+                    if not isinstance(row, dict):
+                        bad += 1
                         continue
-                    try:
-                        line_id = int(item["id"])
-                    except (KeyError, TypeError, ValueError):
-                        invalid_rows += 1
+                    index = row.get("id")
+                    if type(index) is not int or index not in sources:
+                        bad += 1
                         continue
-                    if line_id not in sources:
-                        invalid_rows += 1
+                    if index in candidate or index in duplicates:
+                        candidate.pop(index, None)
+                        duplicates.add(index)
+                        bad += 1
                         continue
-                    text_vi = item.get("text_vi")
-                    if line_id in got or line_id in duplicates:
-                        got.pop(line_id, None)
-                        duplicates.add(line_id)
-                        invalid_rows += 1
+                    value = row.get("text_vi")
+                    if not isinstance(value, str) or not value.strip():
+                        bad += 1
                         continue
-                    if not isinstance(text_vi, str) or not text_vi.strip():
-                        invalid_rows += 1
+                    value = value.strip()
+                    if not any(ch.isalnum() for ch in value):
+                        bad += 1
                         continue
-                    text_vi = text_vi.strip()
-                    if self._looks_untranslated(
-                            sources[line_id], text_vi, self.proper_nouns):
-                        invalid_rows += 1
+                    if re.search(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", value):
+                        # Vietnamese speech must not contain untouched
+                        # Chinese/Japanese/Korean source script fragments.
+                        bad += 1
                         continue
-                    got[line_id] = text_vi
-                for line_id, text_vi in got.items():
-                    best.setdefault(line_id, text_vi)
-                missing = [line_id for line_id in want_ids
-                           if line_id not in best]
+                    candidate[index] = value
+                for idx, val in candidate.items():
+                    best.setdefault(idx, val)
+                missing = [idx for idx in want_ids if idx not in best]
                 if not missing:
-                    return {line_id: best[line_id] for line_id in want_ids}
-                last_err = (f"thiếu {len(missing)} câu usable, id: "
-                            f"{missing[:10]}; {invalid_rows} dòng output sai")
-                log.warning("translate batch attempt %d/%d lỗi: %s",
-                            attempt + 1, TRANSLATE_RETRIES, last_err[:200])
-            except (ValueError, KeyError, TypeError) as e:
-                last_err = str(e)
-                log.warning("translate batch attempt %d/%d lỗi: %s",
-                            attempt + 1, TRANSLATE_RETRIES, last_err[:200])
-                missing = [line_id for line_id in want_ids
-                           if line_id not in best]
-            if not missing:
-                return {line_id: best[line_id] for line_id in want_ids}
+                    return {idx: best[idx] for idx in want_ids}
+                last_err = f"Missing usable IDs: {missing}; invalid rows: {bad}"
+            except (ValueError, KeyError, TypeError) as exc:
+                last_err = str(exc)
+                missing = [idx for idx in want_ids if idx not in best]
+            log.warning("translate batch attempt %d/%d: %s",
+                        attempt + 1, TRANSLATE_RETRIES, last_err[:200])
             retry_user = (
-                user + "\n\nCorrection for the previous attempt: "
-                + f"complete missing target ids {missing}. Return each id "
-                "exactly once with non-empty Vietnamese text. Fully "
-                "translate any leftover Chinese source-script fragments, even "
-                "one word embedded in fluent Vietnamese. For proper names use "
-                "Vietnamese or Latin spelling, not source Hanzi. Preserve "
-                "meaning, speaker intent and question form.")
-        log.warning("batch dịch còn %d/%d câu sau %d lần (%s), dịch lẻ "
-                    "phần thiếu", len(want_ids) - len(best), len(want_ids),
-                    TRANSLATE_RETRIES, last_err[:120])
-        return {line_id: best[line_id] for line_id in want_ids
-                if line_id in best}
+                user + "\n\nCorrection: translate only missing target IDs "
+                + str(missing) +
+                ". Keep all required clauses, use natural Vietnamese, "
+                "and do not return source-script characters or extra IDs."
+            )
+        log.warning("Batch partial result after %d retries; %d/%d usable",
+                    TRANSLATE_RETRIES, len(best), len(want_ids))
+        return {idx: best[idx] for idx in want_ids if idx in best}
 
     def _translate_single(self, system: str, rel_table: List[str],
-                          seg: Segment,
-                          context_lines: List[str] | None = None
-                          ) -> str | None:
+                          seg: Segment, context=None) -> str:
+        ctx_lines = [
+            f"[{previous.index}] {self._line_header(previous)}: "
+            f"{previous.text_src}"
+            for previous in (context or []) if previous.index != seg.index]
         user = prompts.build_translate_user(
             rel_table,
-            [f"[{seg.index}]{' SOURCE NEEDS REVIEW' if seg.needs_review else ''} "
-             f"{self._line_header(seg)} ZH: {seg.text_src}"],
-            self.proper_nouns, context_lines)
-        retry_user = user
-        for attempt in range(2):
+            [f"[{seg.index}] {self._line_header(seg)}"
+             + (f" [lang={seg.source_lang}]" if seg.source_lang else "")
+             + f": {seg.text_src}"],
+            self.proper_nouns, ctx_lines or None)
+        # Keep original ID and do not accept another dialogue turn's output.
+        for attempt in range(3):
             try:
-                data = _parse_json(self._chat(system, retry_user))
+                data = _parse_json(self._chat(system, user))
                 items = data.get("translations")
-                if not isinstance(items, list) or len(items) != 1:
-                    raise ValueError("cần đúng một translation entry")
-                item = items[0]
-                if not isinstance(item, dict) or int(item["id"]) != seg.index:
-                    raise ValueError("id của câu dịch lẻ không khớp")
-                text_vi = item.get("text_vi")
-                if not isinstance(text_vi, str) or not text_vi.strip():
-                    raise ValueError("câu dịch lẻ rỗng hoặc sai kiểu")
-                text_vi = text_vi.strip()
-                if self._looks_untranslated(seg.text_src, text_vi,
-                                            self.proper_nouns):
-                    raise ValueError("câu dịch lẻ vẫn còn chữ nguồn chưa dịch")
-                return text_vi
-            except (ValueError, KeyError, TypeError) as e:
-                log.warning("dịch lẻ câu %d lần %d lỗi: %s",
-                            seg.index, attempt + 1, str(e)[:160])
-                retry_user = (
-                    user + "\n\nCorrection: return exactly this id once "
-                    "with non-empty Vietnamese text. Translate the source "
-                    "fully into Vietnamese-readable writing (no Hanzi or "
-                    "other source scripts), preserve full meaning, questions "
-                    "and proper names as Vietnamese/Latin transliterations.")
-        return None
+                if (not isinstance(items, list) or len(items) != 1
+                        or not isinstance(items[0],dict)
+                        or type(items[0].get("id")) is not int
+                        or items[0]["id"] != seg.index):
+                    raise ValueError(f"Single translation must use source ID {seg.index}")
+                text = items[0].get("text_vi")
+                if (not isinstance(text,str) or not text.strip()
+                        or not any(c.isalnum() for c in text)):
+                    raise ValueError("Empty or unspeakable single-line translation")
+                return text.strip()
+            except (ValueError, KeyError, TypeError) as exc:
+                log.warning("Individual translation line %d attempt %d failed: %s",
+                            seg.index,attempt+1,str(exc)[:160])
+        return seg.text_src  # last resort; structural QA flags source echo
 
 
 def _parse_json(raw: str) -> dict:
@@ -1010,7 +1060,7 @@ def _parse_json(raw: str) -> dict:
     return data
 
 
-def google_translate_free(texts: List[str], src: str = "zh-CN",
+def google_translate_free(texts: List[str], src: str = "auto",
                           dst: str = "vi") -> List[str]:
     """Last-resort fallback (edge case 15): free Google endpoint, no key.
 
@@ -1080,17 +1130,11 @@ def translate_with_fallback(providers: List[BaseTranslator],
         log.warning("tất cả nguồn LLM đều lỗi, dùng Google Translate free "
                     "(dự phòng cuối): chất lượng đại từ có thể kém, nên "
                     "duyệt lại bản dịch ở bước [5]")
-        vi = google_translate_free([s.text_src for s in segments])
-        for i, seg in enumerate(segments):
-            text_vi = (vi[i] if i < len(vi) else "") or ""
-            seg.text_vi = text_vi.strip() or seg.text_src
-            # Machine fallback has no speaker-aware pronoun control; always
-            # expose it for review, even if the text looks fluent.
-            seg.needs_review = True
-            if BaseTranslator._looks_untranslated(
-                    seg.text_src, seg.text_vi):
-                log.warning("Google fallback không dịch rõ câu %d; giữ cờ "
-                            "cần duyệt", seg.index)
+        language = (video_metadata or {}).get("source_language", "auto")
+        language = language if language not in ("und", "mixed", "") else "auto"
+        vi = google_translate_free([s.text_src for s in segments], src=language)
+        for s, t in zip(segments, vi):
+            s.text_vi = (t or "").strip() or s.text_src
         return segments, "google_free"
     raise TranslateError(
         "Tất cả nguồn dịch đều lỗi (kể cả Google Translate free).\n"

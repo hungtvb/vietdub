@@ -107,8 +107,11 @@ def _valid_review_models(step: str, data: dict) -> bool:
                     if (isinstance(item, bool) or not isinstance(item, (int, float))
                             or not math.isfinite(item)):
                         return False
-                elif name == "needs_review":
+                elif name in {"needs_review", "identity_verified"}:
                     if type(item) is not bool:
+                        return False
+                elif name == "detected_speaker":
+                    if item is not None and type(item) is not int:
                         return False
                 elif name == "relations":
                     if not isinstance(item, list) or any(

@@ -5,9 +5,14 @@ from core import checkpoint as cp
 
 
 def test_save_load_roundtrip(job_dir):
-    cp.save_step(job_dir, "asr", {"segments": [{"index": 0}]})
+    from project.schema import Segment
+    segment = Segment(
+        index=0, start=0.0, end=1.0, speaker=0, text_src="你好",
+    ).to_dict()
+    content = {"segments": [segment]}
+    cp.save_step(job_dir, "asr", content)
     data = cp.load_step(job_dir, "asr")
-    assert data == {"segments": [{"index": 0}]}
+    assert data == content
 
 
 def test_missing_returns_none(job_dir):
@@ -48,3 +53,22 @@ def test_mark_done_updates_project_in_ram(job_dir):
     assert saved["stages_done"] == ["asr"]
     cp.mark_done(job_dir, proj, "asr")  # idempotent
     assert proj.stages_done == ["asr"]
+
+
+def test_multilingual_checkpoint_accepts_verified_speaker_fields(job_dir):
+    from project.schema import Speaker, Segment
+    seg = Segment(index=1, start=0.2, end=2.0, speaker=3,
+                  detected_speaker=7, source_lang="en")
+    cp.save_step(job_dir, "asr", {"segments": [seg.to_dict()]})
+    assert cp.load_step(job_dir, "asr") is not None
+    speaker = Speaker(id=3, identity_verified=True, character_name="Maddie")
+    cp.save_step(job_dir, "gender", {"speakers": [speaker.to_dict()]})
+    assert cp.load_step(job_dir, "gender") is not None
+
+
+def test_invalid_multilingual_speaker_field_is_rejected(job_dir):
+    from project.schema import Segment
+    row = Segment(index=0, start=0, end=1, speaker=0).to_dict()
+    row["detected_speaker"] = "not-an-integer"
+    cp.save_step(job_dir, "asr", {"segments": [row]})
+    assert cp.load_step(job_dir, "asr") is None
