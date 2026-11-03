@@ -410,8 +410,16 @@ class Orchestrator:
         self.logger.info("dịch xong bằng %s: %d câu", used, len(segments))
 
     def _synthesize_tts(self, tts, segments, tts_dir):
-        """Use the configured TTS provider; surface failures for retry."""
-        return tts.synthesize(segments, tts_dir)
+        """Fail closed: a missing synthesized utterance is not silent dub."""
+        voiced = tts.synthesize(segments, tts_dir)
+        for seg in voiced:
+            if not seg.audio_vi or not Path(seg.audio_vi).is_file():
+                raise RuntimeError(
+                    f"Câu {seg.index} không có file giọng đọc TTS; "
+                    "không thay bằng khoảng lặng. Hãy kiểm tra dịch vụ TTS "
+                    "và thử lại từ stage TTS."
+                )
+        return voiced
 
     def _fit_and_track(self, segments, tts_dir, synthesize_fn):
         """Split-and-retry loop for too-long sentences (edge case 1).
