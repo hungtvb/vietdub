@@ -6,11 +6,13 @@ from core import checkpoint as cp
 
 def test_save_load_roundtrip(job_dir):
     from project.schema import Segment
-    row = Segment(index=0, start=0.0, end=1.0, speaker=1,
-                  detected_speaker=None, character_name="Maddie").to_dict()
-    cp.save_step(job_dir, "asr", {"segments": [row]})
+    segment = Segment(
+        index=0, start=0.0, end=1.0, speaker=0, text_src="你好",
+    ).to_dict()
+    content = {"segments": [segment]}
+    cp.save_step(job_dir, "asr", content)
     data = cp.load_step(job_dir, "asr")
-    assert data == {"segments": [row]}
+    assert data == content
 
 
 def test_missing_returns_none(job_dir):

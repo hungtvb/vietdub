@@ -1,0 +1,9 @@
+# Optional local VieNeu-TTS v3 Turbo (CPU ONNX or CUDA with suitable setup).
+# Keep this separate from requirements.txt so Edge-TTS installations stay lean.
+# VieNeu upstream: https://github.com/pnnbao97/VieNeu-TTS
+vieneu==3.8.3
+
+# SDK upstream documents ONNX Runtime 1.24 for its v3 Turbo CPU backend.
+# Latest 1.31.1 rejects external-data symlinks in Hugging Face snapshots
+# (observed in real-model CI), so pin the tested runtime until upstream fixes it.
+onnxruntime==1.24.4

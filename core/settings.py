@@ -72,6 +72,13 @@ DEFAULTS = {
     "pitch_female_min_hz": 165.0,
     "pitch_confidence_low": 0.7,
     # --- TTS ---
+    "tts_provider": "edge",          # "edge" | "vieneu" | "zerotts"
+    "zerotts_model_dir": "model/ZeroTTS",
+    "zerotts_voices": {},
+    "vieneu_voice_male": "Hải Đăng",
+    "vieneu_voice_female": "Mai Anh",
+    "vieneu_backend": "auto",        # "auto" | "onnx" | "pytorch"
+    "vieneu_precision": "fp32",      # CPU ONNX: "fp32" | "int8" (requires VNNI)
     "voice_male": "vi-VN-NamMinhNeural",
     "voice_female": "vi-VN-HoaiMyNeural",
     "tts_rate": "+0%",

@@ -184,10 +184,41 @@ class Orchestrator:
             if final_save_failed:
                 return FAILED
 
+    def _tts_config(self) -> dict:
+        """Audio-defining options pinned to this job, not global UI settings."""
+        p = self.job.project
+        config = {
+            "version": 1,
+            "provider": p.tts_provider,
+            "voice_male": p.voice_male,
+            "voice_female": p.voice_female,
+        }
+        if p.tts_provider == "vieneu":
+            config.update(backend=p.vieneu_backend, precision=p.vieneu_precision,
+                          model="v3turbo")
+        elif p.tts_provider == "zerotts":
+            config.update(model_dir=p.zerotts_model_dir,
+                          speaker_voices=dict(p.zerotts_voices))
+        elif p.tts_provider == "edge":
+            config.update(rate=p.tts_rate, pitch=p.tts_pitch)
+        else:
+            raise ValueError(f"Unsupported TTS provider: {p.tts_provider}")
+        return config
+
     def _has_step(self, step: str) -> bool:
         sub_mode = (self.settings.get("sub_mode", self.job.project.sub_mode)
                     or self.job.project.sub_mode or "burn")
-        return cp.has_step(self.job.job_dir, step, sub_mode=sub_mode)
+        if not cp.has_step(self.job.job_dir, step, sub_mode=sub_mode):
+            return False
+        if step == "tts":
+            meta = cp.load_step(self.job.job_dir, "tts_meta") or {}
+            previous = meta.get("tts_config")
+            # Existing jobs saved before the provider feature used Edge-TTS
+            # and did not record a config fingerprint.
+            if previous is None:
+                return self.job.project.tts_provider == "edge"
+            return previous == self._tts_config()
+        return True
 
     def _first_missing_step(self) -> str:
         for step in STEPS:
@@ -758,8 +789,8 @@ class Orchestrator:
                 segments = synthesize_fn(segments)
 
     def _step_tts(self):
-        from tts import edge_tts as metts
         from tts import duration_fit as mfit
+        from tts.provider import create_tts
         from media import extract as mextract
         from core.release_quality import assert_dub_ready
         job = self.job
@@ -769,24 +800,22 @@ class Orchestrator:
         # Overnight mode must not silently export incomplete Chinese lines.
         assert_dub_ready(segments)
         tts_dir = job.stages_dir / "tts"
-        if s.get("tts_provider") == "zerotts":
-            from tts.zerotts_local import ZeroTTSLocal
-            tts = ZeroTTSLocal(
-                model_dir=s.get("zerotts_model_dir", "model/ZeroTTS"),
-                voices=s.get("zerotts_voices", {}), local_only=True)
-            synth = lambda segs: tts.synthesize(segs, tts_dir)
-        elif (s.get("tts_provider") or "edge") == "edge":
-            tts = metts.EdgeTTS(
-                voice_male=s.get("voice_male"), voice_female=s.get("voice_female"),
-                rate=s.get("tts_rate", "+0%"), pitch=s.get("tts_pitch", "+0Hz"),
-                concurrency=int(s.get("tts_concurrency", 10)))
-            synth = lambda segs: self._synthesize_tts(tts, segs, tts_dir)
-        else:
-            raise ValueError(
-                f"Unsupported TTS provider: {s.get('tts_provider')!r}; "
-                "install and select a supported provider instead of silently using Edge-TTS")
-        segments = synth(segments)
-        segments, decisions = self._fit_and_track(segments, tts_dir, synth)
+        # Pin the provider/voices on each project (including resumes), not
+        # whichever global choice the user made for a different job later.
+        tts = create_tts(
+            s, provider=job.project.tts_provider,
+            voice_male=job.project.voice_male,
+            voice_female=job.project.voice_female,
+            vieneu_backend=job.project.vieneu_backend,
+            vieneu_precision=job.project.vieneu_precision,
+            zerotts_model_dir=job.project.zerotts_model_dir,
+            zerotts_voices=dict(job.project.zerotts_voices),
+            rate=job.project.tts_rate,
+            pitch=job.project.tts_pitch)
+        segments = self._synthesize_tts(tts, segments, tts_dir)
+        segments, decisions = self._fit_and_track(
+            segments, tts_dir,
+            lambda segs: self._synthesize_tts(tts, segs, tts_dir))
         mfit.apply_plan(decisions)
         extract_data = cp.load_step(job.job_dir, "extract") or {}
         wav_path = extract_data.get("wav_path", "")
@@ -801,7 +830,8 @@ class Orchestrator:
         dub_track = mfit.build_track(segments, tts_dir / "dub_track.wav", total)
         pio.save_segments(job.job_dir, "tts", segments)
         cp.save_step(job.job_dir, "tts_meta",
-                     {"dub_track": str(dub_track), "total_sec": total})
+                     {"dub_track": str(dub_track), "total_sec": total,
+                      "tts_config": self._tts_config()})
 
     def _step_mix(self):
         from media import mix as mmix

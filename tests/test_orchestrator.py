@@ -21,36 +21,39 @@ class StubOrchestrator(Orchestrator):
         self.fail_on = None
 
     def _run_step(self, step):
+        """Stub external work, but exercise the REAL production step lifecycle.
+
+        This keeps review intent, checkpoint validation and resume behavior
+        under test after the repository's recovery design evolved.
+        """
         self.called.append(step)
         if self.fail_on == step:
             raise RuntimeError(f"boom at {step}")
-        # Produce real nonempty checkpoint artifacts. The production
-        # validator intentionally rejects fake /tmp/x.mp4 paths.
-        source = Path(self.job.project.video_in)
-        sound = self.job.stages_dir / "fixture.wav"
-        sound.write_bytes(b"wav-test-artifact")
-        track = self.job.stages_dir / "tts" / "dub_track.wav"
-        track.parent.mkdir(parents=True, exist_ok=True)
-        track.write_bytes(b"dub-track-fixture")
-        shapes = {
-            "fetch": {"video_path": str(source)},
-            "extract": {"wav_path": str(sound)},
-            "asr": {"segments": []},
-            "gender": {"speakers": []},
-            "analyze": {"speakers": []},
-            "translate": {"segments": []},
-            "tts": {"segments": []},
-            "mix": {"mixed_wav": str(sound)},
-            "render": {"video_out": str(source)},
-        }
-        cp.save_step(self.job.job_dir, step, shapes[step])
-        if step == "tts":
-            cp.save_step(self.job.job_dir, "tts_meta",
-                         {"dub_track": str(track)})
-        if (step in ("asr", "translate")
-                and self.job.project.effective_review_stops()):
-            # Mirror the production review checkpoint's next-stage pointer.
-            self.job.resume_from = STEPS[STEPS.index(step) + 1]
+
+        def fake_external_stage():
+            video = self.job.job_dir / "stub-video.mp4"
+            audio = self.job.job_dir / "stub-audio.wav"
+            video.write_bytes(b"stub-video")
+            audio.write_bytes(b"stub-audio")
+            shapes = {
+                "fetch": {"video_path": str(video)},
+                "extract": {"wav_path": str(audio)},
+                "asr": {"segments": []},
+                "gender": {"speakers": []},
+                "analyze": {"speakers": []},
+                "translate": {"segments": []},
+                "tts": {"segments": []},
+                "mix": {"mixed_wav": str(audio)},
+                "render": {"video_out": str(video)},
+            }
+            cp.save_step(self.job.job_dir, step, shapes[step])
+            if step == "tts":
+                cp.save_step(self.job.job_dir, "tts_meta", {
+                    "dub_track": str(audio),
+                    "tts_config": self._tts_config(),
+                })
+        setattr(self, f"_step_{step}", fake_external_stage)
+        return super()._run_step(step)
 
 
 def _job(tmp_path, monkeypatch, **proj_kw):
@@ -58,8 +61,10 @@ def _job(tmp_path, monkeypatch, **proj_kw):
     monkeypatch.setattr(jobmod, "JOBS_ROOT", tmp_path / "jobs")
     kw = dict(review_stops=True, overnight=False)
     kw.update(proj_kw)
-    source = tmp_path / "input.mp4"
-    source.write_bytes(b"fake-video-for-checkpoint-tests")
+    # Use a real per-test source identity. Recent core recovery logic hashes
+    # the input and rejects the previous nonexistent /tmp/x.mp4 fixture.
+    source = tmp_path / "source-video.mp4"
+    source.write_bytes(b"test-fixture-source")
     job = Job(project=Project(video_in=str(source), **kw))
     return job
 
@@ -249,6 +254,8 @@ def test_many_unsplittable_lines_do_not_share_split_budget(tmp_path, monkeypatch
     wav = tmp_path / "long.wav"
     import numpy as np
     import soundfile as sf
+    # Keep this within the safety cap in main: unsplittable dialogue may
+    # overflow slightly, but a 2x overrun must fail rather than overlap.
     sf.write(wav, np.zeros(int(1.4 * 44100), dtype=np.float32), 44100)
     segments = [Segment(index=i, start=float(i * 3), end=float(i * 3 + 1),
                         speaker=0, text_vi="ừ", audio_vi=str(wav))
@@ -256,6 +263,19 @@ def test_many_unsplittable_lines_do_not_share_split_budget(tmp_path, monkeypatch
     out, decisions = orch._fit_and_track(segments, tmp_path, lambda items: items)
     assert len(out) == 4
     assert [action for _, action, _ in decisions] == ["overflow"] * 4
+
+
+def test_severe_unsplittable_overflow_is_rejected_not_mixed(tmp_path, monkeypatch):
+    from tts.duration_fit import SevereOverflowError
+    import numpy as np
+    import soundfile as sf
+    orch = _fit_job(tmp_path, monkeypatch)
+    wav = tmp_path / "twice-as-long.wav"
+    sf.write(wav, np.zeros(2 * 44100, dtype=np.float32), 44100)
+    segments = [Segment(index=0, start=0.0, end=1.0, speaker=0,
+                        text_vi="ừ", audio_vi=str(wav))]
+    with pytest.raises(SevereOverflowError):
+        orch._fit_and_track(segments, tmp_path, lambda items: items)
 
 
 def test_fit_gives_up_after_max_rounds(tmp_path, monkeypatch):
