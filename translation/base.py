@@ -152,6 +152,10 @@ class BaseTranslator:
             lines.append(f"[{s.index}] SPEAKER_{s.speaker}{approved_name} "
                          f"({g}): {s.text_src}")
         user = prompts.build_analyze_user(lines)
+        expected_ids = {seg.index for seg in chunk}
+        expected_speakers = {seg.speaker for seg in chunk}
+        if len(expected_ids) != len(chunk):
+            raise ValueError("Duplicate source segment IDs in analysis batch")
         for attempt in range(ANALYZE_RETRIES):
             try:
                 raw = self._chat(prompts.ANALYZE_SYSTEM, user)
@@ -526,10 +530,14 @@ class BaseTranslator:
             ctx0 = max(0, b0 - 2)
             ctx_lines = [f"[{s.index}] {self._line_header(s)}: {s.text_src}"
                          for s in segments[ctx0:b0]]
-            lines = [f"[{s.index}] {self._line_header(s)} "
-                     f"{s.start:.1f}-{s.end:.1f}s"
-                     + (f" [lang={s.source_lang}]" if s.source_lang else "")
-                     + f": {s.text_src}" for s in chunk]
+            lines = [
+                f"[{s.index}]"
+                + (" SOURCE NEEDS REVIEW" if s.needs_review else "")
+                + f" {self._line_header(s)} {s.start:.1f}-{s.end:.1f}s"
+                + (f" [lang={s.source_lang}]" if s.source_lang else "")
+                + f": {s.text_src}"
+                for s in chunk
+            ]
             user = prompts.build_translate_user(rel_table, lines,
                                                 self.proper_nouns,
                                                 ctx_lines or None)
@@ -669,32 +677,74 @@ class BaseTranslator:
 
     def _translate_batch(self, system: str, user: str,
                          chunk: List[Segment]) -> Dict[int, str]:
-        want_ids = [s.index for s in chunk]
+        """Retain valid per-line translations; retry only missing/broken IDs.
+
+        Do not throw away a correct line because a different ID was omitted
+        in a batch, or trust arbitrary extra/duplicate ids from the model.
+        """
+        want_ids = [seg.index for seg in chunk]
+        sources = {seg.index: seg.text_src for seg in chunk}
+        if len(sources) != len(chunk):
+            raise ValueError("Duplicate source IDs in translation batch")
+        best: Dict[int, str] = {}
+        retry_user = user
         last_err = ""
         for attempt in range(TRANSLATE_RETRIES):
             try:
-                raw = self._chat(system, user)
-                data = _parse_json(raw)
-                items = data.get("translations")
-                if not isinstance(items, list):
-                    raise ValueError("thiếu mảng 'translations'")
-                got = {int(it["id"]): str(it["text_vi"]) for it in items}
-                if len(items) != len(want_ids):
-                    raise ValueError("Missing or duplicated translation IDs")
-                if any(not any(c.isalnum() for c in value) for value in got.values()):
-                    raise ValueError("Punctuation-only/unspeakable translation")
-                if sorted(got.keys()) != sorted(want_ids):
-                    raise ValueError(
-                        f"số câu/id không khớp (muốn {want_ids}, được "
-                        f"{sorted(got.keys())})")
-                return got
-            except (ValueError, KeyError, TypeError) as e:
-                last_err = str(e)
-                log.warning("translate batch attempt %d/%d lỗi: %s",
-                            attempt + 1, TRANSLATE_RETRIES, last_err[:200])
-        log.warning("batch dịch thất bại sau %d lần (%s), dịch lẻ từng câu",
-                    TRANSLATE_RETRIES, last_err[:120])
-        return {}
+                payload = _parse_json(self._chat(system, retry_user))
+                rows = payload.get("translations")
+                if not isinstance(rows, list):
+                    raise ValueError("Missing translations array")
+                candidate: Dict[int, str] = {}
+                duplicates = set()
+                bad = 0
+                for row in rows:
+                    if not isinstance(row, dict):
+                        bad += 1
+                        continue
+                    index = row.get("id")
+                    if type(index) is not int or index not in sources:
+                        bad += 1
+                        continue
+                    if index in candidate or index in duplicates:
+                        candidate.pop(index, None)
+                        duplicates.add(index)
+                        bad += 1
+                        continue
+                    value = row.get("text_vi")
+                    if not isinstance(value, str) or not value.strip():
+                        bad += 1
+                        continue
+                    value = value.strip()
+                    if not any(ch.isalnum() for ch in value):
+                        bad += 1
+                        continue
+                    if re.search(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", value):
+                        # Vietnamese speech must not contain untouched
+                        # Chinese/Japanese/Korean source script fragments.
+                        bad += 1
+                        continue
+                    candidate[index] = value
+                for idx, val in candidate.items():
+                    best.setdefault(idx, val)
+                missing = [idx for idx in want_ids if idx not in best]
+                if not missing:
+                    return {idx: best[idx] for idx in want_ids}
+                last_err = f"Missing usable IDs: {missing}; invalid rows: {bad}"
+            except (ValueError, KeyError, TypeError) as exc:
+                last_err = str(exc)
+                missing = [idx for idx in want_ids if idx not in best]
+            log.warning("translate batch attempt %d/%d: %s",
+                        attempt + 1, TRANSLATE_RETRIES, last_err[:200])
+            retry_user = (
+                user + "\n\nCorrection: translate only missing target IDs "
+                + str(missing) +
+                ". Keep all required clauses, use natural Vietnamese, "
+                "and do not return source-script characters or extra IDs."
+            )
+        log.warning("Batch partial result after %d retries; %d/%d usable",
+                    TRANSLATE_RETRIES, len(best), len(want_ids))
+        return {idx: best[idx] for idx in want_ids if idx in best}
 
     def _translate_single(self, system: str, rel_table: List[str],
                           seg: Segment, context=None) -> str:
