@@ -251,7 +251,9 @@ def test_many_unsplittable_lines_do_not_share_split_budget(tmp_path, monkeypatch
     wav = tmp_path / "long.wav"
     import numpy as np
     import soundfile as sf
-    sf.write(wav, np.zeros(2 * 44100, dtype=np.float32), 44100)
+    # Keep this within the safety cap in main: unsplittable dialogue may
+    # overflow slightly, but a 2x overrun must fail rather than overlap.
+    sf.write(wav, np.zeros(int(1.4 * 44100), dtype=np.float32), 44100)
     segments = [Segment(index=i, start=float(i * 3), end=float(i * 3 + 1),
                         speaker=0, text_vi="ừ", audio_vi=str(wav))
                 for i in range(4)]
