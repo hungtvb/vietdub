@@ -585,18 +585,16 @@ class Orchestrator:
         self.logger.info("dịch xong bằng %s: %d câu", used, len(segments))
 
     def _synthesize_tts(self, tts, segments, tts_dir):
-        """TTS with fallback: Edge-TTS first, gTTS (single voice) when Edge
-        fails for ALL sentences (DESIGN.md fallback table, edge case 6)."""
-        from tts import edge_tts as metts
-        from tts import gtts as mgtts
-        try:
-            return tts.synthesize(segments, tts_dir)
-        except metts.TTSError as e:
-            self.logger.warning(
-                "Edge-TTS lỗi toàn bộ (%s), chuyển sang gTTS (giọng đơn, "
-                "không phân biệt nam/nữ)", str(e).split("\n")[0][:160])
-            g = mgtts.GTTS()
-            return g.synthesize(segments, tts_dir)
+        """Fail closed on missing speech or provider failures; never hide errors."""
+        voiced = tts.synthesize(segments, tts_dir)
+        for seg in voiced:
+            if not seg.audio_vi or not Path(seg.audio_vi).is_file():
+                raise RuntimeError(
+                    f"Câu {seg.index} không có file giọng đọc TTS; "
+                    "không được thay âm thanh lỗi bằng khoảng lặng hoặc "
+                    "tự đổi voice provider. Hãy chạy lại bước TTS."
+                )
+        return voiced
 
     def _fit_and_track(self, segments, tts_dir, synthesize_fn):
         """Split-and-retry loop for too-long sentences (edge case 1).
