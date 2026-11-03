@@ -184,16 +184,35 @@ def test_fit_gives_up_after_max_rounds(tmp_path, monkeypatch):
     assert "3 lần" in str(e.value)
 
 
-def test_tts_falls_back_to_gtts(tmp_path, monkeypatch):
-    # Edge-TTS total failure -> gTTS (single voice), logged
+def test_tts_provider_failure_cannot_silently_change_voice(tmp_path, monkeypatch):
     from tts import edge_tts as metts
-    from tts import gtts as mgtts
     orch = _fit_job(tmp_path, monkeypatch)
     bad_tts = mock.Mock()
     bad_tts.synthesize.side_effect = metts.TTSError("websocket down")
-    fake_g = mock.Mock()
-    fake_g.synthesize.side_effect = lambda segs, d: segs
-    monkeypatch.setattr(mgtts, "GTTS", lambda: fake_g)
-    out = orch._synthesize_tts(bad_tts, [_long_seg()], tmp_path)
-    assert fake_g.synthesize.called
-    assert out[0].text_vi
+    with pytest.raises(metts.TTSError, match="websocket down"):
+        orch._synthesize_tts(bad_tts, [_long_seg()], tmp_path)
+
+
+def test_tts_missing_wav_is_blocking_error(tmp_path, monkeypatch):
+    orch = _fit_job(tmp_path, monkeypatch)
+    tts = mock.Mock()
+    segment = _long_seg()
+    segment.audio_vi = str(tmp_path / "never-generated.wav")
+    tts.synthesize.return_value = [segment]
+    with pytest.raises(RuntimeError, match="không có file giọng đọc"):
+        orch._synthesize_tts(tts, [segment], tmp_path)
+
+
+def test_unsplittable_severe_overflow_is_rejected(tmp_path, monkeypatch):
+    from tts.duration_fit import SevereOverflowError
+    import numpy as np
+    import soundfile as sf
+    orch = _fit_job(tmp_path, monkeypatch)
+    wav = tmp_path / "too-long.wav"
+    sf.write(wav, np.zeros(2 * 44100, dtype=np.float32), 44100)
+    seg = _long_seg()
+    seg.start, seg.end = 0.0, 1.0
+    seg.text_vi = "ừ"
+    seg.audio_vi = str(wav)
+    with pytest.raises(SevereOverflowError):
+        orch._fit_and_track([seg], tmp_path, lambda entries: entries)
