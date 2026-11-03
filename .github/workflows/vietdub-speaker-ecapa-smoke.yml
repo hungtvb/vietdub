@@ -1,0 +1,90 @@
+name: VietDub real ECAPA embedding smoke
+
+on:
+  push:
+    branches: [ci/run-vietdub-20261016]
+    paths:
+      - '.github/workflows/vietdub-speaker-ecapa-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-voice-embedding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: "4"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU voice verification engine
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg libsndfile1
+          python -m pip install --upgrade pip
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-speaker-v2.txt
+          pip install numpy pytest
+      - name: Cache speaker model weights between CI checks
+        uses: actions/cache@v4
+        with:
+          path: .speaker_models
+          key: ${{ runner.os }}-vietdub-speechbrain-ecapa-v1
+      - name: Download independent public speech sample clips
+        run: |
+          mkdir -p samples .speaker_models
+          curl --fail --location --retry 3 \
+            'https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb/resolve/main/example1.wav' \
+            -o samples/example1.wav
+          curl --fail --location --retry 3 \
+            'https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb/resolve/main/example2.flac' \
+            -o samples/example2.flac
+          ffmpeg -hide_banner -loglevel error -y -i samples/example1.wav \
+            -ac 1 -ar 16000 samples/one.wav
+          ffmpeg -hide_banner -loglevel error -y -i samples/example2.flac \
+            -ac 1 -ar 16000 samples/two.wav
+          test -s samples/one.wav
+          test -s samples/two.wav
+      - name: Extract two REAL ECAPA voice embeddings and validate cosine
+        env:
+          VIETDUB_SPEAKER_MODEL_CACHE: ${{ github.workspace }}/.speaker_models
+        run: |
+          python - <<'PY'
+          import json
+          import math
+          from pathlib import Path
+          from speaker.voice_similarity import extract_embedding, cosine_similarity, MODEL
+          v1 = extract_embedding('samples/one.wav')
+          v2 = extract_embedding('samples/two.wav')
+          own = cosine_similarity(v1, v1)
+          cross = cosine_similarity(v1, v2)
+          assert len(v1) == len(v2) and len(v1) > 8
+          assert abs(own - 1.0) < 1e-5
+          assert math.isfinite(cross) and -1 <= cross <= 1
+          report = {
+             'status': 'REAL_ECAPA_EMBEDDINGS_EXTRACTED',
+             'source': 'speechbrain public sample audio',
+             'model': MODEL,
+             'embedding_dimensions': len(v1),
+             'self_cosine': own,
+             'cross_sample_cosine': cross,
+             'metric_is_identity_probability': False,
+             'human_reference_verified': False,
+             'voice_identity_automatically_approved': False,
+          }
+          Path('samples/report.json').write_text(json.dumps(report, indent=2))
+          print(json.dumps(report))
+          PY
+      - name: Upload technical test report (no user audio/embeddings)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vietdub-ecapa-real-voice-check
+          path: samples/report.json
+          if-no-files-found: warn
+          retention-days: 14

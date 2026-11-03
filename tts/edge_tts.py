@@ -89,6 +89,8 @@ class EdgeTTS:
 
     async def _synthesize_one(self, item: Dict, sem: asyncio.Semaphore) -> bool:
         path = Path(item["filename"])
+        # Reuse is allowed only after the cache manifest was validated in
+        # synthesize(). A surviving WAV alone may have the wrong voice/text.
         text = (item["text"] or "").strip()
         if not text:
             return False
@@ -101,8 +103,21 @@ class EdgeTTS:
                                            timeout=SAVE_TIMEOUT)
                     if not _vail_file(mp3_tmp, min_bytes=512):
                         raise RuntimeError("TTS trả về file rỗng")
-                    self._mp3_to_wav(mp3_tmp, str(path))
-                    Path(mp3_tmp).unlink(missing_ok=True)
+                    # Never overwrite the last valid cached WAV until the
+                    # replacement is fully decoded and verified. A failed
+                    # synthesis must leave the old voice/text cache intact.
+                    staged_wav = str(path) + ".part.wav"
+                    try:
+                        self._mp3_to_wav(mp3_tmp, staged_wav)
+                        if not _vail_file(staged_wav):
+                            raise RuntimeError("TTS replacement WAV incomplete")
+                        # Remove the old manifest BEFORE replacing audio;
+                        # a crash cannot associate old text with new voice.
+                        path.with_suffix(".md5").unlink(missing_ok=True)
+                        Path(staged_wav).replace(path)
+                    finally:
+                        Path(mp3_tmp).unlink(missing_ok=True)
+                        Path(staged_wav).unlink(missing_ok=True)
                     return True
                 except asyncio.TimeoutError:
                     log.warning("TTS timeout câu %s (lần %d)", item["index"],
@@ -131,8 +146,8 @@ class EdgeTTS:
         sem = asyncio.Semaphore(self.concurrency)
         results = await asyncio.gather(
             *(self._synthesize_one(it, sem) for it in queue))
-        for item, succeeded in zip(queue, results):
-            item["succeeded"] = succeeded
+        for entry, success in zip(queue, results):
+            entry["succeeded"] = bool(success)
         ok = sum(1 for r in results if r)
         return {"ok": ok, "err": len(results) - ok}
 
@@ -158,9 +173,9 @@ class EdgeTTS:
                     and key_file.read_text().strip() == key:
                 seg.audio_vi = str(fname)
                 continue
-            # A stale WAV is not valid audio for this segment. The queued
-            # worker must regenerate it; never allow duration_fit to reuse it
-            # if the request fails.
+            # Keep the previous valid cache on disk while resynthesizing,
+            # but NEVER expose it to the new segment or reuse it on error.
+            # _synthesize_one writes a fully validated replacement atomically.
             seg.audio_vi = ""
             queue.append({"index": seg.index, "text": text,
                           "voice": self.voice_for(seg.gender),
@@ -182,12 +197,14 @@ class EdgeTTS:
                     "tới Microsoft), thử lại sau ít phút.")
             for it in queue:
                 if it.get("succeeded") and _vail_file(it["filename"]):
+                    Path(it["filename"]).with_suffix(".md5").write_text(
+                        it["cache_key"], encoding="utf-8")
                     it["seg"].audio_vi = it["filename"]
                     Path(it["filename"]).with_suffix(".md5").write_text(
                         it["cache_key"], encoding="utf-8")
                 else:
                     it["seg"].audio_vi = ""
-                    log.warning("câu %d TTS lỗi -> chèn im lặng ở bước khớp giờ",
+                    log.warning("câu %d TTS thất bại; không lưu cache thành công",
                                 it["index"])
         if progress_cb:
             progress_cb(len(segments), len(segments))

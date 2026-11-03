@@ -1,6 +1,7 @@
 # Orchestrator: review stops, overnight enforcement, resume, failure.
 # Heavy steps are stubbed; the integration test runs the real ones.
 from unittest import mock
+from pathlib import Path
 
 import pytest
 
@@ -23,18 +24,33 @@ class StubOrchestrator(Orchestrator):
         self.called.append(step)
         if self.fail_on == step:
             raise RuntimeError(f"boom at {step}")
+        # Produce real nonempty checkpoint artifacts. The production
+        # validator intentionally rejects fake /tmp/x.mp4 paths.
+        source = Path(self.job.project.video_in)
+        sound = self.job.stages_dir / "fixture.wav"
+        sound.write_bytes(b"wav-test-artifact")
+        track = self.job.stages_dir / "tts" / "dub_track.wav"
+        track.parent.mkdir(parents=True, exist_ok=True)
+        track.write_bytes(b"dub-track-fixture")
         shapes = {
-            "fetch": {"video_path": "/tmp/x.mp4"},
-            "extract": {"wav_path": "/tmp/x.wav"},
+            "fetch": {"video_path": str(source)},
+            "extract": {"wav_path": str(sound)},
             "asr": {"segments": []},
             "gender": {"speakers": []},
             "analyze": {"speakers": []},
             "translate": {"segments": []},
             "tts": {"segments": []},
-            "mix": {"mixed_wav": "/tmp/x.wav"},
-            "render": {"video_out": "/tmp/x.mp4"},
+            "mix": {"mixed_wav": str(sound)},
+            "render": {"video_out": str(source)},
         }
         cp.save_step(self.job.job_dir, step, shapes[step])
+        if step == "tts":
+            cp.save_step(self.job.job_dir, "tts_meta",
+                         {"dub_track": str(track)})
+        if (step in ("asr", "translate")
+                and self.job.project.effective_review_stops()):
+            # Mirror the production review checkpoint's next-stage pointer.
+            self.job.resume_from = STEPS[STEPS.index(step) + 1]
 
 
 def _job(tmp_path, monkeypatch, **proj_kw):
@@ -42,7 +58,9 @@ def _job(tmp_path, monkeypatch, **proj_kw):
     monkeypatch.setattr(jobmod, "JOBS_ROOT", tmp_path / "jobs")
     kw = dict(review_stops=True, overnight=False)
     kw.update(proj_kw)
-    job = Job(project=Project(video_in="/tmp/x.mp4", **kw))
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"fake-video-for-checkpoint-tests")
+    job = Job(project=Project(video_in=str(source), **kw))
     return job
 
 
@@ -225,17 +243,17 @@ def test_fit_unsplittable_gets_overflow(tmp_path, monkeypatch):
 
 
 def test_many_unsplittable_lines_do_not_share_split_budget(tmp_path, monkeypatch):
+    # Every line has its own split budget; each may overflow lightly.
+    # A 2x overrun must fail the 1.5x safety limit, not count as success.
     orch = _fit_job(tmp_path, monkeypatch)
     wav = tmp_path / "long.wav"
     import numpy as np
     import soundfile as sf
-    sf.write(wav, np.zeros(2 * 44100, dtype=np.float32), 44100)
+    sf.write(wav, np.zeros(int(1.4 * 44100), dtype=np.float32), 44100)
     segments = [Segment(index=i, start=float(i * 3), end=float(i * 3 + 1),
                         speaker=0, text_vi="ừ", audio_vi=str(wav))
                 for i in range(4)]
-
     out, decisions = orch._fit_and_track(segments, tmp_path, lambda items: items)
-
     assert len(out) == 4
     assert [action for _, action, _ in decisions] == ["overflow"] * 4
 
@@ -263,12 +281,35 @@ def test_fit_gives_up_after_max_rounds(tmp_path, monkeypatch):
     assert "3 lần" in str(e.value)
 
 
-def test_tts_propagates_edge_failure(tmp_path, monkeypatch):
-    # The configured Edge-TTS provider is the only TTS backend.
+def test_tts_provider_failure_cannot_silently_change_voice(tmp_path, monkeypatch):
     from tts import edge_tts as metts
     orch = _fit_job(tmp_path, monkeypatch)
     bad_tts = mock.Mock()
     bad_tts.synthesize.side_effect = metts.TTSError("websocket down")
     with pytest.raises(metts.TTSError, match="websocket down"):
         orch._synthesize_tts(bad_tts, [_long_seg()], tmp_path)
-    bad_tts.synthesize.assert_called_once()
+
+
+def test_tts_missing_wav_is_blocking_error(tmp_path, monkeypatch):
+    orch = _fit_job(tmp_path, monkeypatch)
+    tts = mock.Mock()
+    segment = _long_seg()
+    segment.audio_vi = str(tmp_path / "never-generated.wav")
+    tts.synthesize.return_value = [segment]
+    with pytest.raises(RuntimeError, match="không có file giọng đọc"):
+        orch._synthesize_tts(tts, [segment], tmp_path)
+
+
+def test_unsplittable_severe_overflow_is_rejected(tmp_path, monkeypatch):
+    from tts.duration_fit import SevereOverflowError
+    import numpy as np
+    import soundfile as sf
+    orch = _fit_job(tmp_path, monkeypatch)
+    wav = tmp_path / "too-long.wav"
+    sf.write(wav, np.zeros(2 * 44100, dtype=np.float32), 44100)
+    seg = _long_seg()
+    seg.start, seg.end = 0.0, 1.0
+    seg.text_vi = "ừ"
+    seg.audio_vi = str(wav)
+    with pytest.raises(SevereOverflowError):
+        orch._fit_and_track([seg], tmp_path, lambda entries: entries)

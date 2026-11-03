@@ -140,3 +140,44 @@ def test_rate_pitch_cleaned():
     tts2 = metts.EdgeTTS(rate="bogus", pitch="bogus")
     assert tts2.rate == "+0%"
     assert tts2.pitch == "+0Hz"
+
+
+
+def test_changed_text_invalidates_audio_cache_and_resynthesizes(tmp_path):
+    tts = metts.EdgeTTS(communicate_factory=_factory, retries=0,
+                        concurrency=1)
+    out = tmp_path / "cache"
+    lines = _segs(1)
+    tts.synthesize(lines, out)
+    assert FakeComm.calls == 1
+    audio = Path(lines[0].audio_vi)
+    assert audio.is_file()
+    lines[0].text_vi = "Bản dịch tiếng Việt đã được sửa"
+    tts.synthesize(lines, out)
+    assert FakeComm.calls == 2, "Stale audio must not survive changed text"
+    assert audio.is_file()
+    # Same new text and voice must reuse the successful cache.
+    tts.synthesize(lines, out)
+    assert FakeComm.calls == 2
+
+
+def test_failed_replacement_cannot_reuse_old_voice(tmp_path):
+    tts = metts.EdgeTTS(communicate_factory=_factory, retries=0,
+                        concurrency=1)
+    out = tmp_path / "failure_cache"
+    lines = _segs(2)
+    tts.synthesize(lines, out)
+    assert all(Path(s.audio_vi).is_file() for s in lines)
+    # Keep the prior valid cache recoverable, but never attach it to a
+    # job whose text/voice identity has changed and resynthesis failed.
+    old_wav = [(out / f"seg_{i:04d}.wav").read_bytes() for i in range(2)]
+    old_manifest = [(out / f"seg_{i:04d}.md5").read_text() for i in range(2)]
+    lines[0].text_vi = "Đổi toàn bộ lời thoại"
+    lines[1].text_vi = "Đổi lời thoại thứ hai"
+    FakeComm.fail_at = FakeComm.calls + 1
+    with pytest.raises(metts.TTSError, match="thất bại toàn bộ"):
+        tts.synthesize(lines, out)
+    assert all(not seg.audio_vi for seg in lines)
+    for index in range(2):
+        assert (out / f"seg_{index:04d}.wav").read_bytes() == old_wav[index]
+        assert (out / f"seg_{index:04d}.md5").read_text() == old_manifest[index]

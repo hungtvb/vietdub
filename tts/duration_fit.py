@@ -34,7 +34,7 @@ log = logging.getLogger("vietdub.duration_fit")
 ATEMPO_MIN = 0.8
 ATEMPO_MAX = 1.25
 SHORT_SLOT_SEC = 0.5  # edge case 2: slots shorter than this can't be split
-MAX_OVERFLOW_RATIO = 1.50  # >20% spill after the default 1.25x tempo cap
+MAX_OVERFLOW_RATIO = 1.50  # limit overlapping or clipped spoken dialogue
 
 SAMPLE_RATE = 44100
 
@@ -52,11 +52,10 @@ class TooLongError(Exception):
 
 
 class SevereOverflowError(Exception):
-    """A dubbing line would overrun its timing slot by too much to be usable."""
+    """Dubbed speech would extend too far past its original timing slot."""
 
     def __init__(self, segment: Segment, ratio: float):
-        self.segment = segment
-        self.ratio = ratio
+        self.segment, self.ratio = segment, ratio
         super().__init__(
             f"Câu {segment.index}: TTS dài {ratio:.2f}x so với khung giờ; "
             "không thể xuất an toàn. Rút ngắn bản dịch hoặc chỉnh thời gian "
@@ -145,8 +144,8 @@ def plan(segments: List[Segment],
             # atempo factor = ratio (e.g. 1.2x faster); within [0.8, 1.25]
             decisions.append((seg, "atempo", ratio))
         elif slot < SHORT_SLOT_SEC or id(seg) in force:
-            # Only LIGHT overflow is acceptable. A 3-5x spoken-time overrun
-            # causes overlap/clipped words at the next sentence boundary.
+            # Preserve the stricter main-branch cap: never emit egregiously
+            # overlong speech that will overlap a subsequent utterance.
             if ratio > MAX_OVERFLOW_RATIO:
                 raise SevereOverflowError(seg, ratio)
             log.warning("câu %d (%.1fs) quá ngắn/không tách được, nén tối đa "
@@ -212,15 +211,15 @@ def _place_segment(buf: np.ndarray, chunk_start: float, seg: Segment,
             f"câu {seg.index}: sample rate {file_sr} != {sr}, không khớp track")
     if data.ndim > 1:
         data = data.mean(axis=1)
-    dest_start = int(round((seg.start - chunk_start) * sr))
-    if dest_start >= chunk_len:
-        return
-    source_start = max(0, int(round((chunk_start - seg.start) * sr)))
-    dest_start = max(0, dest_start)
-    copy_len = min(chunk_len - dest_start, len(data) - source_start)
-    if copy_len > 0:
-        buf[dest_start:dest_start + copy_len] += \
-            data[source_start:source_start + copy_len]
+    # If a sentence crosses a chunk boundary, the second chunk must
+    # consume its LATER samples. Starting from data[0] repeats the first
+    # half of the spoken word and breaks continuity at 60-second borders.
+    start = int(round((seg.start - chunk_start) * sr))
+    dst_offset = max(0, start)
+    src_offset = max(0, -start)
+    count = min(chunk_len - dst_offset, len(data) - src_offset)
+    if count > 0:
+        buf[dst_offset:dst_offset + count] += data[src_offset:src_offset + count]
 
 
 def build_track(segments: List[Segment], out_wav: str | Path,

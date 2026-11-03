@@ -27,7 +27,9 @@ from PySide6.QtWidgets import (QBoxLayout, QCheckBox, QComboBox, QFileDialog,
 from core.job import Job
 from core.settings import Settings
 from media import _bin as mbin
-from ui.common import confirm_box, error_box, fmt_time
+from project.schema import Project
+from asr.source_language import LANGUAGES, normalize_language
+from ui.common import confirm_box, error_box, fmt_size, fmt_time, info_box
 from ui.theme import APP_BACKGROUND, UI_COLORS
 
 VIDEO_FILTER = ("Video (*.mp4 *.mkv *.avi *.mov *.webm *.ts *.m4v);;"
@@ -191,10 +193,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.settings = settings or Settings()
         mbin.configure(self.settings.get("ffmpeg_path"))
-        self.setWindowTitle("VietDub — Lồng tiếng video Trung sang Việt")
-        self.setStyleSheet(f"QWidget#appRoot, QWidget#mainShell {{ background: {APP_BACKGROUND}; }}")
-        self.resize(800, 790)
-        self.setMinimumSize(620, 500)
+        self.setWindowTitle("VietDub — Lồng tiếng video đa ngôn ngữ sang tiếng Việt")
+        self.resize(640, 720)
 
         self.job: Job | None = None          # tạo khi cần (tải link / bắt đầu)
         self.video_path: str = ""            # file local sẵn sàng xử lý
@@ -650,6 +650,18 @@ class MainWindow(QMainWindow):
         self.provider.setCurrentIndex(max(0, self.provider.findData(cur)))
         pf = QFormLayout()
         pf.addRow("Nguồn dịch:", self.provider)
+        # Selection belongs to each video job, never to a hard-coded film.
+        self.source_lang = QComboBox()
+        for code, label in LANGUAGES.items():
+            self.source_lang.addItem(label, code)
+        desired_lang = normalize_language(
+            self.settings.get("source_language", "auto"))
+        self.source_lang.setCurrentIndex(max(
+            0, self.source_lang.findData(desired_lang)))
+        self.source_lang.setToolTip(
+            "Tự động: nhận diện tiếng nói từ nhiều đoạn audio trước ASR. "
+            "Có thể chọn tay nếu video ít lời hoặc nhận diện chưa chính xác.")
+        pf.addRow("Ngôn ngữ video:", self.source_lang)
         lay.addLayout(pf)
 
         self.chk_review = QCheckBox("Dừng để duyệt phụ đề và bản dịch")
@@ -868,6 +880,9 @@ class MainWindow(QMainWindow):
         proj.overnight = self.chk_overnight.isChecked()
         proj.audio_track = int(audio_track)
         proj.proper_nouns = list(self.settings.get("proper_nouns", []))
+        proj.src_lang = self.source_lang.currentData() or "auto"
+        proj.detected_src_lang = "und"
+        proj.language_review_required = False
 
         # lưu lựa chọn nhanh vào settings để mở lại app vẫn giữ
         self.settings.set("voice_male", proj.voice_male)
@@ -875,6 +890,7 @@ class MainWindow(QMainWindow):
         self.settings.set("translate_provider", provider)
         self.settings.set("review_stops", proj.review_stops)
         self.settings.set("overnight", proj.overnight)
+        self.settings.set("source_language", proj.src_lang)
         self.settings.save()
 
         from project import io as pio
