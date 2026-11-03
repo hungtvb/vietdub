@@ -694,6 +694,9 @@ class MainWindow(QMainWindow):
             self.voice_female.currentText().strip(), "female", btn_pf))
         row_f.addWidget(btn_pf)
         self._preview_buttons.append(btn_pf)
+        # Initial provider selection happens before preview buttons exist.
+        # Reapply the disabled state once they have been constructed.
+        self._on_tts_provider_changed()
         vg.addRow("Giọng nam:", row_m)
         vg.addRow("Giọng nữ:", row_f)
         lay.addLayout(vg)
