@@ -18,6 +18,7 @@ soundfile                   # wav read/write
 edge-tts                    # Vietnamese dubbing voices
 openai                      # OpenAI-compatible API client
 requests                    # HTTP (Ollama health check, Google fallback)
+requests-toolbelt>=1.0,<2   # streaming STT uploads (avoid full WAV buffering)
 yt-dlp                      # step [0]: download video from link
 numpy
 

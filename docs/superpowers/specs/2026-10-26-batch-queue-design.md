@@ -1,4 +1,8 @@
+> **Hồ sơ lịch sử:** nội dung này ghi nhận bối cảnh, quyết định và kế hoạch tại thời điểm tạo; không phải hướng dẫn runtime hoặc trạng thái release hiện tại. Dùng [ARCHITECTURE.md](../../ARCHITECTURE.md), [WORKFLOWS.md](../../WORKFLOWS.md) và [mục lục tài liệu](../../README.md) để tra cứu trạng thái hiện hành.
+
 # VietDub Sequential Batch Queue — Design
+
+**Status:** Implemented; the current queue is persistent and recovery-aware. See [ARCHITECTURE.md](../../ARCHITECTURE.md).
 
 ## Intent
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Callable, Dict, List
+from typing import Callable
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QGuiApplication
@@ -158,9 +158,28 @@ class ReviewSourceWindow(QWidget):
         self.resize(1180, 760)
         self.setMinimumSize(700, 500)
 
-        self.segments: List[Segment] = pio.load_segments(job.job_dir, "asr") or []
-        self.speakers: Dict[int, Speaker] = \
-            pio.load_speakers(job.job_dir, "gender") or {}
+        # The source-review checkpoint is separate from the completed gender
+        # stage. Prefer it after Back/restart, while falling back to gender.json
+        # for jobs created before this distinction existed.
+        source_review = cp.load_step(job.job_dir, "source_review")
+        if source_review is not None:
+            self.segments = [Segment.from_dict(row)
+                             for row in source_review["segments"]]
+            self.speakers = {
+                row["id"]: Speaker.from_dict(row)
+                for row in source_review["speakers"]
+            }
+        else:
+            self.segments = pio.load_segments(job.job_dir, "asr") or []
+            self.speakers = pio.load_speakers(job.job_dir, "gender") or {}
+            # Older versions stored source-review choices directly in the
+            # gender checkpoint while leaving the ASR segment labels blank.
+            # Hydrate the table from that data so its next save can migrate it.
+            for segment in self.segments:
+                speaker = self.speakers.get(segment.speaker)
+                if (not segment.gender and speaker
+                        and speaker.gender in {"male", "female"}):
+                    segment.gender = speaker.gender
 
         self._player: QMediaPlayer | None = None
         self._audio_out: QAudioOutput | None = None
@@ -514,23 +533,38 @@ class ReviewSourceWindow(QWidget):
             seg.audience = aud
             seg.text_src = self.tbl.item(r, 6).text()
         # đồng bộ giới tính vào speakers (bước dịch dùng speakers)
+        selected_gender: dict[int, str] = {}
         for seg in self.segments:
             spk = self.speakers.get(seg.speaker)
             if spk is None:
                 spk = Speaker(id=seg.speaker)
                 self.speakers[seg.speaker] = spk
             if seg.gender:
-                spk.gender = seg.gender
+                selected_gender[seg.speaker] = seg.gender
+            else:
+                selected_gender.setdefault(seg.speaker, "")
+        for spk_id, gender in selected_gender.items():
+            # A blank choice must clear a stale value loaded from a prior
+            # review checkpoint; later explicit rows for the same speaker
+            # still take precedence, matching the existing last-label rule.
+            self.speakers[spk_id].gender = gender
         return True
 
     def _save_review(self) -> bool:
         if not self._read_table():
             return False
-        action = "lưu phụ đề gốc (asr)"
+        action = "lưu nội dung duyệt tạm thời"
         try:
+            # Persist the complete editable state atomically before touching
+            # the pipeline's ASR checkpoint. If another write fails or the app
+            # exits, the pending review can reopen with the latest edits.
+            cp.save_step(self.job.job_dir, "source_review", {
+                "segments": [segment.to_dict() for segment in self.segments],
+                "speakers": [speaker.to_dict()
+                             for speaker in self.speakers.values()],
+            })
+            action = "lưu phụ đề gốc (asr)"
             pio.save_segments(self.job.job_dir, "asr", self.segments)
-            action = "lưu người nói và giới tính (gender)"
-            pio.save_speakers(self.job.job_dir, "gender", self.speakers)
         except Exception as exc:
             error_box(self, "Chưa lưu được nội dung duyệt",
                       f"Không thể {action}:\n{exc}\n\n"
@@ -544,6 +578,10 @@ class ReviewSourceWindow(QWidget):
             return
         info_box(self, "Đã lưu",
                  f"Đã lưu {len(self.segments)} câu đã duyệt. "
-                 "Chạy tiếp bước phân tích quan hệ và dịch.")
+                 "Chạy tiếp bước ước lượng giới tính, phân tích và dịch.")
         self._close_via_button = True  # on_continue tự đóng window này
-        self.on_continue()
+        try:
+            self.on_continue()
+        finally:
+            if self.isVisible():
+                self._close_via_button = False

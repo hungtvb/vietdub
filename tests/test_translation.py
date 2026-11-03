@@ -473,3 +473,58 @@ def test_translate_user_marks_context_not_to_translate():
     # không context -> không có section context
     u2 = prompts.build_translate_user(["SPEAKER_0: ..."], ["[2] X: y"])
     assert "CONTEXT ONLY" not in u2
+
+
+def test_rejects_single_chinese_word_embedded_in_vietnamese():
+    from translation.base import BaseTranslator
+    src = "这是全世界业务。"
+    assert BaseTranslator._looks_untranslated(
+        src, "Đây là hoạt động trên 全球.") is True
+    assert BaseTranslator._looks_untranslated(
+        src, "Đây là hoạt động toàn cầu.") is False
+
+
+def test_chinese_proper_name_needs_vietnamese_readable_spelling():
+    from translation.base import BaseTranslator
+    assert BaseTranslator._looks_untranslated(
+        "乌兰察布", "乌兰察布", ["乌兰察布"]) is True
+    assert BaseTranslator._looks_untranslated(
+        "乌兰察布", "Ô Lan Sát Bố", ["乌兰察布"]) is False
+    p = prompts.translate_system_with_names(["乌兰察布"])
+    assert "Do not leave source Hanzi" in p
+
+
+def test_mixed_language_source_script_is_not_allowed_in_dub():
+    from translation.base import BaseTranslator
+    assert BaseTranslator._looks_untranslated(
+        "Hello.", "Xin chào 世界") is True
+
+
+def test_empty_or_source_script_in_dub_is_blocked_before_tts():
+    from core.release_quality import assert_dub_ready
+    from project.schema import Segment
+    good = Segment(index=4, start=0, end=2, speaker=0,
+                   text_src="你好", text_vi="Xin chào.")
+    assert assert_dub_ready([good]) is None
+    good.text_vi = "Xin chào 朋友."
+    with pytest.raises(RuntimeError, match="ID"):
+        assert_dub_ready([good])
+    good.text_vi = ""
+    with pytest.raises(RuntimeError):
+        assert_dub_ready([good])
+    with pytest.raises(RuntimeError, match="ASR"):
+        assert_dub_ready([])
+
+
+def test_missing_tts_sentence_is_not_silently_replaced_with_silence(tmp_path):
+    from core.orchestrator import Orchestrator
+    from project.schema import Segment
+
+    class IncompleteTTS:
+        def synthesize(self, segments, output_dir):
+            return segments
+
+    seg = Segment(index=3, start=0, end=2, speaker=0,
+                  text_src="你好", text_vi="Xin chào.")
+    with pytest.raises(RuntimeError, match="không có file giọng"):
+        Orchestrator._synthesize_tts(None, IncompleteTTS(), [seg], tmp_path)

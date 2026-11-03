@@ -38,6 +38,14 @@ QWidget#editorRoot QLabel[role="secondary"] {
     color: @secondary_text@;
     font-size: @type-caption@;
 }
+QWidget#editorRoot QLabel#editorSyncNotice {
+    color: @warning@;
+    background: @control@;
+    border: 1px solid @border@;
+    border-radius: 8px;
+    padding: 7px 9px;
+    font-size: @type-caption@;
+}
 QWidget#editorRoot QLabel#editorTime {
     color: @text@;
     font-size: @type-caption@;

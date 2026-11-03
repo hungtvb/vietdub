@@ -34,6 +34,7 @@ log = logging.getLogger("vietdub.duration_fit")
 ATEMPO_MIN = 0.8
 ATEMPO_MAX = 1.25
 SHORT_SLOT_SEC = 0.5  # edge case 2: slots shorter than this can't be split
+MAX_OVERFLOW_RATIO = 1.50  # >20% spill after the default 1.25x tempo cap
 
 SAMPLE_RATE = 44100
 
@@ -48,6 +49,19 @@ class TooLongError(Exception):
         super().__init__(
             f"Câu {segment.index} dài gấp {ratio:.2f} lần khung giờ "
             f"({segment.start:.1f}-{segment.end:.1f}s): cần tách câu.")
+
+
+class SevereOverflowError(Exception):
+    """A dubbing line would overrun its timing slot by too much to be usable."""
+
+    def __init__(self, segment: Segment, ratio: float):
+        self.segment = segment
+        self.ratio = ratio
+        super().__init__(
+            f"Câu {segment.index}: TTS dài {ratio:.2f}x so với khung giờ; "
+            "không thể xuất an toàn. Rút ngắn bản dịch hoặc chỉnh thời gian "
+            "trong màn review rồi thử lại."
+        )
 
 
 def wav_duration_sec(path: str | Path) -> float:
@@ -131,8 +145,10 @@ def plan(segments: List[Segment],
             # atempo factor = ratio (e.g. 1.2x faster); within [0.8, 1.25]
             decisions.append((seg, "atempo", ratio))
         elif slot < SHORT_SLOT_SEC or id(seg) in force:
-            # edge case 2: too short to split - or not splittable at all:
-            # max squeeze, allow light overflow, warn
+            # Only LIGHT overflow is acceptable. A 3-5x spoken-time overrun
+            # causes overlap/clipped words at the next sentence boundary.
+            if ratio > MAX_OVERFLOW_RATIO:
+                raise SevereOverflowError(seg, ratio)
             log.warning("câu %d (%.1fs) quá ngắn/không tách được, nén tối đa "
                         "%.2fx và cho tràn nhẹ quá slot", seg.index, slot,
                         atempo_max)

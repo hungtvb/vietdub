@@ -13,6 +13,15 @@ def build_adapter(settings, source_language: str | None = "zh",
         "punc_model": settings.get("punc_model"),
         "spk_model": settings.get("spk_model"),
     }
+    if settings.get("asr_backend", "whisper") == "vietdub_stt":
+        from asr.vietdub_stt_adapter import VietDubSTTAdapter
+        from asr.funasr_adapter import FunASRAdapter
+        return VietDubSTTAdapter(
+            stt_url=settings.get("stt_url", "http://127.0.0.1:8768"),
+            quality=settings.get("stt_quality", "fast"),
+            source_language=source_language,
+            proper_nouns=proper_nouns,
+            diarizer=FunASRAdapter(**args))
     if settings.get("asr_backend", "whisper") == "whisper":
         from asr.whisper_adapter import WhisperDiarizationAdapter
         return WhisperDiarizationAdapter(
