@@ -18,15 +18,19 @@ from tts.vieneu_tts import VieNeuTTS, VieNeuTTSError, _cache_key
 
 
 class FakeVieNeu:
-    def __init__(self, fail=False):
+    def __init__(self, fail=False, silent=False):
         self.calls = []
         self.fail = fail
+        self.silent = silent
 
     def infer(self, text, voice):
         self.calls.append((text, voice))
         if self.fail:
             raise RuntimeError("inference failed")
-        return np.zeros(48000, dtype=np.float32)
+        if self.silent:
+            return np.zeros(48000, dtype=np.float32)
+        samples = np.arange(48000, dtype=np.float32)
+        return (0.2 * np.sin(2 * np.pi * 220 * samples / 48000)).astype(np.float32)
 
     def save(self, audio, path):
         sf.write(path, audio, 48000)
@@ -234,3 +238,15 @@ def test_staged_onnx_assets_no_cross_directory_symlink(tmp_path, monkeypatch):
         p = codec / name
         assert p.exists() and not p.is_symlink()
         assert p.resolve().parent == codec.resolve()
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_silent_real_model_output_fails_without_cache(tmp_path):
+    fake = FakeVieNeu(silent=True)
+    tts = VieNeuTTS(engine_factory=lambda *args: fake)
+    seg = sample()
+    with pytest.raises(VieNeuTTSError, match="chuyển WAV"):
+        tts.synthesize([seg], tmp_path)
+    assert seg.audio_vi == ""
+    assert not (tmp_path / "seg_0001.wav").exists()
+    assert not (tmp_path / "seg_0001.md5").exists()
