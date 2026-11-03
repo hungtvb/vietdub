@@ -1,11 +1,12 @@
 """Fast unit checks for actual app ASR integration (no fake model claims)."""
-from asr.whisper_align import associate_aligned_words
+from asr.whisper_align import (associate_aligned_words, aligned_words_cover_source,
+                               forced_align)
 from asr.whisper_pyannote_adapter import construct_segments, assign_speaker
 
 
-def _raw(words, aligned=True):
+def _raw(words, aligned=True, text="Hello! Hi!"):
     return {
-        "id": 5, "start": 0.0, "end": 3.0, "text": "Hello! Hi!",
+        "id": 5, "start": 0.0, "end": 3.0, "text": text,
         "avg_logprob": -.2, "no_speech_prob": .01,
         "alignment_status": "whisperx_aligned" if aligned else "whisper_words_unaligned",
         "words": words
@@ -51,7 +52,8 @@ def test_missing_speaker_is_not_assumed_approved():
 
 
 def test_unaligned_words_are_review_required():
-    evidence = [_raw([{"start": .2, "end": 1.2, "word": "Test"}], aligned=False)]
+    evidence = [_raw([{"start": .2, "end": 1.2, "word": "Test"}],
+                     aligned=False, text="Test")]
     segments, qa, _ = construct_segments(evidence, [
         {"start": 0., "end": 2., "label": "A"}])
     assert segments[0].needs_review
@@ -101,3 +103,53 @@ def test_invalid_parent_timing_rejects_unrecoverable_partial_alignment():
     original["end"] = float("nan")
     with pytest.raises(RuntimeError, match="invalid source timing"):
         construct_segments([original], [{"start": 0., "end": 3., "label": "S1"}])
+
+
+def test_alignment_lexical_coverage_ignores_punctuation_not_missing_words():
+    assert aligned_words_cover_source(
+        "Xin chào, thế giới!", [
+            {"word": "Xin "}, {"word": "chào"}, {"word": " thế giới"}])
+    assert not aligned_words_cover_source(
+        "Hello! Hi!", [{"word": "Hello!"}])
+
+
+def test_valid_timestamps_but_missing_word_restore_full_utterance():
+    evidence = [_raw([{"start": .1, "end": .8, "word": "Hello!"}])]
+    segments, qa, mapping = construct_segments(evidence, [
+        {"start": 0., "end": 3., "label": "S1"}])
+    assert len(segments) == 1
+    assert segments[0].text_src == "Hello! Hi!"
+    assert segments[0].needs_review
+    assert segments[0].speaker == len(mapping)  # UNKNOWN, not guessed
+    assert qa[0]["alignment_status"] == "incomplete_alignment"
+    assert "omit lexical content" in qa[0]["timing_warning"]
+
+
+def test_whisperx_partial_result_is_rejected_before_diarization(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    # WhisperX can omit a token and still return plausible aligned timestamps.
+    fake = SimpleNamespace(
+        load_audio=lambda path: object(),
+        load_align_model=lambda **kwargs: (object(), {}),
+        align=lambda items, model, metadata, audio, device,
+                     return_char_alignments: {
+            "segments": [{"words": [
+                {"start": .1, "end": .8, "word": "Hello!"}]}],
+        },
+    )
+    monkeypatch.setitem(sys.modules, "whisperx", fake)
+    raw = [{**_raw([
+        {"start": .1, "end": .8, "word": "Hello!"},
+        {"start": 1.2, "end": 2.2, "word": " Hi!"},
+    ]), "language": "en"}]
+    result, stats = forced_align(raw, tmp_path / "does-not-need-real-audio.wav")
+    assert result[0]["alignment_status"] == "incomplete_alignment"
+    assert result[0]["words"][0]["word"] == "Hello! Hi!"
+    assert stats["aligned"] == 0
+    assert stats["fallback_to_whisper_words"] == 1
+    segments, qa, _ = construct_segments(result, [
+        {"start": 0., "end": 3., "label": "S1"}])
+    assert segments[0].text_src == "Hello! Hi!"
+    assert segments[0].needs_review
+    assert qa[0]["alignment_status"] == "incomplete_alignment"
