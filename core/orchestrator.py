@@ -171,8 +171,8 @@ class Orchestrator:
             "vsr_mode": str(self._visual_opt("visual_vsr_mode", "sttn-det")),
             "lama_weight_path": str(self._visual_opt("visual_lama_weight_path", "")),
             "lama_weight_stat": (
-                (Path(self._visual_opt("visual_lama_weight_path")).stat().st_size,
-                 Path(self._visual_opt("visual_lama_weight_path")).stat().st_mtime_ns)
+                [Path(self._visual_opt("visual_lama_weight_path")).stat().st_size,
+                 Path(self._visual_opt("visual_lama_weight_path")).stat().st_mtime_ns]
                 if self._visual_opt("visual_lama_weight_path")
                 and Path(self._visual_opt("visual_lama_weight_path")).is_file()
                 else None),
