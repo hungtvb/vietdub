@@ -977,6 +977,11 @@ class MainWindow(QMainWindow):
         provider = self.provider.currentData()
         proj = job.project
         proj.name = Path(video_path).stem
+        # The multilingual selector must be an actual per-job input, not
+        # merely a persisted global UI preference.
+        proj.src_lang = self.source_lang.currentData() or "auto"
+        proj.detected_src_lang = "und"
+        proj.language_review_required = False
         if video_url:
             proj.video_source = "url"
             proj.video_url = video_url
