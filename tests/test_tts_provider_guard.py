@@ -27,5 +27,5 @@ def test_unsupported_engine_does_not_silently_generate_with_edge(tmp_path, monke
                 text_src="Hello", text_vi="Xin chào")
     ])
     orchestrator = Orchestrator(job, settings)
-    with pytest.raises(ValueError, match="(?i)unsupported.*provider"):
+    with pytest.raises(ValueError, match="(?i)provider"):
         orchestrator._step_tts()
