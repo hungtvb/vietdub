@@ -422,31 +422,44 @@ class Orchestrator:
             data.get("wav_path"), segments,
             male_max_hz=float(self.settings.get("pitch_male_max_hz", 160.0)),
             female_min_hz=float(self.settings.get("pitch_female_min_hz", 165.0)))
-        # Tôn trọng sửa tay ở màn duyệt #1 (DESIGN): checkpoint "gender" do
-        # màn duyệt lưu đã chứa gender user đặt -> giữ lại, không để pitch
-        # ghi đè. Chỉ áp dụng khi user đã đặt rõ male/female.
-        manual = pio.load_speakers(job.job_dir, "gender") or {}
+        # Merge the main branch source-review semantics with the multilingual
+        # character-identity review: keep only active speakers, never resurrect
+        # stale labels from a different transcript, and preserve explicit edits.
+        manual = pio.load_speakers(job.job_dir, "source_review")
+        if manual is None:
+            manual = pio.load_speakers(job.job_dir, "gender") or {}
+        active = {seg.speaker for seg in segments}
+        manually_labeled = set()
         for spk_id, mspk in manual.items():
-            if mspk.identity_verified and mspk.character_name:
-                # F0 pitch detection can fail for short/quiet speech. Keep
-                # human-approved character even with no estimated gender.
+            if spk_id not in active:
+                continue
+            if (mspk.gender in ("male", "female")
+                    or (mspk.identity_verified and mspk.character_name)):
                 if spk_id not in speakers:
-                    speakers[spk_id] = Speaker(id=spk_id)
-                speakers[spk_id].character_name = mspk.character_name
-                speakers[spk_id].identity_verified = True
-            if mspk.gender in ("male", "female") and spk_id in speakers:
-                if speakers[spk_id].gender != mspk.gender:
+                    speakers[spk_id] = Speaker.from_dict(mspk.to_dict())
+            estimated = speakers.get(spk_id)
+            if estimated is None:
+                continue
+            if mspk.identity_verified and mspk.character_name:
+                estimated.character_name = mspk.character_name
+                estimated.identity_verified = True
+            if mspk.gender in ("male", "female"):
+                manually_labeled.add(spk_id)
+                if estimated.gender != mspk.gender:
                     self.logger.info(
                         "giữ giới tính do người dùng sửa tay cho loa %d: %s "
-                        "(pitch đoán %s)", spk_id, mspk.gender,
-                        speakers[spk_id].gender)
-                    speakers[spk_id].gender = mspk.gender
-                    speakers[spk_id].confidence = max(
-                        speakers[spk_id].confidence, mspk.confidence)
+                        "(pitch đoán %s)", spk_id, mspk.gender, estimated.gender)
+                    estimated.gender = mspk.gender
+                estimated.confidence = max(
+                    estimated.confidence, mspk.confidence)
+        threshold = float(self.settings.get("pitch_confidence_low", .7))
         for seg in segments:
             spk = speakers.get(seg.speaker)
             if spk:
                 seg.gender = spk.gender
+                if (seg.speaker not in manually_labeled
+                        and spk.confidence < threshold):
+                    seg.needs_review = True
         pio.save_segments(job.job_dir, "asr", segments)  # persist genders
         pio.save_speakers(job.job_dir, "gender", speakers)
 
