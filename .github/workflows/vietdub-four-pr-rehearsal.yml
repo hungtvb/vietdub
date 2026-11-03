@@ -1,4 +1,4 @@
-name: VietDub four-PR integration rehearsal (read-only)
+name: VietDub four-PR integration rehearsal (pinned TTS + visual)
 
 on:
   pull_request:
