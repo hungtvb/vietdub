@@ -47,6 +47,10 @@ class StubOrchestrator(Orchestrator):
         if step == "tts":
             cp.save_step(self.job.job_dir, "tts_meta",
                          {"dub_track": str(track)})
+        if (step in ("asr", "translate")
+                and self.job.project.effective_review_stops()):
+            # Mirror the production review checkpoint's next-stage pointer.
+            self.job.resume_from = STEPS[STEPS.index(step) + 1]
 
 
 def _job(tmp_path, monkeypatch, **proj_kw):
@@ -184,6 +188,22 @@ def test_fit_unsplittable_gets_overflow(tmp_path, monkeypatch):
                                          lambda segs: segs)
     assert decisions[0][1] == "overflow"
     assert len(out) == 1
+
+
+def test_many_unsplittable_lines_do_not_share_split_budget(tmp_path, monkeypatch):
+    # Every line has its own split budget; each may overflow lightly.
+    # A 2x overrun must fail the 1.5x safety limit, not count as success.
+    orch = _fit_job(tmp_path, monkeypatch)
+    wav = tmp_path / "long.wav"
+    import numpy as np
+    import soundfile as sf
+    sf.write(wav, np.zeros(int(1.4 * 44100), dtype=np.float32), 44100)
+    segments = [Segment(index=i, start=float(i * 3), end=float(i * 3 + 1),
+                        speaker=0, text_vi="ừ", audio_vi=str(wav))
+                for i in range(4)]
+    out, decisions = orch._fit_and_track(segments, tmp_path, lambda items: items)
+    assert len(out) == 4
+    assert [action for _, action, _ in decisions] == ["overflow"] * 4
 
 
 def test_fit_gives_up_after_max_rounds(tmp_path, monkeypatch):
