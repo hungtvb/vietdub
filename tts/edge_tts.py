@@ -103,8 +103,21 @@ class EdgeTTS:
                                            timeout=SAVE_TIMEOUT)
                     if not _vail_file(mp3_tmp, min_bytes=512):
                         raise RuntimeError("TTS trả về file rỗng")
-                    self._mp3_to_wav(mp3_tmp, str(path))
-                    Path(mp3_tmp).unlink(missing_ok=True)
+                    # Never overwrite the last valid cached WAV until the
+                    # replacement is fully decoded and verified. A failed
+                    # synthesis must leave the old voice/text cache intact.
+                    staged_wav = str(path) + ".part.wav"
+                    try:
+                        self._mp3_to_wav(mp3_tmp, staged_wav)
+                        if not _vail_file(staged_wav):
+                            raise RuntimeError("TTS replacement WAV incomplete")
+                        # Remove the old manifest BEFORE replacing audio;
+                        # a crash cannot associate old text with new voice.
+                        path.with_suffix(".md5").unlink(missing_ok=True)
+                        Path(staged_wav).replace(path)
+                    finally:
+                        Path(mp3_tmp).unlink(missing_ok=True)
+                        Path(staged_wav).unlink(missing_ok=True)
                     return True
                 except asyncio.TimeoutError:
                     log.warning("TTS timeout câu %s (lần %d)", item["index"],
@@ -160,11 +173,9 @@ class EdgeTTS:
                     and key_file.read_text().strip() == key:
                 seg.audio_vi = str(fname)
                 continue
-            # CRITICAL: the old WAV is stale when text/voice/rate changes.
-            # Remove it BEFORE the worker's 'file exists' resume shortcut.
-            # Write cache metadata only AFTER successful resynthesis.
-            fname.unlink(missing_ok=True)
-            key_file.unlink(missing_ok=True)
+            # Keep the previous valid cache on disk while resynthesizing,
+            # but NEVER expose it to the new segment or reuse it on error.
+            # _synthesize_one writes a fully validated replacement atomically.
             seg.audio_vi = ""
             queue.append({"index": seg.index, "text": text,
                           "voice": self.voice_for(seg.gender),
