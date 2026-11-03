@@ -6,6 +6,8 @@ on:
       - 'asr/whisper_pyannote_adapter.py'
       - 'asr/whisper_align.py'
       - 'tests/test_whisper_hybrid.py'
+      - 'tests/test_tts_provider_guard.py'
+      - 'core/orchestrator.py'
       - '.github/workflows/vietdub-whisper-integrity.yml'
   pull_request:
     paths:
@@ -29,6 +31,6 @@ jobs:
           python-version: '3.11'
       - name: Validate code and missing-word transcript scenarios
         run: |
-          python -m pip install -q pytest
+          python -m pip install -q pytest numpy
           python -m compileall -q asr/whisper_pyannote_adapter.py asr/whisper_align.py
-          python -m pytest -q tests/test_whisper_hybrid.py
+          python -m pytest -q tests/test_whisper_hybrid.py tests/test_tts_provider_guard.py
