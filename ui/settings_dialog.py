@@ -407,9 +407,16 @@ class SettingsDialog(QDialog):
         self.tts_provider = QComboBox()
         self.tts_provider.addItem("Edge-TTS (online)", "edge")
         self.tts_provider.addItem("VieNeu v3 Turbo (trên máy)", "vieneu")
+        self.tts_provider.addItem("ZeroTTS (model cục bộ)", "zerotts")
         self.tts_provider.setCurrentIndex(max(
             0, self.tts_provider.findData(self.settings.get("tts_provider", "edge"))))
         f.addRow("Công nghệ TTS:", self.tts_provider)
+        self.zerotts_model_dir = QLineEdit(
+            str(self.settings.get("zerotts_model_dir", "model/ZeroTTS")))
+        self.zerotts_model_dir.setToolTip(
+            "ZeroTTS chạy offline; cần thư mục model đã được cài đặt. "
+            "Giọng theo speaker lấy từ cấu hình zerotts_voices.")
+        f.addRow("ZeroTTS - thư mục model:", self.zerotts_model_dir)
         self.vieneu_voice_male = QLineEdit(
             self.settings.get("vieneu_voice_male", "Hải Đăng"))
         f.addRow("VieNeu - giọng nam:", self.vieneu_voice_male)
@@ -673,6 +680,7 @@ class SettingsDialog(QDialog):
         self.orig_vol.setValue(int(float(DEFAULTS["orig_volume"]) * 100))
         self.tts_provider.setCurrentIndex(max(
             0, self.tts_provider.findData(DEFAULTS["tts_provider"])))
+        self.zerotts_model_dir.setText(str(DEFAULTS["zerotts_model_dir"]))
         self.vieneu_voice_male.setText(DEFAULTS["vieneu_voice_male"])
         self.vieneu_voice_female.setText(DEFAULTS["vieneu_voice_female"])
         self.vieneu_backend.setCurrentIndex(max(
@@ -751,6 +759,8 @@ class SettingsDialog(QDialog):
             "dub_volume": self.dub_vol.value() / 100.0,
             "orig_volume": self.orig_vol.value() / 100.0,
             "tts_provider": self.tts_provider.currentData(),
+            "zerotts_model_dir": (self.zerotts_model_dir.text().strip()
+                                  or DEFAULTS["zerotts_model_dir"]),
             "vieneu_voice_male": (self.vieneu_voice_male.text().strip()
                                   or DEFAULTS["vieneu_voice_male"]),
             "vieneu_voice_female": (self.vieneu_voice_female.text().strip()
