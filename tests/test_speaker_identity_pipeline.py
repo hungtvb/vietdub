@@ -59,11 +59,17 @@ def test_source_review_gender_overrides_low_confidence_and_filters_stale_speaker
         Segment(index=0, start=0, end=1, speaker=7, text_src="Hello"),
         Segment(index=1, start=1, end=2, speaker=8, text_src="Hi"),
     ])
-    pio.save_speakers(job.job_dir, "source_review", {
-        7: Speaker(id=7, gender="female", confidence=1, character_name="Maddie",
-                   identity_verified=True),
-        99: Speaker(id=99, gender="male", confidence=1, character_name="Stale",
-                    identity_verified=True),
+    # The source review checkpoint is a single atomic snapshot of both
+    # reviewed segments and speakers. A speakers-only checkpoint is invalid.
+    cp.save_step(job.job_dir, "source_review", {
+        "segments": [seg.to_dict() for seg in
+                     pio.load_segments(job.job_dir, "asr")],
+        "speakers": [
+            Speaker(id=7, gender="female", confidence=1,
+                    character_name="Maddie", identity_verified=True).to_dict(),
+            Speaker(id=99, gender="male", confidence=1,
+                    character_name="Stale", identity_verified=True).to_dict(),
+        ],
     })
     import speaker.gender as gender
     monkeypatch.setattr(gender, "estimate_genders", lambda *a, **kw: {
