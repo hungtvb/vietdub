@@ -68,7 +68,7 @@ jobs:
           }
           # Validate the SAME binary resolution used by the frozen application.
           $env:VIETDUB_BUNDLE_DIR = $bundle
-          @'
+          $runtimeCheck = @'
           import os, sys
           from pathlib import Path
           from media import _bin
@@ -80,7 +80,8 @@ jobs:
               expected = Path(os.environ["VIETDUB_BUNDLE_DIR"]) / program
               assert Path(resolved).resolve() == expected.resolve(), (program, resolved, expected)
               print("Bundled runtime resolver verified:", resolved)
-          '@ | python -
+          '@
+          $runtimeCheck | python -
           if ($LASTEXITCODE -ne 0) { throw "Bundled runtime path resolution failed" }
           Get-Item "dist/VietDub/VietDub.exe" | Select-Object Name,Length
       - name: UI cold-start smoke
