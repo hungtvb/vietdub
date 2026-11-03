@@ -264,6 +264,19 @@ def test_many_unsplittable_lines_do_not_share_split_budget(tmp_path, monkeypatch
     assert [action for _, action, _ in decisions] == ["overflow"] * 4
 
 
+def test_severe_unsplittable_overflow_is_rejected_not_mixed(tmp_path, monkeypatch):
+    from tts.duration_fit import SevereOverflowError
+    import numpy as np
+    import soundfile as sf
+    orch = _fit_job(tmp_path, monkeypatch)
+    wav = tmp_path / "twice-as-long.wav"
+    sf.write(wav, np.zeros(2 * 44100, dtype=np.float32), 44100)
+    segments = [Segment(index=0, start=0.0, end=1.0, speaker=0,
+                        text_vi="ừ", audio_vi=str(wav))]
+    with pytest.raises(SevereOverflowError):
+        orch._fit_and_track(segments, tmp_path, lambda items: items)
+
+
 def test_fit_gives_up_after_max_rounds(tmp_path, monkeypatch):
     orch = _fit_job(tmp_path, monkeypatch)
 
