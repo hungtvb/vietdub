@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 import soundfile as sf
+import numpy as np
 
 from project.schema import Segment
 from tts.vieneu_tts import VieNeuTTS
@@ -53,6 +54,15 @@ def main():
         }
         if info.samplerate != 44100 or info.channels != 1 or info.duration < 0.25:
             raise RuntimeError("Invalid resampled WAV")
+        # Duration/codec checks pass for a silent WAV too. Reject missing
+        # speech energy before claiming real-model synthesis succeeded.
+        waveform, _ = sf.read(audio, dtype="float32", always_2d=False)
+        peak = float(np.max(np.abs(waveform)))
+        rms = float(np.sqrt(np.mean(np.square(waveform, dtype=np.float64))))
+        DATA["audio"]["peak"] = round(peak, 6)
+        DATA["audio"]["rms"] = round(rms, 6)
+        if not np.isfinite(peak) or not np.isfinite(rms) or peak < 0.002 or rms < 0.0002:
+            raise RuntimeError("VieNeu generated silent or near-silent speech audio")
         if not shutil.which("ffmpeg"):
             raise RuntimeError("ffmpeg is missing")
         mp4 = OUTPUT / "vieneu_real_tts_synthetic_video.mp4"
