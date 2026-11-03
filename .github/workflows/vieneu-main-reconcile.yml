@@ -1,8 +1,7 @@
 name: Reconcile VieNeu branch with main (one-time safe gate)
 
 on:
-  push:
-    branches: [feat/vieneu-tts-v3]
+  pull_request:
     paths:
       - '.github/workflows/vieneu-main-reconcile.yml'
 
@@ -11,7 +10,7 @@ permissions:
 
 jobs:
   reconcile:
-    if: startsWith(github.event.head_commit.message, 'ci: run guarded VieNeu-main reconciliation')
+    if: github.event.pull_request.head.ref == 'feat/vieneu-tts-v3' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -27,9 +26,9 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git fetch origin main
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          git checkout -B feat/vieneu-tts-v3 "$GITHUB_SHA"
+          git fetch origin main feat/vieneu-tts-v3
+          git checkout -B feat/vieneu-tts-v3 origin/feat/vieneu-tts-v3
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
           if ! git merge --no-commit --no-ff origin/main; then
             git status --short
             echo "::error::Conflicting changes require explicit human/code review"
@@ -41,6 +40,7 @@ jobs:
             exit 1
           fi
           git diff --cached --stat
+          git status --short
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
