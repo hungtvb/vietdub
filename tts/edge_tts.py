@@ -89,8 +89,8 @@ class EdgeTTS:
 
     async def _synthesize_one(self, item: Dict, sem: asyncio.Semaphore) -> bool:
         path = Path(item["filename"])
-        if _vail_file(path):
-            return True  # resume: already done (edge case 10)
+        # Reuse is allowed only after the cache manifest was validated in
+        # synthesize(). A surviving WAV alone may have the wrong voice/text.
         text = (item["text"] or "").strip()
         if not text:
             return False
@@ -133,6 +133,8 @@ class EdgeTTS:
         sem = asyncio.Semaphore(self.concurrency)
         results = await asyncio.gather(
             *(self._synthesize_one(it, sem) for it in queue))
+        for entry, success in zip(queue, results):
+            entry["succeeded"] = bool(success)
         ok = sum(1 for r in results if r)
         return {"ok": ok, "err": len(results) - ok}
 
@@ -163,10 +165,11 @@ class EdgeTTS:
             # Write cache metadata only AFTER successful resynthesis.
             fname.unlink(missing_ok=True)
             key_file.unlink(missing_ok=True)
+            seg.audio_vi = ""
             queue.append({"index": seg.index, "text": text,
                           "voice": self.voice_for(seg.gender),
                           "filename": str(fname), "seg": seg,
-                          "key": key, "key_file": str(key_file)})
+                          "cache_key": key})
 
         if queue:
             try:
@@ -182,11 +185,13 @@ class EdgeTTS:
                     "Cách khắc phục: kiểm tra mạng (Edge-TTS cần websocket "
                     "tới Microsoft), thử lại sau ít phút.")
             for it in queue:
-                if _vail_file(it["filename"]):
-                    Path(it["key_file"]).write_text(it["key"])
+                if it.get("succeeded") and _vail_file(it["filename"]):
+                    Path(it["filename"]).with_suffix(".md5").write_text(
+                        it["cache_key"], encoding="utf-8")
                     it["seg"].audio_vi = it["filename"]
                 else:
-                    log.warning("câu %d TTS lỗi -> chèn im lặng ở bước khớp giờ",
+                    it["seg"].audio_vi = ""
+                    log.warning("câu %d TTS thất bại; không lưu cache thành công",
                                 it["index"])
         if progress_cb:
             progress_cb(len(segments), len(segments))
