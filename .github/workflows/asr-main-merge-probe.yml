@@ -1,0 +1,72 @@
+name: ASR and main integration probe (temporary)
+
+on:
+  pull_request:
+    paths: ['.github/workflows/asr-main-merge-probe.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    if: github.event.pull_request.head.ref == 'feat/vieneu-tts-v3' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Fetch multilingual PR and resolve 3-way merge favoring its conflicting hunks
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main ci/run-vietdub-20261016
+          git checkout -B ci/run-vietdub-20261016 origin/ci/run-vietdub-20261016
+          git merge --no-commit --no-ff -X ours origin/main
+          if test -n "$(git diff --name-only --diff-filter=U)"; then
+            echo "::error::Unresolved conflict in PR1"
+            git status --short
+            exit 1
+          fi
+          git diff --cached --check
+          git diff --cached --stat
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated integration test environment
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg libegl1 libopengl0 libxkbcommon-x11-0 libdbus-1-3
+          python -m pip install -q pytest pytest-timeout numpy soundfile requests requests-toolbelt PySide6
+      - name: Check essential ASR and main safety invariants
+        run: |
+          python -m compileall -q asr core project translation tts ui media
+          python - <<'PY'
+          from pathlib import Path
+          required = {
+              "core/orchestrator.py": ("select_asr_engine",
+                  "detect_source_language", "source_review", "def _synthesize_tts"),
+              "asr/whisper_align.py": ("aligned_words_cover_source",),
+              "core/checkpoint.py": ("_nonempty_file", "identity_verified",
+                  "detected_speaker"),
+              "tts/duration_fit.py": ("MAX_OVERFLOW_RATIO",),
+              "project/schema.py": ("source_lang", "character_name"),
+              "translation/prompts.py": ("UNTRUSTED CONTENT", "untrusted data"),
+              "asr/factory.py": ("vietdub_stt",),
+          }
+          for file, terms in required.items():
+              source = Path(file).read_text(encoding="utf-8")
+              assert all(term in source for term in terms), file
+          PY
+      - name: Run integrated contracts for ASR, translator, TTS and checkpoints
+        run: |
+          python -m pytest -q --disable-warnings --maxfail=12             tests/test_checkpoint.py             tests/test_orchestrator.py             tests/test_speaker_identity_pipeline.py             tests/test_whisper_hybrid.py             tests/test_tts_provider_guard.py             tests/test_asr_language_router.py             tests/test_translation.py             tests/test_duration_fit.py             tests/test_edge_tts.py             tests/test_vietdub_stt_adapter.py             tests/test_vietdub_stt_http_e2e.py
+      - name: Push only verified reconciliation to PR #1, never main
+        run: |
+          set -euo pipefail
+          git commit -m 'merge: reconcile multilingual ASR with main release safeguards'
+          git push origin HEAD:refs/heads/ci/run-vietdub-20261016
