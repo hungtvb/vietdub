@@ -649,11 +649,16 @@ class MainWindow(QMainWindow):
         self.tts_provider = QComboBox()
         self.tts_provider.addItem("Edge-TTS (online)", "edge")
         self.tts_provider.addItem("VieNeu v3 Turbo (offline)", "vieneu")
+        self.tts_provider.addItem("ZeroTTS (model cục bộ, giọng theo speaker)", "zerotts")
         self._voice_drafts = {
             "edge": (self.settings.get("voice_male"),
                      self.settings.get("voice_female")),
             "vieneu": (self.settings.get("vieneu_voice_male", "Hải Đăng"),
                        self.settings.get("vieneu_voice_female", "Mai Anh")),
+            # ZeroTTS uses the separately configured speaker-id->voice map.
+            # The Edge voice choices are kept only for switching back.
+            "zerotts": (self.settings.get("voice_male"),
+                        self.settings.get("voice_female")),
         }
         self._active_tts_provider = None
         vg = QFormLayout()
@@ -748,6 +753,13 @@ class MainWindow(QMainWindow):
         male, female = self._voice_drafts[current]
         self.voice_male.setCurrentText(male)
         self.voice_female.setCurrentText(female)
+        # ZeroTTS selects a local voice per speaker ID, so the two Edge
+        # gender voices and previews do not apply. Never imply otherwise.
+        editable = current != "zerotts"
+        self.voice_male.setEnabled(editable)
+        self.voice_female.setEnabled(editable)
+        for button in self._preview_buttons:
+            button.setEnabled(editable)
         self._active_tts_provider = current
 
     def _on_overnight_toggled(self, on: bool) -> None:
@@ -1000,6 +1012,13 @@ class MainWindow(QMainWindow):
         proj.tts_provider = tts_provider
         proj.vieneu_backend = self.settings.get("vieneu_backend", "auto")
         proj.vieneu_precision = self.settings.get("vieneu_precision", "fp32")
+        proj.zerotts_model_dir = str(
+            self.settings.get("zerotts_model_dir", "model/ZeroTTS"))
+        speaker_voices = self.settings.get("zerotts_voices", {}) or {}
+        if tts_provider == "zerotts" and not isinstance(speaker_voices, dict):
+            raise ValueError("ZeroTTS voice mapping must be a speaker-id dictionary")
+        proj.zerotts_voices = (
+            dict(speaker_voices) if isinstance(speaker_voices, dict) else {})
         proj.tts_rate = self.settings.get("tts_rate", "+0%")
         proj.tts_pitch = self.settings.get("tts_pitch", "+0Hz")
         male_key = "vieneu_voice_male" if tts_provider == "vieneu" else "voice_male"
