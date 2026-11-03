@@ -90,3 +90,51 @@ def test_voice_preview_uses_selected_provider_without_loading_model(
     assert seen["provider"] == "vieneu"
     assert seen["voice_female"] == "Mai Anh"
     assert done == [str(tmp_path / "preview.wav")]
+
+
+def test_multilingual_language_selection_survives_combined_vieneu_visual_job(
+        app, tmp_path, monkeypatch):
+    """A displayed source-language choice must flow into the saved job.
+
+    This protects against integration merges silently dropping the UI to
+    Project.src_lang assignment while TTS/visual controls remain visible.
+    """
+    import core.job as jobmod
+    from project import io as pio
+    from media.visual_source_identity import file_sha256
+
+    monkeypatch.setattr(jobmod, "JOBS_ROOT", tmp_path / "jobs")
+    settings = Settings(path=tmp_path / "settings.json")
+    settings.set("visual_cleanup_enabled", True)
+    settings.set("visual_cleanup_backend", "cv")
+    source = tmp_path / "japanese-video.mp4"
+    source.write_bytes(b"source-identity-for-ui-regression")
+    win = MainWindow(settings)
+    try:
+        lang_idx = win.source_lang.findData("ja")
+        assert lang_idx >= 0
+        win.source_lang.setCurrentIndex(lang_idx)
+
+        tts_idx = win.tts_provider.findData("vieneu")
+        assert tts_idx >= 0
+        win.tts_provider.setCurrentIndex(tts_idx)
+
+        job = win._configure_job(Job(), str(source))
+        saved = pio.load_project(job.job_dir)
+        assert job.project.src_lang == "ja"
+        assert saved.src_lang == "ja"
+        assert saved.detected_src_lang == "und"
+        assert saved.tts_provider == "vieneu"
+        assert saved.visual_cleanup_options["visual_cleanup_enabled"] is True
+        assert (saved.visual_cleanup_options["visual_cleanup_source_sha256"]
+                == file_sha256(source))
+        assert settings.get("source_language") == "ja"
+
+        # Editing the next job's UI selection cannot rewrite a saved job.
+        win.source_lang.setCurrentIndex(win.source_lang.findData("en"))
+        settings.set("visual_cleanup_enabled", False)
+        assert pio.load_project(job.job_dir).src_lang == "ja"
+        assert pio.load_project(job.job_dir).visual_cleanup_options[
+            "visual_cleanup_enabled"] is True
+    finally:
+        win.close()

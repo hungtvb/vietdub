@@ -307,6 +307,14 @@ class MainWindow(QMainWindow):
         self.source_detail.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.source_detail.setProperty("role", "secondary")
         source_lay.addWidget(self.source_detail)
+        self.btn_visual_regions = QPushButton("▣ Chọn vùng chữ/logo cần làm mờ…")
+        self.btn_visual_regions.setProperty("role", "secondary")
+        self.btn_visual_regions.setToolTip(
+            "Kéo chuột chọn vùng trên frame, đặt thời gian và xem trước Blur/Mosaic/Inpaint. "
+            "Không cần PaddleOCR để chọn vùng thủ công.")
+        self.btn_visual_regions.setEnabled(False)
+        self.btn_visual_regions.clicked.connect(self.open_visual_region_editor)
+        source_lay.addWidget(self.btn_visual_regions)
 
         self.options_toggle = QPushButton("Tùy chọn lồng tiếng…")
         self.options_toggle.setCheckable(True)
@@ -448,6 +456,7 @@ class MainWindow(QMainWindow):
         self.video_url = ""
         self._active_info = None
         self.btn_start.setEnabled(False)
+        self.btn_visual_regions.setEnabled(False)
         self.file_info["box"].hide()
         self.link_info["box"].hide()
         self._source_feedback(message)
@@ -474,10 +483,33 @@ class MainWindow(QMainWindow):
 
     def _show_info(self, info: dict, path: str, data: dict, url: str = "") -> None:
         self.video_path, self.video_url = path, url
+        self.btn_visual_regions.setEnabled(True)
         self._active_info = info
         info["name"].setText(Path(path).name)
         info["name"].setToolTip(path)
-        self._source_feedback("Sẵn sàng lồng tiếng", "success")
+        review_path = Path(self.settings.get("visual_cleanup_review_plan", "") or "")
+        stale_review = False
+        if review_path.is_file():
+            try:
+                import json
+                old_plan = json.loads(review_path.read_text(encoding="utf-8"))
+                stale_review = old_plan.get("source") != str(Path(path).resolve())
+                if not stale_review and old_plan.get("source_sha256"):
+                    from media.visual_source_identity import file_sha256
+                    stale_review = old_plan["source_sha256"] != file_sha256(path)
+            except (OSError,TypeError,ValueError):
+                stale_review = True
+        if stale_review:
+            # Explicit manual masks must never be silently applied to a
+            # different video with similar geometry.
+            self.settings.set("visual_cleanup_review_plan","")
+            self.settings.set("visual_cleanup_enabled",False)
+            self.settings.save()
+            self._source_feedback(
+                "Đã đổi video: vùng chọn cũ tạm tắt. "
+                "Bấm 'Chọn vùng chữ/logo' để duyệt vùng cho video mới.")
+        else:
+            self._source_feedback("Sẵn sàng lồng tiếng", "success")
         self.source_status.setToolTip(path)
         info["dur"].setText(fmt_time(data["duration"]))
         info["res"].setText(data["resolution"])
@@ -617,11 +649,16 @@ class MainWindow(QMainWindow):
         self.tts_provider = QComboBox()
         self.tts_provider.addItem("Edge-TTS (online)", "edge")
         self.tts_provider.addItem("VieNeu v3 Turbo (offline)", "vieneu")
+        self.tts_provider.addItem("ZeroTTS (model cục bộ, giọng theo speaker)", "zerotts")
         self._voice_drafts = {
             "edge": (self.settings.get("voice_male"),
                      self.settings.get("voice_female")),
             "vieneu": (self.settings.get("vieneu_voice_male", "Hải Đăng"),
                        self.settings.get("vieneu_voice_female", "Mai Anh")),
+            # ZeroTTS uses the separately configured speaker-id->voice map.
+            # The Edge voice choices are kept only for switching back.
+            "zerotts": (self.settings.get("voice_male"),
+                        self.settings.get("voice_female")),
         }
         self._active_tts_provider = None
         vg = QFormLayout()
@@ -657,6 +694,9 @@ class MainWindow(QMainWindow):
             self.voice_female.currentText().strip(), "female", btn_pf))
         row_f.addWidget(btn_pf)
         self._preview_buttons.append(btn_pf)
+        # Initial provider selection happens before preview buttons exist.
+        # Reapply the disabled state once they have been constructed.
+        self._on_tts_provider_changed()
         vg.addRow("Giọng nam:", row_m)
         vg.addRow("Giọng nữ:", row_f)
         lay.addLayout(vg)
@@ -716,6 +756,13 @@ class MainWindow(QMainWindow):
         male, female = self._voice_drafts[current]
         self.voice_male.setCurrentText(male)
         self.voice_female.setCurrentText(female)
+        # ZeroTTS selects a local voice per speaker ID, so the two Edge
+        # gender voices and previews do not apply. Never imply otherwise.
+        editable = current != "zerotts"
+        self.voice_male.setEnabled(editable)
+        self.voice_female.setEnabled(editable)
+        for button in self._preview_buttons:
+            button.setEnabled(editable)
         self._active_tts_provider = current
 
     def _on_overnight_toggled(self, on: bool) -> None:
@@ -793,6 +840,51 @@ class MainWindow(QMainWindow):
                 "và kiểm tra backend/model." if self.tts_provider.currentData() == "vieneu"
                 else "Kiểm tra kết nối Microsoft Edge-TTS.")
         error_box(self, "Không nghe thử được", f"{message}\n\n{hint}")
+
+    # ------------------------------------------------------------------ manual visual cleanup
+    def open_visual_region_editor(self) -> None:
+        """Review source-bound blur rectangles before starting the pipeline."""
+        if not self.video_path or not Path(self.video_path).is_file():
+            error_box(self,"Chưa có video","Chọn hoặc tải video thành công trước.")
+            return
+        import json
+        from ui.visual_region_editor import VisualRegionEditor
+        preferred = Path(self.settings.get("visual_cleanup_review_plan","") or "")
+        # Never reuse another video's manual region plan, even if both videos
+        # happen to have exactly the same resolution and duration.
+        if preferred.is_file():
+            try:
+                previous=json.loads(preferred.read_text(encoding="utf-8"))
+                if previous.get("source") != str(Path(self.video_path).resolve()):
+                    preferred=Path()
+            except (OSError,ValueError,TypeError):
+                preferred=Path()
+        if not preferred.is_file():
+            preferred=VisualRegionEditor.default_plan_path(
+                self.video_path,self.settings.path.parent)
+        try:
+            dialog=VisualRegionEditor(self.video_path,preferred,self)
+        except Exception as exc:
+            error_box(self,"Không mở được vùng chọn",
+                      "Kiểm tra file video và OpenCV trong requirements-visual-cleanup.txt.\n"+str(exc))
+            return
+        if dialog.exec():
+            self.settings.set("visual_cleanup_review_plan",str(preferred))
+            self.settings.set("visual_cleanup_enabled",True)
+            # User-picked blur/inpaint is handled by the CV renderer, which
+            # does not require OCR model weights when a reviewed plan exists.
+            import json
+            final_plan=json.loads(preferred.read_text(encoding="utf-8"))
+            neural_present=any(r.get("source")=="neural-window"
+                               for r in final_plan.get("regions", []))
+            # A source may contain pre-existing neural review regions.
+            # Preserve them via Hybrid rather than silently dropping them.
+            self.settings.set("visual_cleanup_backend",
+                              "hybrid" if neural_present else "cv")
+            self.settings.save()
+            self._source_feedback(
+                f"Đã lưu {len(dialog.regions)} vùng chọn. "
+                "Visual Cleanup sẽ dùng plan này khi render.", "success")
 
     # ------------------------------------------------------------------ bắt đầu
     def open_settings(self) -> None:
@@ -900,6 +992,11 @@ class MainWindow(QMainWindow):
         provider = self.provider.currentData()
         proj = job.project
         proj.name = Path(video_path).stem
+        # The multilingual selector must be an actual per-job input, not
+        # merely a persisted global UI preference.
+        proj.src_lang = self.source_lang.currentData() or "auto"
+        proj.detected_src_lang = "und"
+        proj.language_review_required = False
         if video_url:
             proj.video_source = "url"
             proj.video_url = video_url
@@ -918,6 +1015,13 @@ class MainWindow(QMainWindow):
         proj.tts_provider = tts_provider
         proj.vieneu_backend = self.settings.get("vieneu_backend", "auto")
         proj.vieneu_precision = self.settings.get("vieneu_precision", "fp32")
+        proj.zerotts_model_dir = str(
+            self.settings.get("zerotts_model_dir", "model/ZeroTTS"))
+        speaker_voices = self.settings.get("zerotts_voices", {}) or {}
+        if tts_provider == "zerotts" and not isinstance(speaker_voices, dict):
+            raise ValueError("ZeroTTS voice mapping must be a speaker-id dictionary")
+        proj.zerotts_voices = (
+            dict(speaker_voices) if isinstance(speaker_voices, dict) else {})
         proj.tts_rate = self.settings.get("tts_rate", "+0%")
         proj.tts_pitch = self.settings.get("tts_pitch", "+0Hz")
         male_key = "vieneu_voice_male" if tts_provider == "vieneu" else "voice_male"
@@ -931,9 +1035,32 @@ class MainWindow(QMainWindow):
         proj.overnight = self.chk_overnight.isChecked()
         proj.audio_track = int(audio_track)
         proj.proper_nouns = list(self.settings.get("proper_nouns", []))
-        proj.src_lang = self.source_lang.currentData() or "auto"
-        proj.detected_src_lang = "und"
-        proj.language_review_required = False
+        # Keep this job deterministic even when the operator changes Settings
+        # for another video while this one is paused or queued.
+        cleanup_keys = (
+            "visual_cleanup_enabled", "visual_cleanup_backend",
+            "visual_vsr_root", "visual_vsr_mode",
+            "visual_lama_weight_path", "visual_cleanup_mode",
+            "visual_cleanup_interval_sec", "visual_cleanup_min_hits",
+            "visual_cleanup_auto_logo", "visual_cleanup_review_plan",
+        )
+        proj.visual_cleanup_options = {
+            key: self.settings.get(key) for key in cleanup_keys
+        }
+        review = str(proj.visual_cleanup_options.get(
+            "visual_cleanup_review_plan") or "").strip()
+        if proj.visual_cleanup_options.get("visual_cleanup_enabled"):
+            from media.visual_source_identity import file_sha256
+            proj.visual_cleanup_options["visual_cleanup_source_sha256"] = (
+                file_sha256(video_path)
+            )
+        if proj.visual_cleanup_options.get("visual_cleanup_enabled") and review:
+            import hashlib
+            review_file = Path(review)
+            proj.visual_cleanup_options["visual_cleanup_review_sha256"] = (
+                hashlib.sha256(review_file.read_bytes()).hexdigest()
+                if review_file.is_file() else "missing"
+            )
 
         # lưu lựa chọn nhanh vào settings để mở lại app vẫn giữ
         self._voice_drafts[tts_provider] = (proj.voice_male, proj.voice_female)

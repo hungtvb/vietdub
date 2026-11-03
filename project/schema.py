@@ -166,6 +166,7 @@ class Project:
     overnight: bool = False
     stages_done: List[str] = field(default_factory=list)
     proper_nouns: List[str] = field(default_factory=list)  # custom proper names (edge 9)
+    visual_cleanup_options: dict = field(default_factory=dict)  # frozen per job; {} = legacy settings
 
     def to_dict(self) -> dict:
         return asdict(self)

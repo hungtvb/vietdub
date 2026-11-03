@@ -1,0 +1,65 @@
+name: Visual cleanup live OCR E2E
+on:
+  pull_request:
+    paths:
+      - "media/visual_cleanup.py"
+      - "media/visual_precise.py"
+      - "media/visual_temporal.py"
+      - "media/visual_scene_guard.py"
+      - "media/visual_acceptance.py"
+      - "media/visual_neural.py"
+      - "media/visual_neural_window.py"
+      - "media/visual_lama_cpu.py"
+      - "media/visual_hybrid.py"
+      - "media/visual_dynamic_mask.py"
+      - "tests/test_visual_dynamic_mask.py"
+      - "tests/test_visual_hybrid.py"
+      - "tests/test_visual_lama_cpu.py"
+      - "media/visual_ocr_acceptance.py"
+      - "tests/test_visual_ocr_acceptance.py"
+      - "tests/test_visual_neural.py"
+      - "tests/test_visual_acceptance.py"
+      - "media/visual_cleanup_review.py"
+      - "tests/test_visual_temporal.py"
+      - "tests/test_visual_cleanup_live_ocr.py"
+      - ".github/workflows/visual-cleanup-live-ocr.yml"
+  workflow_dispatch:
+
+jobs:
+  paddle-real-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install FFmpeg and PaddlePaddle CPU
+        run: |
+          python -m pip install imageio-ffmpeg
+          python - <<'PY'
+          import imageio_ffmpeg, os
+          from pathlib import Path
+          link = Path(os.environ["RUNNER_TEMP"]) / "ffmpeg"
+          link.symlink_to(imageio_ffmpeg.get_ffmpeg_exe())
+          with open(os.environ["GITHUB_PATH"], "a") as out:
+              out.write(str(link.parent) + "\n")
+          PY
+          python -m pip install --upgrade pip
+          python -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+      - name: Install PaddleOCR and smoke dependencies
+        run: |
+          python -m pip install "paddleocr>=3.0,<4" "opencv-python-headless>=4.8,<5" pytest
+      - name: Run unmocked OCR -> track -> blur -> encode test
+        env:
+          VIETDUB_LIVE_OCR: "1"
+          PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: "True"
+        run: pytest -q -s tests/test_visual_cleanup_live_ocr.py
+      - name: Upload screenshot evidence (source / OCR / tracking / blur)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-cleanup-real-ocr-evidence
+          path: evidence/visual-cleanup-live/
+          if-no-files-found: warn
+          retention-days: 30
