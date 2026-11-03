@@ -1,0 +1,61 @@
+name: Reconcile VieNeu branch with main (one-time safe gate)
+
+on:
+  push:
+    branches: [feat/vieneu-tts-v3]
+    paths:
+      - '.github/workflows/vieneu-main-reconcile.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    if: startsWith(github.event.head_commit.message, 'ci: run guarded VieNeu-main reconciliation')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Merge main into PR branch, refusing any unresolved conflict
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git checkout -B feat/vieneu-tts-v3 "$GITHUB_SHA"
+          if ! git merge --no-commit --no-ff origin/main; then
+            git status --short
+            echo "::error::Conflicting changes require explicit human/code review"
+            exit 1
+          fi
+          if test -n "$(git diff --name-only --diff-filter=U)"; then
+            git status --short
+            echo "::error::Unresolved merge conflict"
+            exit 1
+          fi
+          git diff --cached --stat
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install small integration test environment
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg libegl1 libopengl0 libxkbcommon-x11-0 libdbus-1-3
+          python -m pip install -q pytest numpy soundfile PySide6
+      - name: Compile and check TTS provider, checkpoint, GUI and orchestrator
+        run: |
+          python -m compileall -q core project tts ui tests/test_vieneu_tts.py
+          python -m pytest -q tests/test_vieneu_tts.py tests/test_vieneu_ui.py tests/test_duration_fit.py tests/test_checkpoint.py tests/test_edge_tts.py tests/test_orchestrator.py
+      - name: Publish verified fast-forward merge commit to PR branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git commit -m 'merge: reconcile main reliability fixes into VieNeu PR'
+          git push origin HEAD:refs/heads/feat/vieneu-tts-v3
