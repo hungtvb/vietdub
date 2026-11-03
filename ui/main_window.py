@@ -462,6 +462,9 @@ class MainWindow(QMainWindow):
                 import json
                 old_plan = json.loads(review_path.read_text(encoding="utf-8"))
                 stale_review = old_plan.get("source") != str(Path(path).resolve())
+                if not stale_review and old_plan.get("source_sha256"):
+                    from media.visual_source_identity import file_sha256
+                    stale_review = old_plan["source_sha256"] != file_sha256(path)
             except (OSError,TypeError,ValueError):
                 stale_review = True
         if stale_review:
@@ -924,6 +927,11 @@ class MainWindow(QMainWindow):
         }
         review = str(proj.visual_cleanup_options.get(
             "visual_cleanup_review_plan") or "").strip()
+        if proj.visual_cleanup_options.get("visual_cleanup_enabled"):
+            from media.visual_source_identity import file_sha256
+            proj.visual_cleanup_options["visual_cleanup_source_sha256"] = (
+                file_sha256(video_path)
+            )
         if proj.visual_cleanup_options.get("visual_cleanup_enabled") and review:
             import hashlib
             review_file = Path(review)
