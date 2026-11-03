@@ -62,3 +62,26 @@ def test_unicode_path(tmp_path):
     out = tmp_path / "âm thanh trích ra.wav"
     got = mextract.extract_audio(v, out)
     assert got.exists()
+
+
+
+def test_delayed_audio_pts_becomes_leading_silence_not_early_speech(tmp_path):
+    import numpy as np
+    import soundfile as sf
+    video=tmp_path/"delayed.mp4"
+    subprocess.run([
+        "ffmpeg","-y","-v","error",
+        "-f","lavfi","-i","color=c=black:s=160x90:d=5:r=10",
+        "-itsoffset","2.0",
+        "-f","lavfi","-i","sine=frequency=500:sample_rate=16000:duration=2",
+        "-map","0:v","-map","1:a",
+        "-c:v","libx264","-pix_fmt","yuv420p",
+        "-c:a","aac","-t","5",str(video)],check=True)
+    stream=mextract.audio_streams(video)[0]
+    assert float(stream["start_time"])>1.8,stream
+    wav=mextract.extract_audio(video,tmp_path/"padded.wav")
+    samples,sr=sf.read(str(wav))
+    assert sr==16000
+    assert len(samples)/sr>3.8
+    assert np.max(np.abs(samples[:int(sr*1.5)]))<.002
+    assert np.sqrt(np.mean(samples[int(sr*2.4):int(sr*3.5)]**2))>.02

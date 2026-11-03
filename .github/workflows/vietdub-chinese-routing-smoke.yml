@@ -1,0 +1,53 @@
+name: VietDub Chinese language routing smoke
+
+on:
+  push:
+    branches: [ci/run-vietdub-20261016]
+    paths:
+      - '.github/workflows/vietdub-chinese-routing-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mandarin-routing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install probe dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          pip install 'faster-whisper>=1.1,<2' numpy soundfile scipy
+      - name: Download real Commons Chinese interview
+        run: |
+          mkdir -p mandarin_smoke
+          curl --fail --location --retry 3 \
+            --user-agent 'VietDubRegression/1.0 (source language QA)' \
+            'https://upload.wikimedia.org/wikipedia/commons/c/c3/%E3%80%90%E4%B8%A4%E4%BC%9A30%E7%A7%92%E3%80%91%E6%B0%B4%E5%BA%86%E9%9C%9E%EF%BC%9A%E4%B8%AD%E5%9B%BD%E5%A5%B3%E8%B6%B3%E9%9D%9E%E4%B8%96%E7%95%8C%E9%A1%B6%E7%BA%A7%EF%BC%8C%E4%BD%86%E4%BC%9A%E4%B8%8D%E6%96%AD%E8%BF%BD%E8%B5%B6.webm' \
+            --output mandarin_smoke/test.webm
+          test -s mandarin_smoke/test.webm
+      - name: Acoustic language detection and ASR routing
+        run: |
+          python ci_chinese_regression.py --mode smoke \
+            --video mandarin_smoke/test.webm --out mandarin_smoke
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          q=json.loads(Path('mandarin_smoke/report.json').read_text())
+          print('Actual detected:',q['language_detection'])
+          print('Routing:',q['automatic_route'])
+          assert q['status'] == 'LANGUAGE_PROBED'
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vietdub-chinese-language-routing-evidence
+          path: mandarin_smoke/report.json
+          if-no-files-found: warn
+          retention-days: 7

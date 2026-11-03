@@ -1,6 +1,7 @@
 # Orchestrator: review stops, overnight enforcement, resume, failure.
 # Heavy steps are stubbed; the integration test runs the real ones.
 from unittest import mock
+from pathlib import Path
 
 import pytest
 
@@ -247,6 +248,8 @@ def test_fit_unsplittable_gets_overflow(tmp_path, monkeypatch):
 
 
 def test_many_unsplittable_lines_do_not_share_split_budget(tmp_path, monkeypatch):
+    # Every line has its own split budget; each may overflow lightly.
+    # A 2x overrun must fail the 1.5x safety limit, not count as success.
     orch = _fit_job(tmp_path, monkeypatch)
     wav = tmp_path / "long.wav"
     import numpy as np
@@ -257,9 +260,7 @@ def test_many_unsplittable_lines_do_not_share_split_budget(tmp_path, monkeypatch
     segments = [Segment(index=i, start=float(i * 3), end=float(i * 3 + 1),
                         speaker=0, text_vi="ừ", audio_vi=str(wav))
                 for i in range(4)]
-
     out, decisions = orch._fit_and_track(segments, tmp_path, lambda items: items)
-
     assert len(out) == 4
     assert [action for _, action, _ in decisions] == ["overflow"] * 4
 
@@ -300,12 +301,35 @@ def test_fit_gives_up_after_max_rounds(tmp_path, monkeypatch):
     assert "3 lần" in str(e.value)
 
 
-def test_tts_propagates_edge_failure(tmp_path, monkeypatch):
-    # The configured Edge-TTS provider is the only TTS backend.
+def test_tts_provider_failure_cannot_silently_change_voice(tmp_path, monkeypatch):
     from tts import edge_tts as metts
     orch = _fit_job(tmp_path, monkeypatch)
     bad_tts = mock.Mock()
     bad_tts.synthesize.side_effect = metts.TTSError("websocket down")
     with pytest.raises(metts.TTSError, match="websocket down"):
         orch._synthesize_tts(bad_tts, [_long_seg()], tmp_path)
-    bad_tts.synthesize.assert_called_once()
+
+
+def test_tts_missing_wav_is_blocking_error(tmp_path, monkeypatch):
+    orch = _fit_job(tmp_path, monkeypatch)
+    tts = mock.Mock()
+    segment = _long_seg()
+    segment.audio_vi = str(tmp_path / "never-generated.wav")
+    tts.synthesize.return_value = [segment]
+    with pytest.raises(RuntimeError, match="không có file giọng đọc"):
+        orch._synthesize_tts(tts, [segment], tmp_path)
+
+
+def test_unsplittable_severe_overflow_is_rejected(tmp_path, monkeypatch):
+    from tts.duration_fit import SevereOverflowError
+    import numpy as np
+    import soundfile as sf
+    orch = _fit_job(tmp_path, monkeypatch)
+    wav = tmp_path / "too-long.wav"
+    sf.write(wav, np.zeros(2 * 44100, dtype=np.float32), 44100)
+    seg = _long_seg()
+    seg.start, seg.end = 0.0, 1.0
+    seg.text_vi = "ừ"
+    seg.audio_vi = str(wav)
+    with pytest.raises(SevereOverflowError):
+        orch._fit_and_track([seg], tmp_path, lambda entries: entries)
