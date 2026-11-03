@@ -10,6 +10,7 @@ The orchestrator calls configure() once at startup; default is PATH lookup.
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 _FFMPEG = "ffmpeg"
@@ -21,22 +22,46 @@ def configure(ffmpeg_path: str | None) -> None:
     _FFMPEG = (ffmpeg_path or "ffmpeg").strip() or "ffmpeg"
 
 
+def _bundled_binary(name: str) -> str | None:
+    """Find FFmpeg in a PyInstaller onedir bundle (6.x uses _internal).
+
+    Always prefer the bundled binary to the runner/user PATH for frozen apps,
+    unless the user explicitly configured a different executable.
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    roots = []
+    if hasattr(sys, "_MEIPASS"):
+        roots.append(Path(sys._MEIPASS))
+    exe_dir = Path(sys.executable).resolve().parent
+    roots.extend((exe_dir, exe_dir / "_internal"))
+    binary = name + (".exe" if sys.platform == "win32" else "")
+    for root in roots:
+        candidate = root / binary
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def ffmpeg_cmd() -> str:
-    """ffmpeg executable to invoke (respects settings, falls back to PATH)."""
-    p = _FFMPEG
-    if Path(p).is_file():
-        return p
-    found = shutil.which(p)
-    return found or p
+    """Return explicit configured FFmpeg, bundled FFmpeg, or PATH fallback."""
+    configured = _FFMPEG
+    if configured != "ffmpeg":
+        if Path(configured).is_file():
+            return str(Path(configured))
+        resolved = shutil.which(configured)
+        if resolved:
+            return resolved
+        return configured  # preserve invalid explicit path for useful errors
+    return _bundled_binary("ffmpeg") or shutil.which("ffmpeg") or "ffmpeg"
 
 
 def ffprobe_cmd() -> str:
-    """ffprobe executable: sibling of a configured ffmpeg path when present,
-    otherwise PATH lookup."""
-    f = Path(ffmpeg_cmd())
-    if f.parent != Path("."):
-        exe = "ffprobe.exe" if f.suffix.lower() == ".exe" else "ffprobe"
-        cand = f.parent / exe
-        if cand.is_file():
-            return str(cand)
-    return shutil.which("ffprobe") or "ffprobe"
+    """Resolve ffprobe next to selected ffmpeg before bundle/PATH fallback."""
+    ffmpeg = Path(ffmpeg_cmd())
+    if ffmpeg.parent != Path("."):
+        candidate = ffmpeg.with_name("ffprobe.exe" if ffmpeg.suffix.lower() == ".exe"
+                                     else "ffprobe")
+        if candidate.is_file():
+            return str(candidate)
+    return _bundled_binary("ffprobe") or shutil.which("ffprobe") or "ffprobe"
