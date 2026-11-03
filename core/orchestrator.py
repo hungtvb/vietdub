@@ -144,11 +144,18 @@ class Orchestrator:
                 job.emit_progress("done", 100.0, job.status)
                 close_job_logger(job.job_id)
 
+    def _visual_opt(self, key, default=None):
+        """New jobs use their immutable config snapshot; old jobs keep legacy behavior."""
+        options = self.job.project.visual_cleanup_options
+        if options:
+            return options.get(key, default)
+        return self.settings.get(key, default)
+
     def _visual_cleanup_signature(self):
         """Render checkpoint inputs that must invalidate any stale final MP4."""
-        if not self.settings.get("visual_cleanup_enabled", False):
+        if not self._visual_opt("visual_cleanup_enabled", False):
             return None
-        review_file = str(self.settings.get("visual_cleanup_review_plan", "") or "").strip()
+        review_file = str(self._visual_opt("visual_cleanup_review_plan", "") or "").strip()
         review_hash = ""
         if review_file:
             import hashlib
@@ -159,20 +166,20 @@ class Orchestrator:
                            if path.is_file() else "missing")
         return {
             "enabled": True,
-            "backend": str(self.settings.get("visual_cleanup_backend", "cv")),
-            "vsr_root": str(self.settings.get("visual_vsr_root", "")),
-            "vsr_mode": str(self.settings.get("visual_vsr_mode", "sttn-det")),
-            "lama_weight_path": str(self.settings.get("visual_lama_weight_path", "")),
+            "backend": str(self._visual_opt("visual_cleanup_backend", "cv")),
+            "vsr_root": str(self._visual_opt("visual_vsr_root", "")),
+            "vsr_mode": str(self._visual_opt("visual_vsr_mode", "sttn-det")),
+            "lama_weight_path": str(self._visual_opt("visual_lama_weight_path", "")),
             "lama_weight_stat": (
-                (Path(self.settings.get("visual_lama_weight_path")).stat().st_size,
-                 Path(self.settings.get("visual_lama_weight_path")).stat().st_mtime_ns)
-                if self.settings.get("visual_lama_weight_path")
-                and Path(self.settings.get("visual_lama_weight_path")).is_file()
+                (Path(self._visual_opt("visual_lama_weight_path")).stat().st_size,
+                 Path(self._visual_opt("visual_lama_weight_path")).stat().st_mtime_ns)
+                if self._visual_opt("visual_lama_weight_path")
+                and Path(self._visual_opt("visual_lama_weight_path")).is_file()
                 else None),
-            "mode": str(self.settings.get("visual_cleanup_mode", "blur")),
-            "interval": float(self.settings.get("visual_cleanup_interval_sec", 0.65)),
-            "min_hits": int(self.settings.get("visual_cleanup_min_hits", 2)),
-            "auto_logo": bool(self.settings.get("visual_cleanup_auto_logo", False)),
+            "mode": str(self._visual_opt("visual_cleanup_mode", "blur")),
+            "interval": float(self._visual_opt("visual_cleanup_interval_sec", 0.65)),
+            "min_hits": int(self._visual_opt("visual_cleanup_min_hits", 2)),
+            "auto_logo": bool(self._visual_opt("visual_cleanup_auto_logo", False)),
             "review_plan": review_file,
             "review_sha256": review_hash,
         }
@@ -536,26 +543,36 @@ class Orchestrator:
         sub_mode = (self.settings.get("sub_mode", proj.sub_mode)
                     or proj.sub_mode or "burn")
         video_for_render = fetch_data.get("video_path") or proj.video_in
-        if self.settings.get("visual_cleanup_enabled", False):
+        if self._visual_opt("visual_cleanup_enabled", False):
             # Optional step inside render keeps existing checkpoint order stable.
             # Fail explicitly when OCR/runtime is missing; never silently export
             # uncleaned video after the user asked for cleanup.
             from media import visual_cleanup as vclean
             from media import _bin as mbin
-            backend = str(self.settings.get("visual_cleanup_backend", "cv"))
+            backend = str(self._visual_opt("visual_cleanup_backend", "cv"))
             visual_plan = job.stages_dir / "visual_regions.json"
-            reviewed = str(self.settings.get("visual_cleanup_review_plan", "") or "").strip()
+            reviewed = str(self._visual_opt("visual_cleanup_review_plan", "") or "").strip()
             plan = None
             if reviewed:
                 import json
                 review_path = Path(reviewed)
                 if not review_path.is_file():
                     raise FileNotFoundError(f"Không tìm thấy plan đã duyệt: {review_path}")
-                plan = json.loads(review_path.read_text(encoding="utf-8"))
+                raw_plan = review_path.read_bytes()
+                expected_digest = (proj.visual_cleanup_options or {}).get(
+                    "visual_cleanup_review_sha256")
+                if expected_digest is not None:
+                    import hashlib
+                    actual_digest = hashlib.sha256(raw_plan).hexdigest()
+                    if actual_digest != expected_digest:
+                        raise RuntimeError(
+                            "Reviewed cleanup plan changed after job creation; "
+                            "re-approve the masks and create a new job")
+                plan = json.loads(raw_plan.decode("utf-8"))
             if backend == "vsr":
                 from media.visual_neural import run_vsr
-                mode = str(self.settings.get("visual_vsr_mode", "sttn-det"))
-                root = str(self.settings.get("visual_vsr_root", "") or "")
+                mode = str(self._visual_opt("visual_vsr_mode", "sttn-det"))
+                root = str(self._visual_opt("visual_vsr_root", "") or "")
                 reviewed_windows = [r for r in (plan or {}).get("regions", [])
                                     if r.get("source")=="neural-window"]
                 if reviewed_windows:
@@ -591,7 +608,7 @@ class Orchestrator:
                     raise ValueError("LaMa CPU plan has no approved neural-window regions")
                 video_for_render = render_lama_cpu(
                     video_for_render,job.stages_dir/"visual_clean.mp4",
-                    model_path=str(self.settings.get("visual_lama_weight_path","")),
+                    model_path=str(self._visual_opt("visual_lama_weight_path","")),
                     regions=windows,ffmpeg=mbin.ffmpeg_cmd())
                 import json
                 visual_plan.write_text(
@@ -602,7 +619,7 @@ class Orchestrator:
                     raise ValueError("Hybrid cleanup requires a reviewed JSON plan")
                 video_for_render = render_reviewed_hybrid(
                     video_for_render, job.stages_dir / "visual_clean.mp4",
-                    plan, model_path=str(self.settings.get("visual_lama_weight_path", "")),
+                    plan, model_path=str(self._visual_opt("visual_lama_weight_path", "")),
                     ffmpeg=mbin.ffmpeg_cmd())
                 import json
                 visual_plan.write_text(
@@ -618,10 +635,10 @@ class Orchestrator:
                                        "; ".join(qa["issues"]))
             elif backend == "cv":
                 config = vclean.Config(
-                    mode=str(self.settings.get("visual_cleanup_mode", "blur")),
-                    sample_sec=float(self.settings.get("visual_cleanup_interval_sec", 0.65)),
-                    min_hits=int(self.settings.get("visual_cleanup_min_hits", 2)),
-                    auto_logo=bool(self.settings.get("visual_cleanup_auto_logo", False)))
+                    mode=str(self._visual_opt("visual_cleanup_mode", "blur")),
+                    sample_sec=float(self._visual_opt("visual_cleanup_interval_sec", 0.65)),
+                    min_hits=int(self._visual_opt("visual_cleanup_min_hits", 2)),
+                    auto_logo=bool(self._visual_opt("visual_cleanup_auto_logo", False)))
                 engine = vclean.VisualCleanup(config)
                 if reviewed:
                     if not any(r.get("source") in (
