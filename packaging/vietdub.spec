@@ -18,10 +18,10 @@ Cách build trên Windows (máy Tony):
   4. File chạy: dist\\VietDub\\VietDub.exe
 
 LƯU Ý:
-- Model FunASR KHÔNG bundle trong exe (nặng ~1.3GB). Lần đầu chạy,
-  app tự tải về %APPDATA%\\VietDub\\models\\ (chỉ 1 lần, cần mạng).
-  Xem asr/funasr_adapter.py (hàm load): MODELSCOPE_CACHE được trỏ
-  về thư mục đó trước khi tải.
+- Model FunASR và Whisper KHÔNG bundle trong exe (tổng vài GB). Lần đầu
+  chạy, app tự tải về %APPDATA%\\VietDub\\models\\ (cần mạng).
+- Nếu đóng gói backend Qwen, cài thêm requirements-qwen.txt trước khi build;
+  model Qwen/ForcedAligner vẫn tải riêng lúc chạy, không bundle trong exe.
 - Validation trên Linux: chạy cùng spec này sẽ build ra binary Linux
   (không phải .exe) — mục đích chứng minh spec không lỗi cú pháp /
   không thiếu module. .exe Windows thật do Tony build trên máy anh.
@@ -32,7 +32,18 @@ Biến môi trường hỗ trợ:
 import os
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules
+
+try:
+    qwen_hiddenimports = collect_submodules("qwen_asr")
+    qwen_extra_hiddenimports = [
+        "accelerate", "nagisa", "soynlp", "qwen_omni_utils",
+    ]
+except ImportError:
+    # Qwen is an optional ASR backend; builds without its optional package
+    # still support Whisper and direct FunASR.
+    qwen_hiddenimports = []
+    qwen_extra_hiddenimports = []
 
 # SPECPATH = thư mục chứa file spec này (packaging/); project root là cấp trên.
 ROOT = Path(SPECPATH).parent  # noqa: F821 - do PyInstaller cung cấp khi build
@@ -58,6 +69,11 @@ if not binaries:
 hiddenimports = (
     collect_submodules("funasr")
     + collect_submodules("modelscope")
+    + collect_submodules("faster_whisper")
+    + qwen_hiddenimports
+    + qwen_extra_hiddenimports
+    + collect_submodules("av")
+    + collect_submodules("ctranslate2")
     + [
         # torch runtime (hook-torch của PyInstaller lo phần lớn, liệt kê thêm
         # cho chắc các backend load động)
@@ -69,7 +85,7 @@ hiddenimports = (
         "sklearn", "numba", "soxr",
         "pooch", "lazy_loader", "msgpack",
         # TTS
-        "edge_tts", "gtts",
+        "edge_tts",
         # translation / http
         "openai", "requests", "urllib3",
         # yt-dlp (load extractor động)
@@ -89,6 +105,7 @@ hiddenimports = (
         "numpy",
     ]
 )
+binaries += collect_dynamic_libs("ctranslate2")
 
 # Loại bớt cho nhẹ (không dùng tới trong app)
 excludes = [

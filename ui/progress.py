@@ -15,14 +15,21 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from PySide6.QtCore import QObject, QThread, Signal, Qt
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit,
-                               QProgressBar, QPushButton, QTableWidget,
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (QFrame, QHeaderView, QHBoxLayout, QLabel,
+                               QMessageBox, QPlainTextEdit, QProgressBar,
+                               QPushButton, QSplitter, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
-from core.job import CANCELLED, DONE, FAILED, PAUSED, REVIEW, Job
+from core import checkpoint as cp
+from core.job import CANCELLED, DONE, FAILED, IDLE, PAUSED, REVIEW, Job
+from core.job_recovery import inspect_job
+from core.job_store import JobStore
 from core.orchestrator import STEP_LABEL, STEPS, Orchestrator
+from core.review_state import save_pending_review
 from core.settings import Settings
 from ui.common import confirm_box, error_box, info_box
+from ui.theme import UI_COLORS
 
 MAX_LOG_LINES = 2000
 
@@ -57,13 +64,18 @@ class ProgressWindow(QWidget):
     """Màn 2. on_close(): quay về màn chính (video khác / đóng job)."""
 
     def __init__(self, job: Job, settings: Settings,
-                 on_close: Callable[[], None]):
+                 on_close: Callable[[], None], *,
+                 on_progress: Callable[[str, float, str], None] | None = None,
+                 on_result: Callable[[Job, str], None] | None = None):
         super().__init__()
         self.job = job
         self.settings = settings
         self.on_close = on_close
+        self.on_progress = on_progress
+        self.on_result = on_result
         self.setWindowTitle(f"VietDub — Đang xử lý: {job.project.name}")
-        self.resize(680, 620)
+        self.resize(900, 760)
+        self.setMinimumSize(650, 500)
 
         self._thread: QThread | None = None
         self._runner: JobRunner | None = None
@@ -72,56 +84,136 @@ class ProgressWindow(QWidget):
         self._finish_win = None
 
         root = QVBoxLayout(self)
-        self.lbl_title = QLabel(f"Đang xử lý: {job.project.name}")
-        self.lbl_title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        root.addWidget(self.lbl_title)
+        root.setContentsMargins(18, 16, 18, 15)
+        root.setSpacing(11)
+        header = QFrame()
+        header.setObjectName("workflowHeader")
+        header_lay = QVBoxLayout(header)
+        header_lay.setContentsMargins(17, 13, 17, 15)
+        header_lay.setSpacing(5)
+        eyebrow = QLabel("QUY TRÌNH  ·  9 BƯỚC")
+        eyebrow.setObjectName("workflowEyebrow")
+        header_lay.addWidget(eyebrow)
+        self.lbl_title = QLabel(f"Đang xử lý · {job.project.name}")
+        self.lbl_title.setObjectName("pageTitle")
+        self.lbl_title.setWordWrap(True)
+        header_lay.addWidget(self.lbl_title)
 
         self.lbl_step = QLabel("Chuẩn bị…")
-        root.addWidget(self.lbl_step)
+        self.lbl_step.setWordWrap(True)
+        self.lbl_step.setStyleSheet(
+            f"color: {UI_COLORS['text']}; font-size: 11pt; font-weight: 600;")
+        status_row = QHBoxLayout()
+        status_row.addWidget(self.lbl_step, 1)
+        self.lbl_overall = QLabel("0%")
+        self.lbl_overall.setObjectName("pageTitle")
+        self.lbl_overall.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        status_row.addWidget(self.lbl_overall)
+        header_lay.addLayout(status_row)
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
-        root.addWidget(self.bar)
+        self.bar.setTextVisible(False)
+        header_lay.addWidget(self.bar)
+        root.addWidget(header)
 
+        self.body_split = QSplitter(Qt.Horizontal)
+        self.body_split.setChildrenCollapsible(False)
+        self.body_split.setHandleWidth(8)
+        steps_card = QFrame()
+        steps_card.setObjectName("workflowCard")
+        steps_card.setMinimumSize(0, 110)
+        steps_lay = QVBoxLayout(steps_card)
+        steps_lay.setContentsMargins(12, 10, 12, 11)
+        steps_title = QLabel("CÁC CÔNG ĐOẠN")
+        steps_title.setObjectName("workflowSection")
+        steps_lay.addWidget(steps_title)
         self.tbl = QTableWidget(len(STEPS), 2)
         self.tbl.setHorizontalHeaderLabels(["Bước", "Trạng thái"])
         self.tbl.verticalHeader().setVisible(False)
         self.tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tbl.setSelectionMode(QTableWidget.NoSelection)
+        self.tbl.setAlternatingRowColors(True)
+        self.tbl.setWordWrap(True)
+        self.tbl.setMinimumSize(0, 60)
+        self.tbl.verticalHeader().setDefaultSectionSize(40)
+        self.tbl.setVerticalScrollMode(QTableWidget.ScrollPerPixel)
         for i, step in enumerate(STEPS):
             self.tbl.setItem(i, 0, QTableWidgetItem(STEP_LABEL[step]))
             self.tbl.setItem(i, 1, QTableWidgetItem("Chờ"))
-        self.tbl.setColumnWidth(0, 420)
-        self.tbl.horizontalHeader().setStretchLastSection(True)
-        self.tbl.setMaximumHeight(250)
-        root.addWidget(self.tbl)
+        self.tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tbl.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeToContents)
+        steps_lay.addWidget(self.tbl, 1)
+        self.body_split.addWidget(steps_card)
 
-        root.addWidget(QLabel("Nhật ký chạy:"))
+        log_card = QFrame()
+        log_card.setObjectName("workflowCard")
+        log_card.setMinimumSize(0, 110)
+        log_lay = QVBoxLayout(log_card)
+        log_lay.setContentsMargins(12, 10, 12, 11)
+        log_title = QLabel("NHẬT KÝ XỬ LÝ")
+        log_title.setObjectName("workflowSection")
+        log_lay.addWidget(log_title)
         self.log_view = QPlainTextEdit()
+        self.log_view.setObjectName("runLog")
+        self.log_view.setPlaceholderText("Nhật ký xử lý sẽ xuất hiện ở đây…")
         self.log_view.setReadOnly(True)
+        self.log_view.setMinimumSize(0, 60)
         self.log_view.setMaximumBlockCount(MAX_LOG_LINES)
-        root.addWidget(self.log_view, 1)
+        log_lay.addWidget(self.log_view, 1)
+        self.body_split.addWidget(log_card)
+        self.body_split.setStretchFactor(0, 2)
+        self.body_split.setStretchFactor(1, 3)
+        root.addWidget(self.body_split, 1)
 
-        row = QHBoxLayout()
+        footer = QFrame()
+        footer.setObjectName("workflowFooter")
+        row = QHBoxLayout(footer)
+        row.setContentsMargins(11, 7, 11, 7)
         self.btn_pause = QPushButton("Tạm dừng")
         self.btn_pause.clicked.connect(self.pause)
         self.btn_resume = QPushButton("Tiếp tục")
+        self.btn_resume.setProperty("role", "primary")
         self.btn_resume.clicked.connect(lambda: self.begin())
         self.btn_resume.setEnabled(False)
         self.btn_cancel = QPushButton("Hủy")
+        self.btn_cancel.setProperty("role", "danger")
         self.btn_cancel.clicked.connect(self.cancel)
         self.btn_settings = QPushButton("Cài đặt")
+        self.btn_settings.setProperty("role", "secondary")
         self.btn_settings.clicked.connect(self.open_settings)
         row.addWidget(self.btn_pause)
         row.addWidget(self.btn_resume)
         row.addWidget(self.btn_cancel)
         row.addStretch(1)
         row.addWidget(self.btn_settings)
-        root.addLayout(row)
+        root.addWidget(footer)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "body_split"):
+            # Stack when a narrow window has enough height for both panels.
+            # At the minimum height, side by side leaves each panel usable.
+            orientation = (Qt.Vertical if self.width() < 760 and self.height() >= 640
+                           else Qt.Horizontal)
+            if self.body_split.orientation() != orientation:
+                self.body_split.setOrientation(orientation)
+                if orientation == Qt.Vertical:
+                    self.body_split.setSizes([220, 180])
+                else:
+                    self.body_split.setSizes([360, 500])
+            self.tbl.resizeRowsToContents()
+            current = self.tbl.currentItem()
+            if current is not None:
+                self.tbl.scrollToItem(current)
 
     # ------------------------------------------------------------------ chạy
     def begin(self, resume_from: Optional[str] = None) -> None:
         """Bắt đầu (hoặc chạy tiếp) job trong thread mới."""
         if self._running:
+            return
+        if self.job.status == REVIEW:
+            self._open_review()
             return
         self._running = True
         self.btn_pause.setEnabled(True)
@@ -145,13 +237,23 @@ class ProgressWindow(QWidget):
         thread.start()
 
     def _on_progress(self, step: str, pct: float, msg: str) -> None:
+        if self.on_progress is not None:
+            try:
+                self.on_progress(step, pct, msg)
+            except Exception:  # noqa: BLE001 - callback phụ, UI job vẫn tiếp tục
+                pass
         if step in STEPS:
             idx = STEPS.index(step)
             overall = (idx * 100.0 + max(0.0, min(100.0, pct))) / len(STEPS)
             self.bar.setValue(int(overall))
+            self.lbl_overall.setText(f"{overall:.0f}%")
             self.lbl_step.setText(f"{STEP_LABEL[step]} — {pct:.0f}%")
             status = "Đang chạy" if pct < 100 else "Xong"
             self.tbl.item(idx, 1).setText(status)
+            self.tbl.item(idx, 1).setForeground(
+                QColor(UI_COLORS["primary" if pct < 100 else "success"]))
+            self.tbl.setCurrentCell(idx, 0)
+            self.tbl.scrollToItem(self.tbl.item(idx, 0))
             if pct >= 100:
                 for j in range(idx):
                     if self.tbl.item(j, 1).text() == "Chờ":
@@ -166,6 +268,11 @@ class ProgressWindow(QWidget):
 
     def _on_finished(self, result: str) -> None:
         self._running = False
+        if self.on_result is not None:
+            try:
+                self.on_result(self.job, result)
+            except Exception:  # noqa: BLE001 - callback phụ, UI job vẫn tiếp tục
+                pass
         if result == REVIEW:
             self._open_review()
         elif result == DONE:
@@ -241,28 +348,60 @@ class ProgressWindow(QWidget):
 
     # ------------------------------------------------------------- chuyển màn
     def _open_review(self) -> None:
-        nxt = self.job.resume_from or ""
-        self.hide()
-        if nxt == "gender":
-            from ui.review_source import ReviewSourceWindow
-            self._review_win = ReviewSourceWindow(
-                self.job, self.settings,
-                on_continue=self._resume_after_review,
-                on_back=self._back_from_review)
-        else:
-            from ui.review_vi import ReviewViWindow
-            self._review_win = ReviewViWindow(
-                self.job, self.settings,
-                on_continue=self._resume_after_review,
-                on_back=self._back_from_review,
-                on_retranslate=self._retranslate_with_metadata)
-        self._review_win.show()
+        try:
+            inspection = inspect_job(JobStore(), self.job.job_id,
+                                     sub_mode=self.settings.get("sub_mode", self.job.project.sub_mode))
+            if not inspection.can_open_review:
+                raise ValueError(inspection.blocked_reason or
+                                 "Checkpoint duyệt đã thay đổi. Mở lịch sử hoặc hàng đợi để dựng lại.")
+            self.job.status = REVIEW
+            self.job.resume_from = inspection.review_resume_from
+            # History and restored queues reopen review directly, without
+            # entering Orchestrator.run(). Seed URL artifact identity here as
+            # part of that explicit action, after inspection and before the
+            # review is shown. JobStore preserves any existing file identity.
+            if self.job.project.video_source == "url" and not self.job.force_fetch:
+                JobStore().save(self.job, last_stage=inspection.pending_review,
+                                last_error="", seed_fetched_identity=True)
+            save_pending_review(self.job.job_dir, inspection.pending_review)
+            if inspection.pending_review == "asr":
+                from ui.review_source import ReviewSourceWindow
+                review = ReviewSourceWindow(
+                    self.job, self.settings,
+                    on_continue=self._resume_after_review,
+                    on_back=self._back_from_review)
+            else:
+                from ui.review_vi import ReviewViWindow
+                review = ReviewViWindow(
+                    self.job, self.settings,
+                    on_continue=self._resume_after_review,
+                    on_back=self._back_from_review,
+                    on_retranslate=self._retranslate_with_metadata)
+            self._review_win = review
+            review.show()
+            self.hide()
+        except Exception as exc:
+            self.show()
+            error_box(self, "Không thể mở bước duyệt", str(exc))
+            # closeEvent returns to the main/queue window through on_close.
+            self.close()
+
+    def show_current_review(self) -> None:
+        """Reopen a saved review stop without advancing its job checkpoint."""
+        if not self._running and self.job.status == REVIEW:
+            self._open_review()
 
     def _retranslate_with_metadata(self, meta) -> None:
         # Tony sửa metadata tay ở màn duyệt #2 -> dịch lại toàn bộ với
         # metadata mới (chỉ chạy lại bước translate).
-        from project import io as pio
-        pio.save_video_metadata(self.job.job_dir, meta)
+        # ReviewViWindow has already persisted edits and metadata before
+        # invoking this callback, including reporting any write failure.
+        try:
+            cp.invalidate_from(self.job.job_dir, self.job.project, "translate")
+        except Exception as exc:
+            error_box(self._review_win or self, "Không thể dịch lại", str(exc))
+            return
+        self.job.status = IDLE
         if self._review_win:
             self._review_win.close()
             self._review_win = None
@@ -270,6 +409,29 @@ class ProgressWindow(QWidget):
         self.begin(resume_from="translate")
 
     def _resume_after_review(self) -> None:
+        try:
+            inspection = inspect_job(JobStore(), self.job.job_id,
+                                     sub_mode=self.settings.get("sub_mode", self.job.project.sub_mode))
+            if not inspection.can_open_review:
+                raise ValueError(inspection.blocked_reason or "Checkpoint duyệt không còn hợp lệ.")
+            resume_from = inspection.review_resume_from or inspection.resume_from
+            if inspection.pending_review == "asr":
+                # Invalidate while the ASR review marker is still pending. A
+                # crash after the marker is cleared will then recover at
+                # gender from the missing checkpoint, even before a worker
+                # thread starts. source_review is deliberately preserved by
+                # invalidate_from("gender") for a safe retry.
+                cp.invalidate_from(self.job.job_dir, self.job.project, "gender")
+                from project import io as pio
+                pio.save_project(self.job.job_dir, self.job.project)
+            save_pending_review(self.job.job_dir, None)
+        except Exception as exc:
+            error_box(self._review_win or self, "Chưa lưu được xác nhận duyệt", str(exc))
+            return
+        # ASR review input is not a completed gender stage. Always run gender
+        # estimation after its approval; translation review continues at TTS.
+        self.job.resume_from = resume_from
+        self.job.status = IDLE
         if self._review_win:
             self._review_win.close()
             self._review_win = None
@@ -282,7 +444,7 @@ class ProgressWindow(QWidget):
             self._review_win.close()
             self._review_win = None
         self.show()
-        self.lbl_step.setText("Đã duyệt — bấm [Tiếp tục] để chạy bước tiếp theo.")
+        self.lbl_step.setText("Chưa xác nhận duyệt — bấm [Tiếp tục] để mở lại bước duyệt.")
         self.btn_resume.setEnabled(True)
         self.btn_pause.setEnabled(False)
 
@@ -296,6 +458,8 @@ class ProgressWindow(QWidget):
     def _new_video(self) -> None:
         if self._finish_win:
             self._finish_win.close()
+            if self._finish_win.isVisible():
+                return
             self._finish_win = None
         # closeEvent (idle) tự gọi on_close() -> hiện lại màn chính.
         self.close()

@@ -24,12 +24,15 @@ log = logging.getLogger("vietdub.settings")
 
 DEFAULTS = {
     # --- translation ---
+    "openai_api_key": "",
+    "openai_model": "gpt-4.1",
+    "openai_url": "https://api.openai.com/v1",
     "nine_router_key": "",
     "nine_router_model": "mimo-v2.6-flash-free",
     "nine_router_url": "https://opencode.ai/zen/v1",
     "ollama_url": "http://localhost:11434",
     "ollama_model": "",
-    "translate_provider": "9router",      # "9router" | "ollama"
+    "translate_provider": "openai",       # "openai" | "9router" | "ollama"
     "llm_temperature": 0.2,
     "translate_batch": 20,
     "translation_semantic_review": True,  # optional LLM semantic QA for any video
@@ -58,12 +61,16 @@ DEFAULTS = {
     "vad_model": "damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
     "punc_model": "damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",  # 290M, light
     "spk_model": "damo/speech_campplus_sv_zh-cn_16k-common",
+    "qwen_model": "Qwen/Qwen3-ASR-1.7B",
+    "qwen_aligner_model": "Qwen/Qwen3-ForcedAligner-0.6B",
+    "stt_url": "http://127.0.0.1:8768",
+    "stt_quality": "fast",               # "fast" (0.6B) | "quality" (1.7B)
     # --- ASR quality ---
     "asr_confidence_low": 0.5,   # below this -> needs_review (edge case 5)
     # --- speaker gender ---
     "pitch_male_max_hz": 160.0,
     "pitch_female_min_hz": 165.0,
-    "pitch_confidence_low": 0.55,
+    "pitch_confidence_low": 0.7,
     # --- TTS ---
     "voice_male": "vi-VN-NamMinhNeural",
     "voice_female": "vi-VN-HoaiMyNeural",

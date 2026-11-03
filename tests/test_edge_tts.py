@@ -68,6 +68,56 @@ def test_disconnect_then_resume(tmp_path):
     assert all(Path(s.audio_vi).exists() for s in got2)
 
 
+def test_changed_text_regenerates_existing_wav_and_refreshes_cache(tmp_path):
+    import numpy as np
+    import soundfile as sf
+
+    out = tmp_path / "tts"
+    out.mkdir()
+    wav = out / "seg_0000.wav"
+    sf.write(wav, np.zeros(44100, dtype=np.float32), 44100)
+    key_file = wav.with_suffix(".md5")
+    voice = "vi-VN-HoaiMyNeural"
+    key_file.write_text(metts._cache_key(
+        "old text", voice, "+0%", "+0Hz"))
+    FakeComm.fail_at = None
+
+    seg = _segs(1)[0]
+    seg.text_vi = "updated Vietnamese text"
+    metts.EdgeTTS(communicate_factory=_factory, retries=0,
+                  concurrency=1).synthesize([seg], out)
+
+    assert FakeComm.calls == 1
+    assert seg.audio_vi == str(wav)
+    assert key_file.read_text() == metts._cache_key(
+        seg.text_vi, voice, "+0%", "+0Hz")
+
+
+def test_failed_regeneration_does_not_reuse_stale_wav(tmp_path):
+    import numpy as np
+    import soundfile as sf
+
+    out = tmp_path / "tts"
+    out.mkdir()
+    wav = out / "seg_0000.wav"
+    sf.write(wav, np.zeros(44100, dtype=np.float32), 44100)
+    key_file = wav.with_suffix(".md5")
+    voice = "vi-VN-HoaiMyNeural"
+    old_key = metts._cache_key(
+        "old text", voice, "+0%", "+0Hz")
+    key_file.write_text(old_key)
+    FakeComm.fail_at = 1
+
+    seg = _segs(1)[0]
+    seg.text_vi = "updated Vietnamese text"
+    with pytest.raises(metts.TTSError):
+        metts.EdgeTTS(communicate_factory=_factory, retries=0,
+                      concurrency=1).synthesize([seg], out)
+
+    assert not seg.audio_vi
+    assert key_file.read_text() == old_key
+
+
 def test_all_fail_raises(tmp_path):
     tts = metts.EdgeTTS(communicate_factory=_factory, retries=0,
                         concurrency=1)

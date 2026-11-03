@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from project.schema import Project
+from core.paths import user_data_dir
 
 # Job states
 IDLE = "idle"
@@ -21,7 +22,7 @@ DONE = "done"
 FAILED = "failed"
 CANCELLED = "cancelled"  # user cancelled mid-run (Wave 2 UI)
 
-JOBS_ROOT = Path(__file__).resolve().parents[1] / "jobs"
+JOBS_ROOT = user_data_dir() / "jobs"
 
 
 @dataclass
@@ -44,6 +45,9 @@ class Job:
     # Transient - never saved to disk (a restarted app resumes from checkpoint).
     pause_requested: bool = False
     cancel_requested: bool = False
+    # Force a fresh fetch after the user confirms a changed URL source.
+    # Transient - never persisted in job/project data.
+    force_fetch: bool = False
 
     @property
     def job_dir(self) -> Path:

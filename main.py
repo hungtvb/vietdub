@@ -14,12 +14,14 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from core.settings import Settings  # noqa: E402
 from ui.main_window import MainWindow  # noqa: E402
+from ui.theme import apply_apple_theme  # noqa: E402
 
 
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("VietDub")
     app.setOrganizationName("VietDub")
+    apply_apple_theme(app)
     settings = Settings()
     win = MainWindow(settings)
     win.show()

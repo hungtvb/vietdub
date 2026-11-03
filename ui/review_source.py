@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Callable, Dict, List
+from typing import Callable
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QPushButton,
+from PySide6.QtWidgets import (QAbstractItemDelegate, QComboBox, QFrame,
+                               QHBoxLayout, QLabel, QPushButton,
                                QStyledItemDelegate, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -39,6 +40,63 @@ audience_value = audience_value_vi
 
 COLS = ["#", "Bắt đầu", "Kết thúc", "Loa", "Giới tính", "Nói với ai",
         "Nội dung", "Nhân vật xác minh"]
+
+
+class TranscriptTable(QTableWidget):
+    """Wrap transcripts and size only visible rows, even for large jobs."""
+
+    def __init__(self, rows: int, columns: int):
+        super().__init__(rows, columns)
+        self.setWordWrap(True)
+        self.setTextElideMode(Qt.ElideNone)
+        self.setVerticalScrollMode(QTableWidget.ScrollPerPixel)
+        self.verticalHeader().setDefaultSectionSize(42)
+        self.verticalHeader().setMinimumSectionSize(38)
+        self._row_timer = QTimer(self)
+        self._row_timer.setSingleShot(True)
+        self._row_timer.setInterval(30)
+        self._row_timer.timeout.connect(self._size_visible_rows)
+        self.verticalScrollBar().valueChanged.connect(self.schedule_row_sizes)
+        self.horizontalHeader().sectionResized.connect(self.schedule_row_sizes)
+        self.itemChanged.connect(self.schedule_row_sizes)
+
+    def schedule_row_sizes(self, *_args) -> None:
+        self._row_timer.start()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        # Keep source text useful at compact widths; supporting columns remain
+        # reachable with horizontal scrolling instead of squeezing text away.
+        text_col = self.columnCount() - 1
+        used = sum(self.columnWidth(c) for c in range(text_col))
+        self.setColumnWidth(text_col, max(280, self.viewport().width() - used))
+        self.schedule_row_sizes()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.schedule_row_sizes()
+
+    def _size_visible_rows(self) -> None:
+        row = self.rowAt(0)
+        if row < 0:
+            return
+        # Never resize every transcript row on a window resize or keystroke.
+        # Re-evaluate the next row after each height change, since wrapping can
+        # change how many rows fit inside the viewport.
+        while (row < self.rowCount()
+               and self.rowViewportPosition(row) < self.viewport().height()):
+            self.resizeRowToContents(row)
+            row += 1
+
+    def commit_active_editor(self) -> None:
+        """Flush the live delegate, including a combo, before reading items."""
+        if self.state() != QTableWidget.EditingState:
+            return
+        for editor in self.viewport().findChildren(
+                QWidget, options=Qt.FindDirectChildrenOnly):
+            if editor.isVisible():
+                self.commitData(editor)
+                self.closeEditor(editor, QAbstractItemDelegate.NoHint)
 
 
 class GenderDelegate(QStyledItemDelegate):
@@ -97,21 +155,39 @@ class ReviewSourceWindow(QWidget):
         self.on_continue = on_continue
         self.on_back = on_back
         self.setWindowTitle(f"VietDub — Duyệt sub gốc: {job.project.name}")
-        self.resize(860, 560)
+        self.resize(1180, 760)
+        self.setMinimumSize(700, 500)
 
-        self.segments: List[Segment] = pio.load_segments(job.job_dir, "asr") or []
-        self.speakers: Dict[int, Speaker] = \
-            pio.load_speakers(job.job_dir, "gender") or {}
+        # The source-review checkpoint is separate from the completed gender
+        # stage. Prefer it after Back/restart, while falling back to gender.json
+        # for jobs created before this distinction existed.
+        source_review = cp.load_step(job.job_dir, "source_review")
+        if source_review is not None:
+            self.segments = [Segment.from_dict(row)
+                             for row in source_review["segments"]]
+            self.speakers = {
+                row["id"]: Speaker.from_dict(row)
+                for row in source_review["speakers"]
+            }
+        else:
+            self.segments = pio.load_segments(job.job_dir, "asr") or []
+            self.speakers = pio.load_speakers(job.job_dir, "gender") or {}
+            # Older versions stored source-review choices directly in the
+            # gender checkpoint while leaving the ASR segment labels blank.
+            # Hydrate the table from that data so its next save can migrate it.
+            for segment in self.segments:
+                speaker = self.speakers.get(segment.speaker)
+                if (not segment.gender and speaker
+                        and speaker.gender in {"male", "female"}):
+                    segment.gender = speaker.gender
 
-        self._player = QMediaPlayer(self)
-        self._audio_out = QAudioOutput(self)
-        self._player.setAudioOutput(self._audio_out)
+        self._player: QMediaPlayer | None = None
+        self._audio_out: QAudioOutput | None = None
         self._stop_timer = QTimer(self)
         self._stop_timer.setSingleShot(True)
         self._stop_timer.timeout.connect(self._stop_playback)
         self._playing_row = -1
         self._pending_seek: int | None = None
-        self._player.mediaStatusChanged.connect(self._on_media_status)
         # True khi window bị đóng bởi chính nút [Quay lại]/[Tiếp tục] ->
         # closeEvent không schedule on_back lần nữa.
         self._close_via_button = False
@@ -128,9 +204,12 @@ class ReviewSourceWindow(QWidget):
             f"Tổng {len(self.segments)} câu, {n_speakers} loa"
             + (f" — {n_review} câu tô vàng cần kiểm tra kỹ (ASR nghe không "
                "chắc)." if n_review else "."))
-        root.addWidget(self.lbl_note)
+        self.lbl_note.setProperty("role", "secondary")
+        self.lbl_note.setWordWrap(True)
+        header_lay.addWidget(self.lbl_note)
+        root.addWidget(header)
 
-        self.tbl = QTableWidget(len(self.segments), len(COLS))
+        self.tbl = TranscriptTable(len(self.segments), len(COLS))
         self.tbl.setHorizontalHeaderLabels(COLS)
         self.tbl.verticalHeader().setVisible(False)
         self.tbl.setItemDelegateForColumn(4, GenderDelegate(self))
@@ -147,8 +226,22 @@ class ReviewSourceWindow(QWidget):
         self.tbl.horizontalHeader().setStretchLastSection(True)
         self.tbl.setSelectionBehavior(QTableWidget.SelectRows)
         self.tbl.setSelectionMode(QTableWidget.SingleSelection)
-        root.addWidget(self.tbl, 1)
+        self.tbl.setAlternatingRowColors(True)
+        table_card = QFrame()
+        table_card.setObjectName("workflowCard")
+        table_lay = QVBoxLayout(table_card)
+        table_lay.setContentsMargins(11, 9, 11, 10)
+        section = QLabel("BẢN GHI VÀ NGƯỜI NÓI")
+        section.setObjectName("workflowSection")
+        table_lay.addWidget(section)
+        table_lay.addWidget(self.tbl, 1)
+        root.addWidget(table_card, 1)
 
+        actions_card = QFrame()
+        actions_card.setObjectName("workflowFooter")
+        actions = QVBoxLayout(actions_card)
+        actions.setContentsMargins(11, 7, 11, 7)
+        actions.setSpacing(5)
         row = QHBoxLayout()
         self.btn_play = QPushButton("Nghe lại câu")
         self.btn_play.clicked.connect(self.play_selected)
@@ -163,19 +256,24 @@ class ReviewSourceWindow(QWidget):
         btn_settings = QPushButton("Cài đặt")
         btn_settings.clicked.connect(self.open_settings)
         btn_back = QPushButton("Quay lại")
+        btn_back.setProperty("role", "secondary")
         btn_back.clicked.connect(self._back_clicked)
         btn_next = QPushButton("Tiếp tục dịch →")
-        btn_next.setStyleSheet("font-weight: bold;")
+        btn_next.setProperty("role", "primary")
         btn_next.clicked.connect(self.save_and_continue)
         row.addWidget(self.btn_play)
         row.addWidget(self.btn_anchor)
         row.addWidget(self.btn_split)
         row.addWidget(self.btn_merge)
         row.addStretch(1)
-        row.addWidget(btn_settings)
-        row.addWidget(btn_back)
-        row.addWidget(btn_next)
-        root.addLayout(row)
+        actions.addLayout(row)
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        footer.addWidget(btn_settings)
+        footer.addWidget(btn_back)
+        footer.addWidget(btn_next)
+        actions.addLayout(footer)
+        root.addWidget(actions_card)
 
     def open_voice_anchor_review(self) -> None:
         """Original-video per-line identity review, never entire-cluster auto-approval."""
@@ -213,18 +311,23 @@ class ReviewSourceWindow(QWidget):
         open_settings_dialog(self, self.settings)
 
     def closeEvent(self, e) -> None:  # noqa: N802
-        # Bấm X = [Quay lại]: về màn tiến trình, không quit app, không mất
-        # checkpoint (màn tiến trình đang hide). Trì hoãn qua singleShot để
-        # tránh gọi close() đệ quy (on_back tự đóng window này).
-        # Nếu đóng là do bấm nút [Quay lại]/[Tiếp tục] thì on_back/on_continue
-        # đã chạy rồi -> không schedule thêm lần nữa.
+        if self._close_via_button:
+            super().closeEvent(e)
+            return
+        if not self._save_review():
+            e.ignore()
+            return
         self._stop_playback()
-        via_button, self._close_via_button = self._close_via_button, False
+        self._close_via_button = True
         super().closeEvent(e)
-        if not via_button:
-            QTimer.singleShot(0, self.on_back)
+        # The progress callback closes this window too. Mark it handled before
+        # scheduling the callback, so that close cannot save or navigate twice.
+        QTimer.singleShot(0, self.on_back)
 
     def _back_clicked(self) -> None:
+        if not self._save_review():
+            return
+        self._stop_playback()
         self._close_via_button = True
         self.on_back()
 
@@ -247,12 +350,21 @@ class ReviewSourceWindow(QWidget):
         self.tbl.setItem(r, 7, ro(state))
         if seg.needs_review:
             for c in range(len(COLS)):
-                self.tbl.item(r, c).setBackground(QColor("#fff3b0"))
+                self.tbl.item(r, c).setBackground(QColor("#fff4ce"))
 
     # ------------------------------------------------------------ nghe lại
     def _wav_path(self) -> str:
         data = cp.load_step(self.job.job_dir, "extract") or {}
         return data.get("wav_path", "")
+
+    def _ensure_player(self) -> QMediaPlayer:
+        if self._player is None:
+            self._player = QMediaPlayer(self)
+            if QGuiApplication.platformName() != "offscreen":
+                self._audio_out = QAudioOutput(self)
+                self._player.setAudioOutput(self._audio_out)
+            self._player.mediaStatusChanged.connect(self._on_media_status)
+        return self._player
 
     def play_selected(self) -> None:
         if self._playing_row >= 0:
@@ -272,8 +384,9 @@ class ReviewSourceWindow(QWidget):
                       "Cách khắc phục: chạy lại từ bước [1] Tách audio.")
             return
         self._pending_seek = int(seg.start * 1000)
-        self._player.setSource(QUrl.fromLocalFile(wav))
-        self._player.play()
+        player = self._ensure_player()
+        player.setSource(QUrl.fromLocalFile(wav))
+        player.play()
         ms = max(300, int((seg.end - seg.start) * 1000))
         self._stop_timer.start(ms)
         self._playing_row = r
@@ -285,12 +398,14 @@ class ReviewSourceWindow(QWidget):
         # seek bị bỏ qua (phát từ đầu file thay vì đúng câu).
         if self._pending_seek is not None and status in (
                 QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia):
-            self._player.setPosition(self._pending_seek)
+            if self._player is not None:
+                self._player.setPosition(self._pending_seek)
             self._pending_seek = None
 
     def _stop_playback(self) -> None:
         self._stop_timer.stop()
-        self._player.stop()
+        if self._player is not None:
+            self._player.stop()
         self._playing_row = -1
         self.btn_play.setText("Nghe lại câu")
 
@@ -303,6 +418,7 @@ class ReviewSourceWindow(QWidget):
         self.tbl.setRowCount(len(self.segments))
         for r, seg in enumerate(self.segments):
             self._fill_row(r, seg)
+        self.tbl.schedule_row_sizes()
         n_speakers = len({s.speaker for s in self.segments})
         n_review = sum(1 for s in self.segments if s.needs_review)
         self.lbl_note.setText(
@@ -384,6 +500,7 @@ class ReviewSourceWindow(QWidget):
         a.text_src = ((a.text_src or "").rstrip() + " " +
                       (b.text_src or "").lstrip()).strip()
         a.end = max(a.end, b.end)
+        a.gender = a.gender or b.gender
         a.needs_review = a.needs_review or b.needs_review
         a.confidence = min(a.confidence, b.confidence)
         del self.segments[r + 1]
@@ -395,6 +512,7 @@ class ReviewSourceWindow(QWidget):
     # ------------------------------------------------------------ lưu + tiếp
     def _read_table(self) -> bool:
         """Đọc bảng vào segments/speakers. False = lỗi nhập liệu."""
+        self.tbl.commit_active_editor()
         for r in range(self.tbl.rowCount()):
             seg = self.segments[r]
             try:
@@ -404,7 +522,9 @@ class ReviewSourceWindow(QWidget):
                           f"Dòng {r + 1}: cột Loa phải là số nguyên "
                           f"(vd 0, 1). Bạn nhập: "
                           f"'{self.tbl.item(r, 3).text()}'.")
-                self.tbl.selectRow(r)
+                self.tbl.setCurrentCell(r, 3)
+                self.tbl.scrollToItem(self.tbl.item(r, 3))
+                self.tbl.setFocus()
                 return False
             gender = GENDER_VALUE.get(
                 self.tbl.item(r, 4).text().strip(), "")
@@ -414,7 +534,9 @@ class ReviewSourceWindow(QWidget):
                           f"Dòng {r + 1}: cột 'Nói với ai' phải chọn trong "
                           f"dropdown (Chưa rõ/Khán giả/Tất cả/Loa N). "
                           f"Bạn nhập: '{self.tbl.item(r, 5).text()}'.")
-                self.tbl.selectRow(r)
+                self.tbl.setCurrentCell(r, 5)
+                self.tbl.scrollToItem(self.tbl.item(r, 5))
+                self.tbl.setFocus()
                 return False
             from speaker.verification import clear_identity
             edited_text = self.tbl.item(r, 6).text()
@@ -429,6 +551,7 @@ class ReviewSourceWindow(QWidget):
             seg.audience = aud
             seg.text_src = edited_text
         # đồng bộ giới tính vào speakers (bước dịch dùng speakers)
+        selected_gender: dict[int, str] = {}
         for seg in self.segments:
             spk = self.speakers.get(seg.speaker)
             if spk is None:
@@ -444,12 +567,14 @@ class ReviewSourceWindow(QWidget):
 
     def save_and_continue(self) -> None:
         self._stop_playback()
-        if not self._read_table():
+        if not self._save_review():
             return
-        pio.save_segments(self.job.job_dir, "asr", self.segments)
-        pio.save_speakers(self.job.job_dir, "gender", self.speakers)
         info_box(self, "Đã lưu",
                  f"Đã lưu {len(self.segments)} câu đã duyệt. "
-                 "Chạy tiếp bước phân tích quan hệ và dịch.")
+                 "Chạy tiếp bước ước lượng giới tính, phân tích và dịch.")
         self._close_via_button = True  # on_continue tự đóng window này
-        self.on_continue()
+        try:
+            self.on_continue()
+        finally:
+            if self.isVisible():
+                self._close_via_button = False

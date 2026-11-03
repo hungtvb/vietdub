@@ -1,0 +1,4 @@
+# Optional backend: Qwen3-ASR + Qwen3 ForcedAligner.
+# Includes the normal app dependencies and the Qwen runtime.
+-r requirements.txt
+qwen-asr==0.0.6

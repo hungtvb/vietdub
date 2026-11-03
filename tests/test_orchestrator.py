@@ -105,6 +105,23 @@ def test_failure_keeps_checkpoints(tmp_path, monkeypatch):
     assert orch2.called[0] == "gender"
 
 
+def test_explicit_rerun_failure_retries_the_failed_step(tmp_path, monkeypatch):
+    job = _job(tmp_path, monkeypatch, review_stops=True)
+    job.resume_from = "tts"  # value left by the earlier translation review
+    orch = StubOrchestrator(job, Settings(path=tmp_path / "s.json"))
+    for step in STEPS[:6]:
+        orch._run_step(step)
+    orch.called.clear()
+    orch.fail_on = "translate"
+
+    assert orch.run(resume_from="translate") == FAILED
+    assert job.resume_from == "translate"
+
+    retry = StubOrchestrator(job, Settings(path=tmp_path / "s.json"))
+    assert retry.run(resume_from=job.resume_from) == REVIEW
+    assert retry.called[0] == "translate"
+
+
 def test_run_log_written(tmp_path, monkeypatch):
     job = _job(tmp_path, monkeypatch)
     orch = StubOrchestrator(job, Settings(path=tmp_path / "s.json"))
@@ -112,6 +129,41 @@ def test_run_log_written(tmp_path, monkeypatch):
     assert job.run_log_path.exists()
     content = job.run_log_path.read_text(encoding="utf-8")
     assert "[2] Nghe + tách loa" in content
+
+
+def test_gender_confidence_marks_segments_unless_manually_set(
+        tmp_path, monkeypatch):
+    from core import checkpoint as checkpoint
+    from project import io as pio
+    from project.schema import Segment, Speaker
+    from speaker import gender as mgender
+
+    job = _job(tmp_path, monkeypatch)
+    settings = Settings(path=tmp_path / "settings.json")
+    settings.set("pitch_confidence_low", 0.7)
+    orch = Orchestrator(job, settings)
+    segments = [
+        Segment(index=0, start=0, end=1, speaker=0, text_src="line 0"),
+        Segment(index=1, start=1, end=2, speaker=1, text_src="line 1"),
+    ]
+    guesses = {
+        0: Speaker(id=0, gender="female", confidence=0.64),
+        1: Speaker(id=1, gender="male", confidence=0.9),
+    }
+    manual = {1: Speaker(id=1, gender="male", confidence=0.0)}
+    monkeypatch.setattr(pio, "load_segments", lambda *_: segments)
+    monkeypatch.setattr(checkpoint, "load_step", lambda *_: {"wav_path": "audio.wav"})
+    monkeypatch.setattr(mgender, "estimate_genders", lambda *_args, **_kwargs: guesses)
+    monkeypatch.setattr(pio, "load_speakers", lambda *_: manual)
+    monkeypatch.setattr(pio, "save_segments", lambda *_: None)
+    monkeypatch.setattr(pio, "save_speakers", lambda *_: None)
+
+    orch._step_gender()
+
+    assert segments[0].needs_review is True
+    assert segments[1].needs_review is False
+    assert segments[0].gender == "female"
+    assert segments[1].gender == "male"
 
 
 def test_no_blocking_input_in_core():
@@ -212,7 +264,18 @@ def test_fit_gives_up_after_max_rounds(tmp_path, monkeypatch):
     def always_long(segments, **kw):
         raise mfit.TooLongError(segments[0], 2.0)
 
+    def always_splittable(seg):
+        from project.schema import Segment
+        midpoint = (seg.start + seg.end) / 2
+        return (
+            Segment(index=seg.index, start=seg.start, end=midpoint,
+                    speaker=seg.speaker, text_vi="first half"),
+            Segment(index=seg.index + 1, start=midpoint, end=seg.end,
+                    speaker=seg.speaker, text_vi="second half"),
+        )
+
     monkeypatch.setattr(mfit, "plan", always_long)
+    monkeypatch.setattr(mfit, "split_segment", always_splittable)
     with pytest.raises(RuntimeError) as e:
         orch._fit_and_track([_long_seg()], tmp_path, lambda segs: segs)
     assert "3 lần" in str(e.value)

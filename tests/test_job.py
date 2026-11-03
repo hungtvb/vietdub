@@ -57,6 +57,26 @@ def test_settings_corrupt_file_uses_defaults(tmp_path):
     assert s.get("crf") == 20
 
 
+def test_job_logger_captures_module_logs(tmp_path):
+    import logging
+    from core.logger import close_job_logger, setup_job_logger
+
+    seen = []
+    job_id = "module-log-test"
+    job_logger = setup_job_logger(job_id, tmp_path, log_cb=seen.append)
+    try:
+        logging.getLogger("vietdub.tts").warning("tts-module-marker")
+        for handler in logging.getLogger("vietdub").handlers:
+            handler.flush()
+
+        assert "tts-module-marker" in (tmp_path / "run.log").read_text(
+            encoding="utf-8")
+        assert any("tts-module-marker" in line for line in seen)
+        assert job_logger.name == f"vietdub.job.{job_id}"
+    finally:
+        close_job_logger(job_id)
+
+
 def test_settings_get_unknown_key():
     s = Settings(path="/tmp/vd_settings_nonexistent_xyz/settings.json")
     assert s.get("nope", "dflt") == "dflt"

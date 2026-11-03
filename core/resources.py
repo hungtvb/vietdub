@@ -4,8 +4,9 @@
 """Edge case 17: estimate peak RAM before the heavy steps and warn when the
 machine may not have enough (overnight mode must never die silently).
 
-Components of the estimate (measured/profiled, conservative):
-- FunASR model combo resident in RAM (ĐO THẬT, không ước lượng).
+Components of the estimate (conservative until profiled on Windows):
+- Largest ASR model stack resident in RAM; hybrid and Qwen adapters load
+  their model stacks sequentially so they do not intentionally overlap.
 - gender step loads the whole 16kHz mono wav as float32.
 - build_track works in 60s chunks, so only one chunk buffer is held.
 - headroom for the ffmpeg subprocesses.
@@ -18,13 +19,14 @@ import sys
 
 log = logging.getLogger("vietdub.resources")
 
-# HIỆU CHỈNH 2026-10-09 (Wave 3): số cũ 1800MB underestimate nặng.
-# Đo thật trong hidden_files/wave1_integration.log (run 2026-10-08 16:58:15):
-#   [2.asr] OK time=87.3s ram_start=15MB ram_peak=3433MB (clip 55s)
-# Trừ các thành phần đã tính riêng: ffmpeg headroom 300MB + track chunk
-# ~10MB + wav 55s ~3MB + process base ~15MB -> model combo resident ≈ 3105MB.
-# (combo: SeacoParaformer + fsmn-vad + ct-punc 290M + cam++, torch CPU)
+# Conservative estimate based on the older FunASR/SeacoParaformer profile
+# (3433MB process peak for a 55s clip). Retain this budget until the hybrid
+# Whisper + FunASR peak is profiled on the target Windows setup.
 ASR_MODEL_MB = 3100.0
+# Measured Qwen 1.7B and the 0.6B aligner are loaded sequentially. The ASR
+# pass peaked around 6.5GB in the benchmark environment; keep headroom for the
+# Python/runtime allocations and the full audio buffer.
+QWEN_ASR_MODEL_MB = 7000.0
 FFMPEG_HEADROOM_MB = 300.0
 TRACK_CHUNK_SEC = 60.0   # build_track chunk size
 TRACK_CHUNK_MB = TRACK_CHUNK_SEC * 44100 * 4 / 1048576.0  # float32 buffer
@@ -62,21 +64,23 @@ def total_ram_mb() -> float | None:
         return None
 
 
-def estimate_peak_ram_mb(total_sec: float) -> float:
+def estimate_peak_ram_mb(total_sec: float,
+                         asr_backend: str = "whisper") -> float:
     """Peak RAM estimate (MB) for a video of total_sec seconds."""
+    model_mb = QWEN_ASR_MODEL_MB if asr_backend == "qwen" else ASR_MODEL_MB
     wav_full_mb = total_sec * 16000 * 4 / 1048576.0  # gender step, 16k float32
-    return ASR_MODEL_MB + wav_full_mb + TRACK_CHUNK_MB + FFMPEG_HEADROOM_MB
+    return model_mb + wav_full_mb + TRACK_CHUNK_MB + FFMPEG_HEADROOM_MB
 
 
-def check_ram(total_sec: float) -> float:
+def check_ram(total_sec: float, asr_backend: str = "whisper") -> float:
     """Log the peak-RAM estimate; warn when it may exceed machine RAM.
 
     Returns the estimate (MB) so tests/reporting can use it.
     """
-    est = estimate_peak_ram_mb(total_sec)
+    est = estimate_peak_ram_mb(total_sec, asr_backend)
     total = total_ram_mb()
-    log.info("ước lượng RAM đỉnh cho video %.0fs: ~%.0fMB%s",
-             total_sec, est,
+    log.info("ước lượng RAM đỉnh cho video %.0fs với backend %s: ~%.0fMB%s",
+             total_sec, asr_backend, est,
              f" (máy có ~{total:.0f}MB)" if total else " (không đo được RAM máy)")
     if total and est > total * WARN_FRACTION:
         log.warning(

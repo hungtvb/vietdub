@@ -11,7 +11,8 @@ Cách chạy (từ thư mục vietdub/):
     .venv/bin/python tests/batch_20.py [--translate] [--fetch-links] \
         [--samples 01,02,12] [--workdir DIR] [--out FILE]
 
-- Model ASR load ĐÚNG 1 LẦN rồi tái dùng cho cả 20 video.
+- Dùng ASR backend đang chọn trong Settings; hybrid nạp từng model tuần tự
+  để giảm peak RAM (model weights được cache sau lần tải đầu).
 - Bước duyệt tay bị bỏ qua (chế độ batch, giống "chế độ qua đêm").
 - [4]+[5] dịch: chỉ chạy với --translate và khi có 9Router API key
   (biến môi trường VIETDUB_9ROUTER_KEY hoặc settings nine_router_key).
@@ -319,16 +320,11 @@ def main():
         for name in LINK_URLS:
             fetch_notes[name] = "bỏ qua (dùng file local đã tải sẵn)"
 
-    # --- load model ASR 1 lần duy nhất ---
-    from asr.funasr_adapter import FunASRAdapter
-    adapter = FunASRAdapter(asr_model=settings.get("asr_model"),
-                            vad_model=settings.get("vad_model"),
-                            punc_model=settings.get("punc_model"),
-                            spk_model=settings.get("spk_model"))
-    t0 = time.time()
-    adapter.load()
-    log.info("ASR model load xong: %.0fs (tái dùng cho %d video)",
-             time.time() - t0, len(videos))
+    # --- ASR backend theo Settings; hybrid tự nạp/nhả model để giới hạn RAM ---
+    from asr.factory import build_adapter
+    adapter = build_adapter(settings)
+    log.info("ASR backend: %s (nạp model khi xử lý từng video)",
+             settings.get("asr_backend", "whisper"))
 
     # --- translator (tùy chọn) ---
     translator = None

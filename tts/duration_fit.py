@@ -198,7 +198,12 @@ CHUNK_SEC = 60.0  # edge 17: build the dub track one chunk at a time
 
 def _place_segment(buf: np.ndarray, chunk_start: float, seg: Segment,
                    sr: int, chunk_len: int) -> None:
-    """Add seg's wav into buf at (seg.start - chunk_start); clips to bounds."""
+    """Add the overlapping part of a segment WAV to one track chunk.
+
+    When a sentence spans a chunk boundary, skip the samples already written
+    to the previous chunk. Otherwise each chunk would replay the WAV from its
+    beginning.
+    """
     import soundfile as sf
     data, file_sr = sf.read(seg.audio_vi, dtype="float32")
     if file_sr != sr:
@@ -233,6 +238,14 @@ def build_track(segments: List[Segment], out_wav: str | Path,
     if total_sec <= 0:
         raise ValueError("total_sec phải > 0")
     segs = sorted(segments, key=lambda s: s.start)
+    # Overflow audio can extend beyond seg.end. Cache each WAV's actual end
+    # once so the following chunk still receives its remaining samples.
+    audible = []
+    for seg in segs:
+        if not seg.audio_vi or not Path(seg.audio_vi).exists():
+            continue
+        info = sf.info(seg.audio_vi)
+        audible.append((seg, seg.start + info.frames / info.samplerate))
     n_chunks = max(1, int(math.ceil(total_sec / chunk_sec)))
     tmpdir = Path(tempfile.mkdtemp(prefix="vd_track_"))
     try:
@@ -244,10 +257,8 @@ def build_track(segments: List[Segment], out_wav: str | Path,
             if chunk_len <= 0:
                 continue
             buf = np.zeros(chunk_len, dtype=np.float32)
-            for seg in segs:
-                if not seg.audio_vi or not Path(seg.audio_vi).exists():
-                    continue
-                if seg.end <= c0 or seg.start >= c1:
+            for seg, audio_end in audible:
+                if audio_end <= c0 or seg.start >= c1:
                     continue
                 if seg.start * sr >= total_sec * sr:
                     log.warning("câu %d bắt đầu sau cuối video, bỏ qua",

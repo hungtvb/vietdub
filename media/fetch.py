@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -110,16 +111,47 @@ def download(url: str, dest_path: str | Path,
 
 
 def resolve(source: str, job_dir: str | Path,
-            progress_cb: Optional[Callable[[float, str], None]] = None) -> Path:
+            progress_cb: Optional[Callable[[float, str], None]] = None,
+            *, force_download: bool = False) -> Path:
     """Step [0] entry: local file -> return as-is; link -> download to
-    jobs/<job_id>/source.mp4."""
+    jobs/<job_id>/source.mp4.
+
+    When force_download is true, refresh a URL source through a temporary
+    sibling file so a failed download cannot damage the existing artifact.
+    """
     if not is_url(source):
         p = Path(source)
         if not p.exists():
             raise FetchError(f"Không tìm thấy file video: {source}")
         return p
     dest = Path(job_dir) / "source.mp4"
-    if dest.exists() and dest.stat().st_size > 0:
+    if not force_download and dest.exists() and dest.stat().st_size > 0:
         log.info("reuse already-downloaded %s", dest)
+        return dest
+    if force_download:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        temporary = dest.with_name(f".source-{uuid.uuid4().hex}.mp4")
+        try:
+            download(source, temporary, progress_cb=progress_cb)
+            temporary.replace(dest)
+        except Exception:
+            # yt-dlp can leave sidecars such as `.part` or `.ytdl` beside
+            # the requested output when a download fails. This basename is
+            # unique to this refresh, so remove only its own artifacts.
+            try:
+                artifacts = [temporary, *temporary.parent.glob(
+                    f"{temporary.name}.*")]
+            except OSError:
+                artifacts = [temporary]
+                log.warning("could not list temporary fetch artifacts for %s",
+                            temporary, exc_info=True)
+            for artifact in artifacts:
+                try:
+                    artifact.unlink(missing_ok=True)
+                except OSError:
+                    # Preserve the download/replace failure as the useful error.
+                    log.warning("could not remove temporary fetch artifact %s",
+                                artifact, exc_info=True)
+            raise
         return dest
     return download(source, dest, progress_cb=progress_cb)

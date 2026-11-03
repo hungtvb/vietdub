@@ -24,7 +24,10 @@ from typing import Dict, List, Optional
 
 from core import checkpoint as cp
 from core.job import CANCELLED, DONE, FAILED, PAUSED, REVIEW, RUNNING, Job
-from core.logger import setup_job_logger
+from core.job_store import JobStore
+from core.job_recovery import inspect_job
+from core.review_state import REVIEW_NEXT, save_pending_review
+from core.logger import activate_job_logger, close_job_logger, setup_job_logger
 from core.settings import Settings
 from project import io as pio
 from project.schema import Segment, Speaker
@@ -57,27 +60,52 @@ class Orchestrator:
         self.logger = setup_job_logger(job.job_id, job.job_dir,
                                        log_cb=job.emit_log)
         self.timings: Dict[str, float] = {}
+        self.job_store = JobStore()
         # last failure message (Wave 2 UI shows this in the error dialog).
         self.last_error: Optional[str] = None
 
     # -- main entry ---------------------------------------------------------
     def run(self, resume_from: Optional[str] = None) -> str:
         job, proj = self.job, self.job.project
+        activate_job_logger(job.job_id)
         job.status = RUNNING
-        if all(cp.has_step(job.job_dir, s) for s in STEPS):
-            self.logger.info("job %s: mọi bước đã có checkpoint -> DONE",
-                             job.job_id)
-            job.status = DONE
-            return DONE
-        start_from = resume_from or job.resume_from or self._first_missing_step()
-        if proj.overnight and proj.review_stops:
-            self.logger.info("chế độ qua đêm: tự TẮT điểm dừng duyệt "
-                             "(không treo chờ người giữa đêm)")
-        self.logger.info("bắt đầu job %s từ bước '%s' (overnight=%s)",
-                         job.job_id, start_from or "fetch", proj.overnight)
-
-        step_idx = STEPS.index(start_from) if start_from in STEPS else 0
+        step = resume_from or job.resume_from or "fetch"
         try:
+            inspection = inspect_job(self.job_store, job.job_id,
+                                     sub_mode=self.settings.get("sub_mode", proj.sub_mode))
+            seed_url_identity = (proj.video_source == "url" and not job.force_fetch
+                                 and (resume_from or job.resume_from) != "fetch"
+                                 and not inspection.damaged and not inspection.source_changed
+                                 and not inspection.blocked_reason
+                                 and inspection.resume_from != "fetch"
+                                 and self._has_step("fetch"))
+            if inspection.can_open_review:
+                job.status = REVIEW
+                job.resume_from = inspection.review_resume_from
+                self._save_state(last_stage=inspection.pending_review, last_error="",
+                                 seed_fetched_identity=seed_url_identity)
+                return REVIEW
+            self._save_state(last_error="", seed_fetched_identity=seed_url_identity)
+            if not resume_from and not job.resume_from and all(
+                    self._has_step(s) for s in STEPS):
+                self.logger.info("job %s: mọi bước đã có checkpoint -> DONE",
+                                 job.job_id)
+                job.status = DONE
+                job.resume_from = None
+                self._save_state(progress=100.0, last_error="")
+                return DONE
+            requested = resume_from or job.resume_from
+            first_missing = self._first_missing_step()
+            start_from = requested or first_missing
+            if (requested in STEPS
+                    and STEPS.index(first_missing) < STEPS.index(requested)):
+                start_from = first_missing
+            if proj.overnight and proj.review_stops:
+                self.logger.info("chế độ qua đêm: tự TẮT điểm dừng duyệt "
+                                 "(không treo chờ người giữa đêm)")
+            self.logger.info("bắt đầu job %s từ bước '%s' (overnight=%s)",
+                             job.job_id, start_from or "fetch", proj.overnight)
+            step_idx = STEPS.index(start_from) if start_from in STEPS else 0
             for step in STEPS[step_idx:]:
                 # Wave 2 UI control: pause/cancel take effect BETWEEN steps
                 # (each step is atomic and checkpointed). The current step
@@ -88,6 +116,7 @@ class Orchestrator:
                     job.status = CANCELLED
                     job.resume_from = step
                     pio.save_project(job.job_dir, proj)
+                    self._save_state(last_error="")
                     self.logger.info("đã hủy theo yêu cầu, dừng trước %s "
                                      "(checkpoint giữ nguyên, chạy tiếp được)",
                                      STEP_LABEL[step])
@@ -98,40 +127,71 @@ class Orchestrator:
                     job.status = PAUSED
                     job.resume_from = step
                     pio.save_project(job.job_dir, proj)
+                    self._save_state(last_error="")
                     self.logger.info("tạm dừng theo yêu cầu, tiếp tục từ %s",
                                      STEP_LABEL[step])
                     job.emit_progress("paused", 100.0, "Đã tạm dừng")
                     return PAUSED
-                if cp.has_step(job.job_dir, step) and step != start_from:
+                if self._has_step(step) and step != start_from:
                     self.logger.info("%s: đã có checkpoint, bỏ qua",
                                      STEP_LABEL[step])
                     continue
+                cp.invalidate_from(job.job_dir, proj, step)
                 self._run_step(step)
                 if (proj.effective_review_stops() and step in REVIEW_AFTER):
-                    job.status = REVIEW
-                    job.resume_from = STEPS[STEPS.index(step) + 1]
-                    pio.save_project(job.job_dir, proj)
                     self.logger.info("dừng ở điểm duyệt sau %s, chờ duyệt tay",
                                      STEP_LABEL[step])
                     return REVIEW
             job.status = DONE
             job.resume_from = None
+            self._save_state(progress=100.0, last_error="")
             self.logger.info("job %s HOÀN THÀNH", job.job_id)
             return DONE
         except Exception as e:  # noqa: BLE001 - logged with traceback, no crash
             job.status = FAILED
+            # The retry button resumes from this field. Keep it aligned with
+            # the step that actually failed, including explicit reruns such
+            # as retranslation from the review screen.
+            job.resume_from = step
             self.last_error = str(e)
-            pio.save_project(job.job_dir, proj)
+            try:
+                pio.save_project(job.job_dir, proj)
+            except Exception as save_error:  # noqa: BLE001 - retain the original failure
+                self.last_error = f"{self.last_error}; không lưu được project: {save_error}"
+            try:
+                self._save_state(last_error=self.last_error)
+            except Exception as save_error:  # noqa: BLE001 - retain the original failure
+                self.last_error = f"{self.last_error}; {save_error}"
             self.logger.error("job %s THẤT BẠI ở bước '%s': %s\n%s",
                               job.job_id, step, e, traceback.format_exc())
             return FAILED
         finally:
-            pio.save_project(job.job_dir, proj)
+            final_save_failed = False
+            try:
+                pio.save_project(job.job_dir, proj)
+            except Exception as save_error:  # noqa: BLE001 - worker must report a result
+                final_save_failed = True
+                job.status = FAILED
+                detail = f"Không thể lưu project: {save_error}"
+                self.last_error = f"{self.last_error}; {detail}" if self.last_error else detail
+                try:
+                    self._save_state(last_error=self.last_error)
+                except Exception as state_error:  # noqa: BLE001
+                    self.last_error = f"{self.last_error}; {state_error}"
+                self.logger.error("job %s: %s", job.job_id, self.last_error)
             job.emit_progress("done", 100.0, job.status)
+            close_job_logger(job.job_id)
+            if final_save_failed:
+                return FAILED
+
+    def _has_step(self, step: str) -> bool:
+        sub_mode = (self.settings.get("sub_mode", self.job.project.sub_mode)
+                    or self.job.project.sub_mode or "burn")
+        return cp.has_step(self.job.job_dir, step, sub_mode=sub_mode)
 
     def _first_missing_step(self) -> str:
         for step in STEPS:
-            if not cp.has_step(self.job.job_dir, step):
+            if not self._has_step(step):
                 return step
         return "render"
 
@@ -142,14 +202,31 @@ class Orchestrator:
         t0 = time.time()
         self.logger.info("--- %s ---", STEP_LABEL[step])
         try:
+            review_after = job.project.effective_review_stops() and step in REVIEW_AFTER
+            if review_after:
+                save_pending_review(job.job_dir, step)
             handler = getattr(self, f"_step_{step}")
             handler()
             cp.mark_done(job.job_dir, job.project, step)
+            if review_after:
+                job.status = REVIEW
+                job.resume_from = REVIEW_NEXT[step]
+            self._save_state(
+                last_stage=step,
+                progress=(STEPS.index(step) + 1) * 100.0 / len(STEPS),
+                last_error="",
+                refresh_source_identity=(step == "fetch"))
         finally:
             dt = time.time() - t0
             self.timings[step] = dt
             self.logger.info("%s xong trong %.1fs", STEP_LABEL[step], dt)
             job.emit_progress(step, 100.0, f"{STEP_LABEL[step]} xong ({dt:.1f}s)")
+
+    def _save_state(self, **changes) -> None:
+        try:
+            self.job_store.save(self.job, **changes)
+        except Exception as exc:
+            raise RuntimeError(f"Không thể lưu trạng thái job: {exc}") from exc
 
     # -- steps ----------------------------------------------------------------
     def _step_fetch(self):
@@ -161,7 +238,9 @@ class Orchestrator:
         path = mfetch.resolve(
             source, job.job_dir,
             progress_cb=lambda pct, spd: job.emit_progress(
-                "fetch", pct, f"Tải video {pct:.0f}% {spd}"))
+                "fetch", pct, f"Tải video {pct:.0f}% {spd}"),
+            force_download=job.force_fetch)
+        job.force_fetch = False
         proj.video_in = str(path)  # resolved local path for later steps
         cp.save_step(job.job_dir, "fetch", {"video_path": str(path)})
 
@@ -177,7 +256,7 @@ class Orchestrator:
             dur = 0.0
         if dur > 0:
             # edge 17: estimate peak RAM before the heavy steps start
-            mres.check_ram(dur)
+            mres.check_ram(dur, self.settings.get("asr_backend", "whisper"))
         wav = mextract.extract_audio(video, job.stages_dir / "audio.wav",
                                      audio_track=int(job.project.audio_track or 0))
         cp.save_step(job.job_dir, "extract", {"wav_path": str(wav)})
@@ -464,11 +543,23 @@ class Orchestrator:
         pio.save_speakers(job.job_dir, "gender", speakers)
 
     def _translators(self):
+        from translation.openai_api import OpenAITranslator
         from translation.nine_router import NineRouterTranslator
         from translation.ollama import OllamaTranslator
         s = self.settings
         providers = []
-        order = [self.job.project.translate_provider, "9router", "ollama"]
+        configured_names = s.get("proper_nouns", []) or []
+        project_names = self.job.project.proper_nouns or []
+        if isinstance(configured_names, str):
+            configured_names = [configured_names]
+        if isinstance(project_names, str):
+            project_names = [project_names]
+        proper_nouns = list(dict.fromkeys(
+            str(name).strip()
+            for name in [*configured_names, *project_names]
+            if name is not None and str(name).strip()))
+        order = [self.job.project.translate_provider, "openai", "9router",
+                 "ollama"]
         seen = set()
         for name in order:
             if name in seen:
@@ -497,7 +588,7 @@ class Orchestrator:
                             model=s.get("ollama_model", ""),
                             temperature=float(s.get("llm_temperature", 0.2)),
                             batch_size=int(s.get("translate_batch", 20)),
-                            proper_nouns=list(s.get("proper_nouns", []))))
+                            proper_nouns=proper_nouns))
             except Exception as e:  # noqa: BLE001 - misconfigured provider skipped
                 self.logger.warning("bỏ qua provider %s: %s", name, e)
         return providers
@@ -510,7 +601,7 @@ class Orchestrator:
         if not providers:
             raise ValueError(
                 "Chưa cấu hình nguồn dịch nào.\n"
-                "Cách khắc phục: mở Cài đặt -> nhập API key 9Router "
+                "Cách khắc phục: mở Cài đặt -> nhập API key OpenAI/9Router "
                 "hoặc cấu hình Ollama.")
         # analyze only; translation happens in _step_translate
         last_err = None
@@ -567,7 +658,7 @@ class Orchestrator:
         providers = self._translators()
         # step [4] already analyzed (checkpoint exists) -> do NOT analyze
         # a second time inside translate_with_fallback
-        analyze_done = cp.has_step(job.job_dir, "analyze")
+        analyze_done = self._has_step("analyze")
         video_metadata = pio.load_video_metadata(job.job_dir) or {}
         video_metadata["source_language"] = job.project.detected_src_lang
         video_metadata["language_review_required"] = job.project.language_review_required
@@ -623,7 +714,10 @@ class Orchestrator:
         from tts import duration_fit as mfit
         s = self.settings
         max_rounds = 3
-        rounds = 0
+        # Count split depth per sentence lineage. A long film can contain
+        # many independent long lines; one line must not consume another's
+        # retry budget.
+        split_depth = {id(seg): 0 for seg in segments}
         overflow_ids = set()
         while True:
             try:
@@ -635,15 +729,15 @@ class Orchestrator:
                     force_overflow=overflow_ids)
                 return segments, decisions
             except mfit.TooLongError as e:
-                rounds += 1
-                if rounds > max_rounds:
+                depth = split_depth.get(id(e.segment), 0)
+                if depth >= max_rounds:
                     raise RuntimeError(
                         f"Không tách câu vừa khung giờ sau {max_rounds} lần "
                         f"thử (câu {e.segment.index}).\nCách khắc phục: rút "
                         "ngắn bản dịch câu này ở bước [5] rồi chạy lại.") from e
                 self.logger.info("câu %d quá dài (tỉ lệ %.2f) -> tách câu "
                                  "làm %d/%d", e.segment.index, e.ratio,
-                                 rounds, max_rounds)
+                                 depth + 1, max_rounds)
                 try:
                     a, b = mfit.split_segment(e.segment)
                 except ValueError:
@@ -655,6 +749,9 @@ class Orchestrator:
                     continue
                 idx = segments.index(e.segment)
                 segments[idx:idx + 1] = [a, b]
+                split_depth.pop(id(e.segment), None)
+                split_depth[id(a)] = depth + 1
+                split_depth[id(b)] = depth + 1
                 for j, sg in enumerate(segments):
                     sg.index = j
                 # re-TTS the two halves, then re-plan
@@ -664,9 +761,13 @@ class Orchestrator:
         from tts import edge_tts as metts
         from tts import duration_fit as mfit
         from media import extract as mextract
+        from core.release_quality import assert_dub_ready
         job = self.job
         s = self.settings
         segments = pio.load_segments(job.job_dir, "translate") or []
+        # Runs AFTER any manual translation review and BEFORE paid/remote TTS.
+        # Overnight mode must not silently export incomplete Chinese lines.
+        assert_dub_ready(segments)
         tts_dir = job.stages_dir / "tts"
         if s.get("tts_provider") == "zerotts":
             from tts.zerotts_local import ZeroTTSLocal
@@ -723,13 +824,18 @@ class Orchestrator:
         srt_path = msubs.write_srt(segments, job.stages_dir / "subs.vi.srt")
         out_name = Path(proj.video_in).stem + "_vidub.mp4"
         out_mp4 = Path(proj.video_out or str(job.job_dir / out_name))
-        mrender.render(fetch_data.get("video_path") or proj.video_in,
-                       mix_data["mixed_wav"], srt_path, out_mp4,
-                       sub_mode=self.settings.get("sub_mode", proj.sub_mode) or "burn",
-                       crf=int(self.settings.get("crf", 20)),
-                       font=(self.settings.get("sub_font", "") or "").strip(),
-                       font_size=int(self.settings.get("sub_font_size", 0) or 0),
-                       font_color=(self.settings.get("sub_font_color", "") or "").strip())
-        proj.video_out = str(out_mp4)
-        cp.save_step(job.job_dir, "render",
-                     {"video_out": str(out_mp4), "srt": str(srt_path)})
+        sub_mode = (self.settings.get("sub_mode", proj.sub_mode)
+                    or proj.sub_mode or "burn")
+        rendered = mrender.render(
+            fetch_data.get("video_path") or proj.video_in,
+            mix_data["mixed_wav"], srt_path, out_mp4,
+            sub_mode=sub_mode,
+            crf=int(self.settings.get("crf", 20)),
+            font=(self.settings.get("sub_font", "") or "").strip(),
+            font_size=int(self.settings.get("sub_font_size", 0) or 0),
+            font_color=(self.settings.get("sub_font_color", "") or "").strip())
+        proj.video_out = str(rendered)
+        render_data = {"video_out": str(rendered), "srt": str(srt_path)}
+        if sub_mode == "srt":
+            render_data["srt_out"] = str(rendered.with_suffix(".srt"))
+        cp.save_step(job.job_dir, "render", render_data)

@@ -200,6 +200,8 @@ class EdgeTTS:
                     Path(it["filename"]).with_suffix(".md5").write_text(
                         it["cache_key"], encoding="utf-8")
                     it["seg"].audio_vi = it["filename"]
+                    Path(it["filename"]).with_suffix(".md5").write_text(
+                        it["cache_key"], encoding="utf-8")
                 else:
                     it["seg"].audio_vi = ""
                     log.warning("câu %d TTS thất bại; không lưu cache thành công",

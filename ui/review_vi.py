@@ -13,20 +13,23 @@ from typing import Callable, Dict, List
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-                               QPushButton, QTableWidget, QTableWidgetItem,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
+                               QLineEdit, QPushButton, QScrollArea, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 from core.job import Job
 from core.settings import Settings
 from project import io as pio
 from project.schema import Segment
-from ui.common import fmt_time, info_box
+from ui.common import error_box, fmt_time, info_box
+from ui.review_source import TranscriptTable
 
 META_FIELDS = [("genre", "Thể loại"),
                ("style", "Phong cách"),
                ("setting", "Bối cảnh"),
                ("tone_notes", "Ghi chú giọng điệu")]
+COLS = ["#", "Thời gian", "Loa", "Bản dịch"]
+GENDER_LABEL = {"female": "Nữ", "male": "Nam"}
 
 
 class ReviewViWindow(QWidget):
@@ -41,7 +44,8 @@ class ReviewViWindow(QWidget):
         self.on_continue = on_continue
         self.on_back = on_back
         self.setWindowTitle(f"VietDub — Duyệt bản dịch: {job.project.name}")
-        self.resize(860, 560)
+        self.resize(1180, 760)
+        self.setMinimumSize(700, 520)
         # True khi window bị đóng bởi chính nút [Quay lại]/[Lồng tiếng] ->
         # closeEvent không schedule on_back lần nữa.
         self._close_via_button = False
@@ -50,26 +54,64 @@ class ReviewViWindow(QWidget):
             pio.load_segments(job.job_dir, "translate") or []
 
         root = QVBoxLayout(self)
-        root.addWidget(QLabel(
-            "Duyệt bản dịch tiếng Việt — sửa trực tiếp trong bảng, "
-            "Enter để xuống dòng tiếp theo."))
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
+        header = QFrame()
+        header.setObjectName("workflowHeader")
+        header_lay = QVBoxLayout(header)
+        header_lay.setContentsMargins(15, 10, 15, 12)
+        header_lay.setSpacing(3)
+        eyebrow = QLabel("DUYỆT NỘI DUNG  ·  2/2")
+        eyebrow.setObjectName("workflowEyebrow")
+        header_lay.addWidget(eyebrow)
+        title = QLabel("Duyệt bản dịch")
+        title.setObjectName("pageTitle")
+        header_lay.addWidget(title)
+        instruction = QLabel(
+            "Sửa nội dung trực tiếp trong bảng. Enter để xuống dòng tiếp theo.")
+        instruction.setWordWrap(True)
+        instruction.setProperty("role", "secondary")
+        header_lay.addWidget(instruction)
         n_review = sum(1 for s in self.segments if s.needs_review)
-        root.addWidget(QLabel(
+        note = QLabel(
             f"Tổng {len(self.segments)} câu. Đại từ xưng hô đã khóa theo "
             "bảng quan hệ ở bước phân tích — sửa tay nếu thấy chưa hợp."
-            + (f" {n_review} câu tô vàng mất đại từ so với bảng, cần kiểm tra kỹ."
-               if n_review else "")))
+            + (f" {n_review} câu tô vàng có dấu hiệu cần kiểm tra kỹ."
+               if n_review else ""))
+        note.setProperty("role", "secondary")
+        note.setWordWrap(True)
+        header_lay.addWidget(note)
+        root.addWidget(header)
 
         # Metadata tổng thể (bước [4b]) — xem/sửa; sai thì sửa rồi bấm Dịch lại
         self.meta = pio.load_video_metadata(job.job_dir) or {}
-        meta_form = QFormLayout()
+        self._meta_user_toggled = False
+        self.btn_meta = QPushButton("Bối cảnh và giọng điệu  ▾")
+        self.btn_meta.setProperty("role", "secondary")
+        self.btn_meta.clicked.connect(self._toggle_meta)
+        root.addWidget(self.btn_meta)
+        meta_box = QGroupBox("Bối cảnh và giọng điệu")
+        self.meta_box = meta_box
+        meta_grid = QGridLayout(meta_box)
+        meta_grid.setContentsMargins(14, 18, 14, 12)
+        meta_grid.setHorizontalSpacing(12)
+        meta_grid.setVerticalSpacing(6)
         self.meta_edits: Dict[str, QLineEdit] = {}
-        for key, label in META_FIELDS:
+        for col, (key, label) in enumerate(META_FIELDS):
+            lbl = QLabel(label)
+            lbl.setProperty("role", "secondary")
             ed = QLineEdit(str(self.meta.get(key, "")))
             ed.setPlaceholderText(label)
             self.meta_edits[key] = ed
-            meta_form.addRow(f"{label}:", ed)
-        root.addLayout(meta_form)
+            group_row, group_col = divmod(col, 2)
+            meta_grid.addWidget(lbl, group_row * 2, group_col)
+            meta_grid.addWidget(ed, group_row * 2 + 1, group_col)
+        self.meta_scroll = QScrollArea()
+        self.meta_scroll.setWidgetResizable(True)
+        self.meta_scroll.setFrameShape(QFrame.NoFrame)
+        self.meta_scroll.setWidget(meta_box)
+        self.meta_scroll.setFixedHeight(200)
+        root.addWidget(self.meta_scroll)
 
         self.tbl = QTableWidget(len(self.segments), len(COLS))
         self.tbl.setHorizontalHeaderLabels(COLS)
@@ -77,48 +119,80 @@ class ReviewViWindow(QWidget):
         for r, seg in enumerate(self.segments):
             self._fill_row(r, seg)
         self.tbl.setColumnWidth(0, 44)
-        self.tbl.setColumnWidth(1, 150)
-        self.tbl.setColumnWidth(2, 80)
-        self.tbl.horizontalHeader().setStretchLastSection(True)
+        self.tbl.setColumnWidth(1, 160)
+        self.tbl.setColumnWidth(2, 100)
+        self.tbl.setColumnWidth(3, 720)
         self.tbl.setSelectionBehavior(QTableWidget.SelectRows)
         self.tbl.setSelectionMode(QTableWidget.SingleSelection)
-        root.addWidget(self.tbl, 1)
+        self.tbl.setAlternatingRowColors(True)
+        table_card = QFrame()
+        table_card.setObjectName("workflowCard")
+        table_lay = QVBoxLayout(table_card)
+        table_lay.setContentsMargins(11, 9, 11, 10)
+        section = QLabel("CÁC CÂU ĐÃ DỊCH")
+        section.setObjectName("workflowSection")
+        table_lay.addWidget(section)
+        table_lay.addWidget(self.tbl, 1)
+        root.addWidget(table_card, 1)
 
-        row = QHBoxLayout()
+        footer = QFrame()
+        footer.setObjectName("workflowFooter")
+        row = QHBoxLayout(footer)
+        row.setContentsMargins(11, 7, 11, 7)
         btn_settings = QPushButton("Cài đặt")
         btn_settings.clicked.connect(self.open_settings)
-        btn_retranslate = QPushButton("Dịch lại với metadata này")
+        btn_retranslate = QPushButton("Dịch lại")
+        btn_retranslate.setProperty("role", "secondary")
         btn_retranslate.setToolTip(
             "Lưu 4 ô metadata ở trên rồi dịch lại toàn bộ với metadata mới.")
         btn_retranslate.clicked.connect(self._retranslate_clicked)
         btn_back = QPushButton("Quay lại")
+        btn_back.setProperty("role", "secondary")
         btn_back.clicked.connect(self._back_clicked)
         btn_next = QPushButton("Lồng tiếng →")
-        btn_next.setStyleSheet("font-weight: bold;")
+        btn_next.setProperty("role", "primary")
         btn_next.clicked.connect(self.save_and_continue)
         row.addWidget(btn_settings)
         row.addWidget(btn_retranslate)
         row.addStretch(1)
         row.addWidget(btn_back)
         row.addWidget(btn_next)
-        root.addLayout(row)
+        root.addWidget(footer)
+
+    def _toggle_meta(self) -> None:
+        self._meta_user_toggled = True
+        self._set_meta_visible(not self.meta_scroll.isVisible())
+
+    def _set_meta_visible(self, visible: bool) -> None:
+        self.meta_scroll.setVisible(visible)
+        self.btn_meta.setText("Bối cảnh và giọng điệu  " +
+                              ("▴" if visible else "▾"))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "meta_scroll"):
+            self.meta_scroll.setFixedHeight(120 if self.height() < 650 else 200)
+            if not self._meta_user_toggled:
+                self._set_meta_visible(self.width() >= 800)
 
     def open_settings(self) -> None:
         from ui.common import open_settings_dialog
         open_settings_dialog(self, self.settings)
 
     def closeEvent(self, e) -> None:  # noqa: N802
-        # Bấm X = [Quay lại]: về màn tiến trình, không quit app, không mất
-        # checkpoint. Trì hoãn qua singleShot để tránh gọi close() đệ quy
-        # (on_back tự đóng window này).
-        # Nếu đóng là do bấm nút [Quay lại]/[Lồng tiếng] thì on_back/on_continue
-        # đã chạy rồi -> không schedule thêm lần nữa.
-        via_button, self._close_via_button = self._close_via_button, False
+        if self._close_via_button:
+            super().closeEvent(e)
+            return
+        if not self._save_review():
+            e.ignore()
+            return
+        self._close_via_button = True
         super().closeEvent(e)
-        if not via_button:
-            QTimer.singleShot(0, self.on_back)
+        QTimer.singleShot(0, self.on_back)
 
     def _back_clicked(self) -> None:
+        if not self._save_review():
+            return
         self._close_via_button = True
         self.on_back()
 
@@ -136,21 +210,47 @@ class ReviewViWindow(QWidget):
         self.tbl.setItem(r, 3, QTableWidgetItem(seg.text_vi or ""))
         if seg.needs_review:
             for c in range(len(COLS)):
-                self.tbl.item(r, c).setBackground(QColor("#fff3b0"))
+                self.tbl.item(r, c).setBackground(QColor("#fff4ce"))
 
     def _retranslate_clicked(self) -> None:
-        meta = {k: ed.text().strip() for k, ed in self.meta_edits.items()}
-        pio.save_video_metadata(self.job.job_dir, meta)
+        if self.on_retranslate is None or not self._save_review():
+            return
         self._close_via_button = True  # on_retranslate tự xử lý window này
-        if self.on_retranslate is not None:
-            self.on_retranslate(meta)
+        try:
+            self.on_retranslate(self.meta)
+        finally:
+            if self.isVisible():
+                self._close_via_button = False
 
-    def save_and_continue(self) -> None:
+    def _save_review(self) -> bool:
+        self.tbl.commit_active_editor()
         for r in range(self.tbl.rowCount()):
             self.segments[r].text_vi = self.tbl.item(r, 3).text()
-        pio.save_segments(self.job.job_dir, "translate", self.segments)
+        # Retain metadata keys that are not exposed by these four editors.
+        meta = dict(self.meta)
+        meta.update({k: ed.text().strip() for k, ed in self.meta_edits.items()})
+        action = "lưu bản dịch (translate)"
+        try:
+            pio.save_segments(self.job.job_dir, "translate", self.segments)
+            action = "lưu bối cảnh và giọng điệu"
+            pio.save_video_metadata(self.job.job_dir, meta)
+        except Exception as exc:
+            error_box(self, "Chưa lưu được nội dung duyệt",
+                      f"Không thể {action}:\n{exc}\n\n"
+                      "Nội dung sửa vẫn ở đây. Hãy thử lưu lại.")
+            return False
+        self.meta = meta
+        return True
+
+    def save_and_continue(self) -> None:
+        if not self._save_review():
+            return
         info_box(self, "Đã lưu",
                  f"Đã lưu {len(self.segments)} câu dịch. "
                  "Chạy tiếp bước lồng tiếng (TTS).")
         self._close_via_button = True  # on_continue tự đóng window này
-        self.on_continue()
+        try:
+            self.on_continue()
+        finally:
+            if self.isVisible():
+                self._close_via_button = False
