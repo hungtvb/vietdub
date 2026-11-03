@@ -663,12 +663,16 @@ class Orchestrator:
                 model_dir=s.get("zerotts_model_dir", "model/ZeroTTS"),
                 voices=s.get("zerotts_voices", {}), local_only=True)
             synth = lambda segs: tts.synthesize(segs, tts_dir)
-        else:
+        elif (s.get("tts_provider") or "edge") == "edge":
             tts = metts.EdgeTTS(
                 voice_male=s.get("voice_male"), voice_female=s.get("voice_female"),
                 rate=s.get("tts_rate", "+0%"), pitch=s.get("tts_pitch", "+0Hz"),
                 concurrency=int(s.get("tts_concurrency", 10)))
             synth = lambda segs: self._synthesize_tts(tts, segs, tts_dir)
+        else:
+            raise ValueError(
+                f"Unsupported TTS provider: {s.get('tts_provider')!r}; "
+                "install and select a supported provider instead of silently using Edge-TTS")
         segments = synth(segments)
         segments, decisions = self._fit_and_track(segments, tts_dir, synth)
         mfit.apply_plan(decisions)
