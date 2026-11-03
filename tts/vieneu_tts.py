@@ -132,9 +132,22 @@ def _valid_wav(path: Path) -> bool:
     if not path.is_file() or path.stat().st_size < 1024:
         return False
     try:
+        import numpy as np
         info = sf.info(str(path))
-        return info.frames > 0 and info.samplerate == TARGET_RATE and info.channels == 1
-    except (OSError, RuntimeError, ValueError):
+        if info.frames <= 0 or info.samplerate != TARGET_RATE or info.channels != 1:
+            return False
+        # Check actual signal, not just a valid WAV header: an all-silent
+        # inference must never become a cached "successful" dialogue.
+        peak, total_sq, count = 0.0, 0.0, 0
+        for block in sf.blocks(str(path), blocksize=65536, dtype="float32"):
+            if not np.isfinite(block).all():
+                return False
+            peak = max(peak, float(np.max(np.abs(block))))
+            total_sq += float(np.sum(np.square(block, dtype=np.float64)))
+            count += int(block.size)
+        rms = (total_sq / count) ** 0.5 if count else 0.0
+        return peak >= 0.002 and rms >= 0.0002
+    except (OSError, RuntimeError, ValueError, OverflowError):
         return False
 
 
