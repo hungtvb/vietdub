@@ -910,6 +910,27 @@ class MainWindow(QMainWindow):
         proj.overnight = self.chk_overnight.isChecked()
         proj.audio_track = int(audio_track)
         proj.proper_nouns = list(self.settings.get("proper_nouns", []))
+        # Keep this job deterministic even when the operator changes Settings
+        # for another video while this one is paused or queued.
+        cleanup_keys = (
+            "visual_cleanup_enabled", "visual_cleanup_backend",
+            "visual_vsr_root", "visual_vsr_mode",
+            "visual_lama_weight_path", "visual_cleanup_mode",
+            "visual_cleanup_interval_sec", "visual_cleanup_min_hits",
+            "visual_cleanup_auto_logo", "visual_cleanup_review_plan",
+        )
+        proj.visual_cleanup_options = {
+            key: self.settings.get(key) for key in cleanup_keys
+        }
+        review = str(proj.visual_cleanup_options.get(
+            "visual_cleanup_review_plan") or "").strip()
+        if proj.visual_cleanup_options.get("visual_cleanup_enabled") and review:
+            import hashlib
+            review_file = Path(review)
+            proj.visual_cleanup_options["visual_cleanup_review_sha256"] = (
+                hashlib.sha256(review_file.read_bytes()).hexdigest()
+                if review_file.is_file() else "missing"
+            )
 
         # lưu lựa chọn nhanh vào settings để mở lại app vẫn giữ
         self.settings.set("voice_male", proj.voice_male)
