@@ -9,6 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 import json
 import logging
+import math
 import os
 
 from project.schema import Segment
@@ -91,6 +92,7 @@ def construct_segments(raw, exclusive, *, min_coverage=.55):
             (label for label, assigned in mapping.items() if assigned == sid), "UNKNOWN"),
             "whisper_id": source.get("id"),
             "alignment_status": source.get("alignment_status"),
+            "timing_warning": source.get("timing_warning"),
             "speaker_coverage_min": round(min(w["coverage"] for w in group), 3),
             "speaker_vote_share_min": round(min(w["share"] for w in group), 3),
             "needs_review": uncertain,
@@ -99,13 +101,44 @@ def construct_segments(raw, exclusive, *, min_coverage=.55):
     for original in raw:
         words = original.get("words") or [{"start": original["start"],
                  "end": original["end"], "word": original["text"]}]
+        # Never silently drop a word whose aligner timing is missing/invalid.
+        # A partial word list yields a convincing but incomplete transcript.
+        invalid_positions = []
+        for pos, word in enumerate(words):
+            try:
+                a, b = float(word["start"]), float(word["end"])
+                valid = (math.isfinite(a) and math.isfinite(b)
+                         and a >= 0 and b > a
+                         and bool(str(word.get("word") or "").strip()))
+            except (TypeError, ValueError, KeyError, OverflowError):
+                valid = False
+            if not valid:
+                invalid_positions.append(pos)
+        if invalid_positions:
+            try:
+                start, end = float(original["start"]), float(original["end"])
+            except (TypeError, ValueError, KeyError, OverflowError) as exc:
+                raise RuntimeError(
+                    f"Whisper segment {original.get('id')} has missing source timing"
+                ) from exc
+            if (not math.isfinite(start) or not math.isfinite(end)
+                    or start < 0 or end <= start
+                    or not str(original.get("text") or "").strip()):
+                raise RuntimeError(
+                    f"Whisper segment {original.get('id')} has invalid source timing/text"
+                )
+            # Restore the COMPLETE source utterance, not just its valid words.
+            # Neither word-level timing nor speaker mapping is trusted here.
+            original = {**original, "alignment_status": "incomplete_word_timing",
+                        "timing_warning": f"Invalid word positions: {invalid_positions}"}
+            words = [{"start": start, "end": end, "word": original["text"]}]
         group = []
         for word in words:
-            a, b = word.get("start"), word.get("end")
-            if a is None or b is None or float(b) <= float(a):
-                continue
-            a, b = float(a), float(b)
-            label, coverage, share = assign_speaker(a, b, exclusive)
+            a, b = float(word["start"]), float(word["end"])
+            if original.get("alignment_status") == "incomplete_word_timing":
+                label, coverage, share = None, 0.0, 0.0
+            else:
+                label, coverage, share = assign_speaker(a, b, exclusive)
             sid = mapping[label] if label is not None else unknown_id
             unit = {"start": a, "end": b, "speaker": sid,
                     "coverage": coverage, "share": share,
