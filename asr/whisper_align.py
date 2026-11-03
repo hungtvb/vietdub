@@ -1,7 +1,24 @@
 # VietDub - local WhisperX acoustic alignment shared by CI and desktop app.
 """Align words acoustically without assuming WhisperX preserves segment count."""
 from collections import defaultdict
+import unicodedata
+
 from asr.source_language import alignment_language
+
+
+def aligned_words_cover_source(source_text, words):
+    """Lexical coverage gate; ignore punctuation/spacing but NEVER missing words.
+
+    Word aligners may drop tokens even when all remaining timestamps are valid.
+    A failed comparison must fall back to the entire Whisper sentence for QA.
+    """
+    def lex(text):
+        normalized = unicodedata.normalize("NFKC", str(text or "")).casefold()
+        return "".join(ch for ch in normalized
+                       if unicodedata.category(ch)[0] in ("L", "N", "M"))
+
+    return lex(source_text) == lex("".join(str(w.get("word") or "") for w in words))
+
 
 
 def _overlap(a, b, x, y):
@@ -65,12 +82,23 @@ def forced_align(raw, wav, *, batch_size=20, device="cpu"):
                 stats["errors"][f"{lang}:{start}"] = f"{type(exc).__name__}: {str(exc)[:280]}"
                 stats["fallback_to_whisper_words"] += len(batch)
                 continue
-            for (original_idx, _), words in zip(batch, mapped):
-                if words:
+            for (original_idx, source), words in zip(batch, mapped):
+                if words and aligned_words_cover_source(source["text"], words):
                     output[original_idx]["words"] = words
                     output[original_idx]["alignment_status"] = "whisperx_aligned"
                     stats["aligned"] += 1
                 else:
+                    # WhisperX can silently return only part of a sentence.
+                    # Do not claim a partial aligned transcript is complete.
+                    output[original_idx]["words"] = [{
+                        "start": source["start"], "end": source["end"],
+                        "word": source["text"],
+                    }]
+                    output[original_idx]["alignment_status"] = "incomplete_alignment"
+                    stats["errors"][f"{lang}:coverage:{original_idx}"] = (
+                        "Missing or incomplete aligned lexical content; "
+                        "restored original ASR utterance for manual review"
+                    )
                     stats["fallback_to_whisper_words"] += 1
         del model
     if stats["aligned"] + stats["fallback_to_whisper_words"] != len(raw):
