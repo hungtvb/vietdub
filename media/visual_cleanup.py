@@ -291,7 +291,9 @@ class VisualCleanup:
                     if not any(_iou(item.box, r.box) > .4 and r.kind == "logo" for r in regions):
                         regions.append(item)
             regions += [r for r in self.config.manual if r.kind in self.config.categories]
-            plan = {"version":1, "source":str(path.resolve()), "width":width,
+            from media.visual_source_identity import file_sha256
+            plan = {"version":1, "source":str(path.resolve()),
+                    "source_sha256": file_sha256(path), "width":width,
                     "height":height, "fps":fps, "frames":frame_n,
                     "sample_sec":step/fps,
                     "regions":[r.to_dict() for r in sorted(regions,key=lambda r:r.start)]}
@@ -311,6 +313,11 @@ class VisualCleanup:
             raise VisualCleanupError("Output must not overwrite input")
         if plan.get("version") != 1 or str(src.resolve()) != plan.get("source"):
             raise VisualCleanupError("Plan does not match input video")
+        if plan.get("source_sha256"):
+            from media.visual_source_identity import file_sha256
+            if file_sha256(src) != plan["source_sha256"]:
+                raise VisualCleanupError(
+                    "Source video bytes changed since masks were reviewed")
         cap = cv2.VideoCapture(str(src))
         if not cap.isOpened():
             raise VisualCleanupError(f"Cannot open video: {src}")
