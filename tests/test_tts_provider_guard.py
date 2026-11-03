@@ -11,8 +11,13 @@ def test_unsupported_engine_does_not_silently_generate_with_edge(tmp_path, monke
     import core.job as jobmod
     monkeypatch.setattr(jobmod, "JOBS_ROOT", tmp_path / "jobs")
     settings = Settings(path=tmp_path / "settings.json")
-    settings.set("tts_provider", "vieneu")  # available only after provider integration
-    job = Job(project=Project())
+    settings.set("tts_provider", "unsupported-engine")
+    project = Project()
+    # Old jobs read the global provider; new jobs pin it per project.
+    # Both paths must reject a genuinely unsupported provider explicitly.
+    if hasattr(project, "tts_provider"):
+        project.tts_provider = "unsupported-engine"
+    job = Job(project=project)
     from project import io as pio
     from project.schema import Segment
     # The translate stage must have at least one line or the pipeline
@@ -22,5 +27,5 @@ def test_unsupported_engine_does_not_silently_generate_with_edge(tmp_path, monke
                 text_src="Hello", text_vi="Xin chào")
     ])
     orchestrator = Orchestrator(job, settings)
-    with pytest.raises(ValueError, match="Unsupported TTS provider"):
+    with pytest.raises(ValueError, match="(?i)unsupported.*provider"):
         orchestrator._step_tts()
