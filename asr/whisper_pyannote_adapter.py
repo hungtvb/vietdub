@@ -13,7 +13,7 @@ import math
 import os
 
 from project.schema import Segment
-from asr.whisper_align import forced_align
+from asr.whisper_align import aligned_words_cover_source, forced_align
 from asr.source_language import (alignment_language, detect_source_language,
                                  normalize_language)
 
@@ -114,7 +114,9 @@ def construct_segments(raw, exclusive, *, min_coverage=.55):
                 valid = False
             if not valid:
                 invalid_positions.append(pos)
-        if invalid_positions:
+        coverage_mismatch = not aligned_words_cover_source(
+            original.get("text", ""), words)
+        if invalid_positions or coverage_mismatch:
             try:
                 start, end = float(original["start"]), float(original["end"])
             except (TypeError, ValueError, KeyError, OverflowError) as exc:
@@ -129,13 +131,21 @@ def construct_segments(raw, exclusive, *, min_coverage=.55):
                 )
             # Restore the COMPLETE source utterance, not just its valid words.
             # Neither word-level timing nor speaker mapping is trusted here.
-            original = {**original, "alignment_status": "incomplete_word_timing",
-                        "timing_warning": f"Invalid word positions: {invalid_positions}"}
+            original = {
+                **original,
+                "alignment_status": ("incomplete_word_timing" if invalid_positions
+                                     else "incomplete_alignment"),
+                "timing_warning": (
+                    f"Invalid word positions: {invalid_positions}"
+                    if invalid_positions else
+                    "Aligned words omit lexical content from the source sentence"),
+            }
             words = [{"start": start, "end": end, "word": original["text"]}]
         group = []
         for word in words:
             a, b = float(word["start"]), float(word["end"])
-            if original.get("alignment_status") == "incomplete_word_timing":
+            if original.get("alignment_status") in (
+                    "incomplete_word_timing", "incomplete_alignment"):
                 label, coverage, share = None, 0.0, 0.0
             else:
                 label, coverage, share = assign_speaker(a, b, exclusive)
