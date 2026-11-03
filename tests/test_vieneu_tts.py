@@ -250,3 +250,54 @@ def test_silent_real_model_output_fails_without_cache(tmp_path):
     assert seg.audio_vi == ""
     assert not (tmp_path / "seg_0001.wav").exists()
     assert not (tmp_path / "seg_0001.md5").exists()
+
+
+def test_optional_zerotts_factory_and_job_snapshot_contract(tmp_path, monkeypatch):
+    import sys
+    from types import ModuleType
+    from core.job import Job
+    from core.orchestrator import Orchestrator
+    import core.job as jobmod
+
+    adapter = ModuleType("tts.zerotts_local")
+
+    class FakeZeroTTSLocal:
+        def __init__(self, model_dir, voices, local_only):
+            self.model_dir = model_dir
+            self.voices = voices
+            self.local_only = local_only
+
+        def synthesize(self, segments, out_dir):
+            return segments
+
+    adapter.ZeroTTSLocal = FakeZeroTTSLocal
+    monkeypatch.setitem(sys.modules, adapter.__name__, adapter)
+    monkeypatch.setattr(jobmod, "JOBS_ROOT", tmp_path / "jobs")
+
+    settings = Settings(path=tmp_path / "settings.json")
+    settings.set("tts_provider", "zerotts")
+    settings.set("zerotts_model_dir", "/models/global")
+    settings.set("zerotts_voices", {"0": "global_voice"})
+    project = Project(
+        tts_provider="zerotts", zerotts_model_dir="/models/job",
+        zerotts_voices={"0": "pinned_voice"},
+    )
+    created = create_tts(
+        settings, provider=project.tts_provider,
+        zerotts_model_dir=project.zerotts_model_dir,
+        zerotts_voices=project.zerotts_voices,
+    )
+    assert created.model_dir == "/models/job"
+    assert created.voices == {"0": "pinned_voice"}
+    assert created.local_only is True
+
+    orchestrator = Orchestrator(Job(project=project), settings)
+    original = orchestrator._tts_config()
+    assert original["provider"] == "zerotts"
+    assert original["speaker_voices"] == {"0": "pinned_voice"}
+    settings.set("zerotts_model_dir", "/models/changed")
+    assert orchestrator._tts_config() == original
+
+    project.zerotts_voices["0"] = "new_voice"
+    assert orchestrator._tts_config() != original
+    assert Project.from_dict(project.to_dict()).zerotts_voices == {"0": "new_voice"}
