@@ -63,7 +63,7 @@ jobs:
               missing = [term for term in terms if term not in source]
               assert not missing, f"{path}: missing integration features: {missing}"
           must("core/orchestrator.py", "select_asr_engine",
-               "detect_source_language", "source_review", "SevereOverflowError")
+               "detect_source_language", "source_review", "def _synthesize_tts")
           must("asr/whisper_align.py", "aligned_words_cover_source")
           must("core/checkpoint.py", "_nonempty_file", "identity_verified",
                "detected_speaker")
