@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Rehearse sequential merges of PR 11, 1, 6 and 4
+      - name: Rehearse sequential merges of PR 11, 1, 4 and 6
         shell: bash
         run: |
           set -euo pipefail
@@ -26,7 +26,7 @@ jobs:
           git config user.email 'combined-test@users.noreply.github.com'
           git fetch origin main ci/windows-release-smoke-20261031 ci/run-vietdub-20261016 feat/visual-cleanup-engine feat/vieneu-tts-v3
           git checkout -B test/integrate-all origin/main
-          for ref in ci/windows-release-smoke-20261031 ci/run-vietdub-20261016 feat/visual-cleanup-engine feat/vieneu-tts-v3; do
+          for ref in ci/windows-release-smoke-20261031 ci/run-vietdub-20261016 feat/vieneu-tts-v3 feat/visual-cleanup-engine; do
             echo "::group::Merge branch $ref"
             git merge --no-ff --no-edit -X theirs origin/"$ref"
             test -z "$(git diff --name-only --diff-filter=U)"
