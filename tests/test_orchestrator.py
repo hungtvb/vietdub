@@ -1,6 +1,7 @@
 # Orchestrator: review stops, overnight enforcement, resume, failure.
 # Heavy steps are stubbed; the integration test runs the real ones.
 from unittest import mock
+from pathlib import Path
 
 import pytest
 
@@ -23,18 +24,29 @@ class StubOrchestrator(Orchestrator):
         self.called.append(step)
         if self.fail_on == step:
             raise RuntimeError(f"boom at {step}")
+        # Produce real nonempty checkpoint artifacts. The production
+        # validator intentionally rejects fake /tmp/x.mp4 paths.
+        source = Path(self.job.project.video_in)
+        sound = self.job.stages_dir / "fixture.wav"
+        sound.write_bytes(b"wav-test-artifact")
+        track = self.job.stages_dir / "tts" / "dub_track.wav"
+        track.parent.mkdir(parents=True, exist_ok=True)
+        track.write_bytes(b"dub-track-fixture")
         shapes = {
-            "fetch": {"video_path": "/tmp/x.mp4"},
-            "extract": {"wav_path": "/tmp/x.wav"},
+            "fetch": {"video_path": str(source)},
+            "extract": {"wav_path": str(sound)},
             "asr": {"segments": []},
             "gender": {"speakers": []},
             "analyze": {"speakers": []},
             "translate": {"segments": []},
             "tts": {"segments": []},
-            "mix": {"mixed_wav": "/tmp/x.wav"},
-            "render": {"video_out": "/tmp/x.mp4"},
+            "mix": {"mixed_wav": str(sound)},
+            "render": {"video_out": str(source)},
         }
         cp.save_step(self.job.job_dir, step, shapes[step])
+        if step == "tts":
+            cp.save_step(self.job.job_dir, "tts_meta",
+                         {"dub_track": str(track)})
 
 
 def _job(tmp_path, monkeypatch, **proj_kw):
@@ -42,7 +54,9 @@ def _job(tmp_path, monkeypatch, **proj_kw):
     monkeypatch.setattr(jobmod, "JOBS_ROOT", tmp_path / "jobs")
     kw = dict(review_stops=True, overnight=False)
     kw.update(proj_kw)
-    job = Job(project=Project(video_in="/tmp/x.mp4", **kw))
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"fake-video-for-checkpoint-tests")
+    job = Job(project=Project(video_in=str(source), **kw))
     return job
 
 
