@@ -44,7 +44,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg libegl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0 libpulse0 libasound2t64
           python -m pip install -q pytest pytest-timeout numpy soundfile PySide6 'opencv-python-headless>=4.8,<5' imageio-ffmpeg
-      # Legacy orchestrator/checkpoint tests still use stale missing-file fixtures\n      # on main; they are not visual-specific. Keep this gate focused on visual QA.\n      - name: Validate merged code and rendered video scenarios
+      # Legacy orchestrator/checkpoint tests use stale missing-file fixtures.
+      # Keep this gate focused on visual acceptance with strict runtime checks.
+      - name: Validate merged code and rendered video scenarios
         run: |
           python -m compileall -q core project media ui tests/test_visual_job_config.py
           python -m pytest -q --timeout=35 --timeout-method=signal tests/test_visual_job_config.py tests/test_visual_cleanup.py tests/test_visual_temporal.py tests/test_render.py tests/test_editor_none.py tests/test_visual_acceptance.py tests/test_visual_neural.py tests/test_visual_ocr_acceptance.py tests/test_visual_lama_cpu.py tests/test_visual_hybrid.py tests/test_visual_dynamic_mask.py tests/test_visual_user_regions.py tests/test_visual_tracking.py tests/test_visual_detection.py tests/test_ui_visual_region_editor.py
