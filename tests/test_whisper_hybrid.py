@@ -65,3 +65,39 @@ def test_speaker_overlap_uses_independent_pyannote_windows():
     assert label == "A"
     assert .7 <= coverage <= .8
     assert .7 <= share <= .8
+
+
+def test_partial_word_timing_keeps_full_transcript_and_requires_review():
+    # Previously "Hi!" was silently discarded by the word loop.
+    evidence = [_raw([
+        {"start": .1, "end": .8, "word": "Hello!"},
+        {"start": None, "end": 2.2, "word": " Hi!"}
+    ])]
+    windows = [{"start": 0., "end": 3., "label": "S1"}]
+    segments, qa, mapping = construct_segments(evidence, windows)
+    assert len(segments) == 1
+    assert segments[0].text_src == "Hello! Hi!"
+    assert segments[0].needs_review is True
+    assert segments[0].speaker == len(mapping)  # UNKNOWN, not guessed S1
+    assert qa[0]["alignment_status"] == "incomplete_word_timing"
+    assert "Invalid word positions" in qa[0]["timing_warning"]
+
+
+def test_nan_word_timing_is_not_treated_as_valid_alignment():
+    evidence = [_raw([
+        {"start": .1, "end": .8, "word": "Hello!"},
+        {"start": float("nan"), "end": 2.2, "word": " Hi!"}
+    ])]
+    segments, qa, _ = construct_segments(evidence, [
+        {"start": 0., "end": 3., "label": "S1"}])
+    assert segments[0].text_src == "Hello! Hi!"
+    assert segments[0].needs_review
+    assert qa[0]["alignment_status"] == "incomplete_word_timing"
+
+
+def test_invalid_parent_timing_rejects_unrecoverable_partial_alignment():
+    import pytest
+    original = _raw([{"start": None, "end": 2.2, "word": "Hi!"}])
+    original["end"] = float("nan")
+    with pytest.raises(RuntimeError, match="invalid source timing"):
+        construct_segments([original], [{"start": 0., "end": 3., "label": "S1"}])
