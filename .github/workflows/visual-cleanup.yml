@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'media/visual_cleanup.py'
+      - 'media/visual_source_identity.py'
       - 'media/visual_precise.py'
       - 'media/visual_temporal.py'
       - 'media/visual_scene_guard.py'
