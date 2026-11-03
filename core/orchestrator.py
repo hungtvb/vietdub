@@ -156,8 +156,13 @@ class Orchestrator:
         if p.tts_provider == "vieneu":
             config.update(backend=p.vieneu_backend, precision=p.vieneu_precision,
                           model="v3turbo")
-        else:
+        elif p.tts_provider == "zerotts":
+            config.update(model_dir=p.zerotts_model_dir,
+                          speaker_voices=dict(p.zerotts_voices))
+        elif p.tts_provider == "edge":
             config.update(rate=p.tts_rate, pitch=p.tts_pitch)
+        else:
+            raise ValueError(f"Unsupported TTS provider: {p.tts_provider}")
         return config
 
     def _has_step(self, step: str) -> bool:
@@ -481,6 +486,8 @@ class Orchestrator:
             voice_female=job.project.voice_female,
             vieneu_backend=job.project.vieneu_backend,
             vieneu_precision=job.project.vieneu_precision,
+            zerotts_model_dir=job.project.zerotts_model_dir,
+            zerotts_voices=dict(job.project.zerotts_voices),
             rate=job.project.tts_rate,
             pitch=job.project.tts_pitch)
         segments = self._synthesize_tts(tts, segments, tts_dir)
