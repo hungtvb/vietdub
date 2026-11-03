@@ -47,3 +47,37 @@ def test_translation_headers_only_disclose_explicitly_verified_names():
                        identity_status="UNVERIFIED")
     assert "[verified character: Maddie]" in BaseTranslator._line_header(verified)
     assert "Ethan" not in BaseTranslator._line_header(inferred)
+
+
+def test_source_review_gender_overrides_low_confidence_and_filters_stale_speakers(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_module, "JOBS_ROOT", tmp_path)
+    job = Job(job_id="gender-review-override", project=Project())
+    wav = job.stages_dir / "audio.wav"
+    wav.write_bytes(b"test")
+    cp.save_step(job.job_dir, "extract", {"wav_path": str(wav)})
+    pio.save_segments(job.job_dir, "asr", [
+        Segment(index=0, start=0, end=1, speaker=7, text_src="Hello"),
+        Segment(index=1, start=1, end=2, speaker=8, text_src="Hi"),
+    ])
+    pio.save_speakers(job.job_dir, "source_review", {
+        7: Speaker(id=7, gender="female", confidence=1, character_name="Maddie",
+                   identity_verified=True),
+        99: Speaker(id=99, gender="male", confidence=1, character_name="Stale",
+                    identity_verified=True),
+    })
+    import speaker.gender as gender
+    monkeypatch.setattr(gender, "estimate_genders", lambda *a, **kw: {
+        7: Speaker(id=7, gender="male", confidence=0.4),
+        8: Speaker(id=8, gender="female", confidence=0.2),
+    })
+    orch = Orchestrator(job, TestSettings())
+    orch._step_gender()
+    speakers = pio.load_speakers(job.job_dir, "gender")
+    assert speakers[7].gender == "female"
+    assert speakers[7].character_name == "Maddie"
+    assert speakers[7].identity_verified
+    assert 99 not in speakers
+    lines = pio.load_segments(job.job_dir, "asr")
+    assert lines[0].gender == "female"
+    assert not lines[0].needs_review
+    assert lines[1].needs_review  # no reviewed label and weak pitch evidence
