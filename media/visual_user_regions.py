@@ -34,8 +34,10 @@ def video_metadata(video):
         frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if w < 2 or h < 2 or frames < 1 or not math.isfinite(fps) or fps <= 0:
             raise UserRegionError("Source video has invalid dimensions/FPS/frame count")
+        from media.visual_source_identity import file_sha256
         return {
-            "version": 1, "source": str(path), "width": w,
+            "version": 1, "source": str(path),
+            "source_sha256": file_sha256(path), "width": w,
             "height": h, "fps": fps, "frames": frames
         }
     finally:
