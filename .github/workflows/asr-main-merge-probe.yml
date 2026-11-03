@@ -1,4 +1,4 @@
-name: ASR and main integration probe (verified round two)
+name: ASR and main integration probe (cache protocol round three)
 
 on:
   pull_request:
