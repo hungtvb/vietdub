@@ -30,6 +30,7 @@ from media import _bin as mbin
 from project.schema import Project
 from asr.source_language import LANGUAGES, normalize_language
 from ui.common import confirm_box, error_box, fmt_size, fmt_time, info_box
+from ui.theme import APP_BACKGROUND, UI_COLORS
 
 VIDEO_FILTER = ("Video (*.mp4 *.mkv *.avi *.mov *.webm *.ts *.m4v);;"
                 "Tất cả (*.*)")
