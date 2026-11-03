@@ -164,3 +164,17 @@ def test_refines_onset_and_disappearance_to_video_frames(tmp_path):
     start,end=refine_subtitle_bounds(file,10,20,box,box,10,3.4,.5)
     assert .48 <= start <= .61, (start,end)
     assert 2.35 <= end <= 2.5, (start,end)
+
+
+def test_source_fingerprint_blocks_replaced_video_at_identical_path(tmp_path):
+    video = tmp_path / "same-name.mp4"
+    sample_video(video)
+    engine = VisualCleanup(Config(), detector=DummyOCR())
+    plan = engine.analyze(video)
+    assert plan.get("source_sha256")
+    # A path+resolution check alone allowed a stale user-approved mask.
+    with video.open("ab") as stream:
+        stream.write(b"replacement-content")
+    with pytest.raises(VisualCleanupError, match="Source video bytes changed"):
+        engine.render(video, tmp_path / "should-not-exist.mp4", plan)
+    assert not (tmp_path / "should-not-exist.mp4").exists()
