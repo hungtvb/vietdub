@@ -1,4 +1,4 @@
-name: ASR and main integration probe (temporary)
+name: ASR and main integration probe (verified round two)
 
 on:
   pull_request:
