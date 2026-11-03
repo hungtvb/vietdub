@@ -190,6 +190,17 @@ class Orchestrator:
         if not cp.has_step(self.job.job_dir, step, sub_mode=sub_mode):
             return False
         if step == "render":
+            options = self.job.project.visual_cleanup_options or {}
+            expected_source = options.get("visual_cleanup_source_sha256")
+            if expected_source and options.get("visual_cleanup_enabled"):
+                from media.visual_source_identity import file_sha256
+                fetch = cp.load_step(self.job.job_dir, "fetch") or {}
+                source = fetch.get("video_path") or self.job.project.video_in
+                try:
+                    if file_sha256(source) != expected_source:
+                        return False
+                except OSError:
+                    return False
             data = cp.load_step(self.job.job_dir, "render") or {}
             # Legacy jobs without this field count as cleanup-disabled.
             # Re-enable/disable/change cleanup => must rerender, never DONE
@@ -544,6 +555,14 @@ class Orchestrator:
                     or proj.sub_mode or "burn")
         video_for_render = fetch_data.get("video_path") or proj.video_in
         if self._visual_opt("visual_cleanup_enabled", False):
+            expected_source = (proj.visual_cleanup_options or {}).get(
+                "visual_cleanup_source_sha256")
+            if expected_source:
+                from media.visual_source_identity import file_sha256
+                if file_sha256(video_for_render) != expected_source:
+                    raise RuntimeError(
+                        "Source video changed after job creation; "
+                        "review the video and masks before starting a new job")
             # Optional step inside render keeps existing checkpoint order stable.
             # Fail explicitly when OCR/runtime is missing; never silently export
             # uncleaned video after the user asked for cleanup.
