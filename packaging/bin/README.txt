@@ -1,18 +1,13 @@
-Thư mục này chứa ffmpeg + ffprobe để PyInstaller đóng gói kèm vào app
-(vietdub.spec sẽ tự nhặt mọi file bắt đầu bằng "ffmpeg"/"ffprobe" ở đây).
+Thư mục này chứa FFmpeg/FFprobe tùy chọn để PyInstaller đóng gói cùng VietDub.
+vietdub.spec tự tìm các file có tên bắt đầu bằng ffmpeg hoặc ffprobe.
 
-TRÊN WINDOWS (máy Tony), trước khi build .exe:
-  1. Tải ffmpeg bản Windows "release essentials" tại:
-       https://www.gyan.dev/ffmpeg/builds/
-     (file zip, vd: ffmpeg-7.x-essentials_build.zip)
-  2. Giải nén, vào thư mục bin bên trong, chép 2 file:
-       ffmpeg.exe
-       ffprobe.exe
-     vào đúng thư mục này (packaging/bin/).
-  3. Chạy:  pyinstaller packaging/vietdub.spec
-  4. App đóng gói xong sẽ có sẵn ffmpeg cạnh VietDub.exe, không cần cài
-     thêm hay thêm vào PATH.
+Build Windows:
+1. Tải bản Windows release essentials từ https://www.gyan.dev/ffmpeg/builds/.
+2. Giải nén và chép ffmpeg.exe cùng ffprobe.exe vào packaging/bin/.
+3. Chạy pyinstaller packaging/vietdub.spec từ thư mục gốc.
+4. App onedir nằm trong dist/VietDub; binary FFmpeg được đặt cạnh VietDub.exe.
 
-TRÊN LINUX (chỉ để validate spec, không phải build chính thức):
-  Đặt binary ffmpeg/ffprobe của Linux vào đây nếu muốn test kèm binary,
-  hoặc để trống — spec vẫn build được, chỉ in cảnh báo.
+Nếu thư mục này trống, spec vẫn có thể build nhưng app cần FFmpeg trong PATH
+hoặc người dùng phải cấu hình đường dẫn trong Cài đặt.
+
+Build Linux chỉ dùng để kiểm tra spec; Windows là đích đóng gói chính thức.

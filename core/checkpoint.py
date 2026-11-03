@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Any, Optional
 
@@ -65,9 +66,15 @@ def load_step(job_dir: Path, step: str) -> Optional[Any]:
 def _looks_valid(step: str, data: Any) -> bool:
     if not isinstance(data, dict):
         return False
+    if step == "review":
+        return (set(data) == {"pending"}
+                and (data["pending"] is None or
+                     isinstance(data["pending"], str) and data["pending"] in {"asr", "translate"}))
+    if step == "source_review":
+        return (_valid_review_models("asr", data)
+                and _valid_review_models("gender", data))
     if step in ("asr", "translate", "gender", "analyze"):
-        return isinstance(data.get("segments" if step != "gender" and step != "analyze" else
-                                   ("speakers" if step in ("gender", "analyze") else None)), list)
+        return _valid_review_models(step, data)
     if step == "fetch":
         return bool(data.get("video_path"))
     if step == "extract":
@@ -78,6 +85,45 @@ def _looks_valid(step: str, data: Any) -> bool:
         return bool(data.get("mixed_wav"))
     if step == "render":
         return bool(data.get("video_out"))
+    return True
+
+
+def _valid_review_models(step: str, data: dict) -> bool:
+    """Check the models and field types actually consumed by review widgets."""
+    from project.schema import Segment, Speaker
+
+    model = Segment if step in {"asr", "translate"} else Speaker
+    rows = data.get("segments" if model is Segment else "speakers")
+    if not isinstance(rows, list):
+        return False
+    try:
+        for row in rows:
+            value = model.from_dict(row)
+            for name, item in vars(value).items():
+                if name in {"index", "speaker", "id"}:
+                    if type(item) is not int:
+                        return False
+                elif name in {"start", "end", "confidence", "median_hz"}:
+                    if (isinstance(item, bool) or not isinstance(item, (int, float))
+                            or not math.isfinite(item)):
+                        return False
+                elif name == "needs_review":
+                    if type(item) is not bool:
+                        return False
+                elif name == "relations":
+                    if not isinstance(item, list) or any(
+                            not isinstance(rel, dict)
+                            or any(not isinstance(rel.get(key, ""), str)
+                                   for key in ("audience", "pronoun_i", "pronoun_you"))
+                            for rel in item):
+                        return False
+                elif not isinstance(item, str):
+                    return False
+        meta = data.get("video_metadata", {})
+        if step == "analyze" and not isinstance(meta, dict):
+            return False
+    except (TypeError, ValueError, AttributeError, KeyError, OverflowError):
+        return False
     return True
 
 
@@ -142,6 +188,11 @@ def invalidate_from(job_dir: Path, project, step: str) -> None:
     stale = STEPS[STEPS.index(step):]
     for name in stale:
         stage_path(job_dir, name).unlink(missing_ok=True)
+    # Source review is an input to gender estimation, not a completed stage.
+    # Keep it while retrying gender, but discard it when ASR or an earlier
+    # stage is rebuilt because its speaker/segment IDs may no longer match.
+    if STEPS.index(step) <= STEPS.index("asr"):
+        stage_path(job_dir, "source_review").unlink(missing_ok=True)
     if "tts" in stale:
         stage_path(job_dir, "tts_meta").unlink(missing_ok=True)
     project.stages_done = [name for name in project.stages_done

@@ -36,7 +36,7 @@ DEFAULTS = {
     "llm_temperature": 0.2,
     "translate_batch": 20,
     # --- ASR ---
-    "asr_backend": "whisper",              # "whisper" | "funasr" | "qwen"
+    "asr_backend": "whisper",              # "whisper" | "funasr" | "qwen" | "vietdub_stt"
     "whisper_model": "large-v3-turbo",
     "whisper_compute_type": "int8",
     "asr_model": "iic/SenseVoiceSmall",
@@ -45,6 +45,8 @@ DEFAULTS = {
     "spk_model": "damo/speech_campplus_sv_zh-cn_16k-common",
     "qwen_model": "Qwen/Qwen3-ASR-1.7B",
     "qwen_aligner_model": "Qwen/Qwen3-ForcedAligner-0.6B",
+    "stt_url": "http://127.0.0.1:8768",
+    "stt_quality": "fast",               # "fast" (0.6B) | "quality" (1.7B)
     # --- ASR quality ---
     "asr_confidence_low": 0.5,   # below this -> needs_review (edge case 5)
     # --- speaker gender ---
