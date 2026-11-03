@@ -184,6 +184,38 @@ class Orchestrator:
             if final_save_failed:
                 return FAILED
 
+    def _tts_config(self) -> dict:
+        """Pin the audio-producing TTS identity, including optional providers.
+
+        The visual-cleanup branch must preserve the TTS checkpoint contract
+        when combined with the VieNeu/ZeroTTS branch. Legacy projects that
+        predate provider selection continue to be treated as Edge-TTS.
+        """
+        p = self.job.project
+        provider = getattr(p, "tts_provider", "edge")
+        config = {
+            "version": 1,
+            "provider": provider,
+            "voice_male": p.voice_male,
+            "voice_female": p.voice_female,
+        }
+        if provider == "vieneu":
+            config.update(
+                backend=getattr(p, "vieneu_backend", "auto"),
+                precision=getattr(p, "vieneu_precision", "fp32"),
+                model="v3turbo",
+            )
+        elif provider == "zerotts":
+            config.update(
+                model_dir=getattr(p, "zerotts_model_dir", "model/ZeroTTS"),
+                speaker_voices=dict(getattr(p, "zerotts_voices", {})),
+            )
+        elif provider == "edge":
+            config.update(rate=p.tts_rate, pitch=p.tts_pitch)
+        else:
+            raise ValueError(f"Unsupported TTS provider: {provider}")
+        return config
+
     def _visual_opt(self, key, default=None):
         """New jobs use their immutable config snapshot; old jobs keep legacy behavior."""
         options = self.job.project.visual_cleanup_options
@@ -229,6 +261,13 @@ class Orchestrator:
                     or self.job.project.sub_mode or "burn")
         if not cp.has_step(self.job.job_dir, step, sub_mode=sub_mode):
             return False
+        if step == "tts":
+            meta = cp.load_step(self.job.job_dir, "tts_meta") or {}
+            previous = meta.get("tts_config")
+            # Preserve old Edge-TTS jobs without a provider fingerprint.
+            if previous is None:
+                return getattr(self.job.project, "tts_provider", "edge") == "edge"
+            return previous == self._tts_config()
         if step == "render":
             options = self.job.project.visual_cleanup_options or {}
             expected_source = options.get("visual_cleanup_source_sha256")
@@ -611,7 +650,8 @@ class Orchestrator:
         dub_track = mfit.build_track(segments, tts_dir / "dub_track.wav", total)
         pio.save_segments(job.job_dir, "tts", segments)
         cp.save_step(job.job_dir, "tts_meta",
-                     {"dub_track": str(dub_track), "total_sec": total})
+                     {"dub_track": str(dub_track), "total_sec": total,
+                      "tts_config": self._tts_config()})
 
     def _step_mix(self):
         from media import mix as mmix
